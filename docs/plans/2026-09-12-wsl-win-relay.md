@@ -79,3 +79,7 @@ Add endpoint-preserving datagram frames and Windows UDP socket lifecycle managem
 ### Task 12: Transparent WSL routing
 
 Integrate a pinned tun2socks release as an external TUN adapter. Provide route/DNS/device setup with complete rollback, preserve an uplink route for the local relay endpoint, document root and `/dev/net/tun` requirements, and verify a proxy-unaware TCP/UDP application through Windows egress.
+
+### Task 13: Long-running service integration
+
+Provide a systemd user unit and idempotent installer. Restart the proxy after child-process failure, preserve private configuration permissions, and verify that startup handshake and all mappings are recreated after a restart.

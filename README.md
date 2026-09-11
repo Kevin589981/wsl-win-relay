@@ -172,6 +172,35 @@ the relay running:
 
 ```bash
 ./scripts/install-tun2socks.sh
+sudo env WWR_TUN_PROXY=socks5://127.0.0.1:1080 ./scripts/transparent-relay.sh
+```
+
+The script creates `tun0`, adds split default routes, starts tun2socks, and
+restores routes and the optional DNS file on exit. Set `WWR_DNS=1.1.1.1` when
+WSL DNS is unavailable; set `WWR_UPLINK_INTERFACE` if the default interface
+cannot be detected. Root, `iproute2`, `/dev/net/tun`, and tun2socks are required.
+
+## Long-running service
+
+With WSL systemd enabled, install the user service:
+
+```bash
+./scripts/install-user-service.sh
+systemctl --user status wsl-win-relay.service
+```
+
+The service restarts the proxy after a Windows relay crash; startup handshake,
+reverse registrations, and control sockets are recreated on each restart. The
+installer creates a private `~/.config/wsl-win-relay/config.json` from the
+example only when one does not already exist.
+
+## Transparent mode
+
+For applications without proxy support, install the pinned TUN adapter and keep
+the relay running:
+
+```bash
+./scripts/install-tun2socks.sh
 sudo env WWR_TUN_PROXY=socks5://127.0.0.1:1080 \
   ./scripts/transparent-relay.sh
 ```
