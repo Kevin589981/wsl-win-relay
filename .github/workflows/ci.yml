@@ -21,6 +21,7 @@ jobs:
         with:
           go-version-file: go.mod
           check-latest: true
+          cache: false
       - run: go test ./...
       - run: go vet ./...
 
@@ -33,6 +34,7 @@ jobs:
         with:
           go-version-file: go.mod
           check-latest: true
+          cache: false
       - run: go test -race ./...
 
   native:
@@ -44,5 +46,6 @@ jobs:
         with:
           go-version-file: go.mod
           check-latest: true
+          cache: false
       - run: ./scripts/build-wsl.sh
       - run: sh -n scripts/*.sh scripts/wsl-win-relay-run
