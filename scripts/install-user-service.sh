@@ -29,5 +29,6 @@ if [ -L "$config_dir/config.json" ] || [ ! -f "$config_dir/config.json" ]; then
 fi
 chmod 600 "$config_dir/config.json"
 systemctl --user daemon-reload
-systemctl --user enable --now wsl-win-relay.service
-echo "enabled wsl-win-relay.service"
+systemctl --user enable wsl-win-relay.service
+systemctl --user restart wsl-win-relay.service
+echo "enabled and restarted wsl-win-relay.service"

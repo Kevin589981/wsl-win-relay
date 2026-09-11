@@ -282,6 +282,9 @@ With WSL systemd enabled, install the user service:
 systemctl --user status wsl-win-relay.service
 ```
 
+Re-running the installer updates the installed binaries and unit, then
+restarts the user service so the new configuration is active immediately.
+
 The service restarts the proxy after a Windows relay crash or broken stdio
 transport; startup handshake,
 reverse registrations, and control sockets are recreated on each restart. The
