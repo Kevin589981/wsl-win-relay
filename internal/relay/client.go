@@ -30,6 +30,7 @@ type Client struct {
 
 func NewClient(rw io.ReadWriter) *Client {
 	c := &Client{rw: rw, streams: make(map[uint32]*clientStream), listeners: make(map[uint32]*clientListener), closed: make(chan struct{})}
+	c.nextID.Store(^uint32(0))
 	return c
 }
 
@@ -62,7 +63,7 @@ func (c *Client) DialContext(ctx context.Context, target string) (net.Conn, erro
 	if len(target) == 0 || len(target) > protocol.MaxTargetSize {
 		return nil, fmt.Errorf("invalid target length")
 	}
-	id := c.nextID.Add(1)
+	id := c.nextID.Add(2)
 	s := newClientStream(c, id, target)
 	c.mu.Lock()
 	select {
@@ -98,7 +99,7 @@ func (c *Client) ReverseForward(ctx context.Context, windowsAddr, target string)
 	if windowsAddr == "" || target == "" || len(windowsAddr) > protocol.MaxTargetSize || len(target) > protocol.MaxTargetSize {
 		return nil, fmt.Errorf("invalid reverse-forward address")
 	}
-	id := c.nextID.Add(1)
+	id := c.nextID.Add(2)
 	l := &clientListener{id: id, client: c, target: target, ctx: ctx, ready: make(chan error, 1)}
 	c.mu.Lock()
 	c.listeners[id] = l

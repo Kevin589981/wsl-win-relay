@@ -123,7 +123,7 @@ func (s *Server) openListener(id uint32, addr string) {
 		if acceptErr != nil {
 			return
 		}
-		streamID := s.nextStream.Add(1)
+		streamID := s.nextStream.Add(2)
 		stream := &serverStream{conn: conn, cancel: func() {}}
 		s.mu.Lock()
 		s.streams[streamID] = stream

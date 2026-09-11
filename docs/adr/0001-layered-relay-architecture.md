@@ -20,6 +20,8 @@ Use four layers:
 
 The first transport is process pipes, not shared memory. The first adapter is loopback-only SOCKS5 with no authentication.
 
+WSL-initiated streams and listeners use odd IDs. Windows-initiated inbound streams use even IDs. This partitions the identifier space so simultaneous creation on both sides cannot collide.
+
 ## Consequences
 
 ### Positive

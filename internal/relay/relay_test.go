@@ -102,3 +102,41 @@ func TestReverseForward(t *testing.T) {
 	_ = serverSide.Close()
 	_ = clientSide.Close()
 }
+
+func TestReverseForwardRejectsOccupiedWindowsPort(t *testing.T) {
+	clientSide, serverSide := net.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := NewServer(serverSide, nil)
+	go func() { _ = server.Serve(ctx) }()
+	client := NewClient(clientSide)
+	go func() { _ = client.Run(ctx) }()
+
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer occupied.Close()
+	if _, err := client.ReverseForward(ctx, occupied.Addr().String(), "127.0.0.1:1"); err == nil {
+		t.Fatal("expected Windows bind rejection")
+	}
+	_ = client.Close()
+	_ = serverSide.Close()
+	_ = clientSide.Close()
+}
+
+func TestInitiatorIDsUseSeparateParity(t *testing.T) {
+	client := NewClient(&discardReadWriter{})
+	if id := client.nextID.Add(2); id%2 != 1 {
+		t.Fatalf("client id %d is not odd", id)
+	}
+	server := NewServer(&discardReadWriter{}, nil)
+	if id := server.nextStream.Add(2); id%2 != 0 {
+		t.Fatalf("server id %d is not even", id)
+	}
+}
+
+type discardReadWriter struct{}
+
+func (*discardReadWriter) Read([]byte) (int, error)    { return 0, io.EOF }
+func (*discardReadWriter) Write(p []byte) (int, error) { return len(p), nil }
