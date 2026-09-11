@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/Kevin589981/wsl-win-relay/internal/relay"
 )
 
 func TestSuperviseRetriesRelayExit(t *testing.T) {
@@ -48,6 +50,19 @@ func TestSupervisePrefersContextCancellation(t *testing.T) {
 	}, 0)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestHandshakeFailureClassification(t *testing.T) {
+	if !errors.Is(classifyHandshakeError(io.EOF), errRelayExited) {
+		t.Fatal("EOF should trigger relay restart")
+	}
+	if !errors.Is(classifyHandshakeError(relay.ErrClientClosed), errRelayExited) {
+		t.Fatal("closed relay should trigger relay restart")
+	}
+	want := errors.New("protocol mismatch")
+	if errors.Is(classifyHandshakeError(want), errRelayExited) {
+		t.Fatal("protocol errors must remain fatal")
 	}
 }
 

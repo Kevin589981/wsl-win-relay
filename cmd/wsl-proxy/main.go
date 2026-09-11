@@ -250,7 +250,7 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 	capabilities, err := client.Handshake(handshakeCtx, protocol.AllCapabilities)
 	handshakeCancel()
 	if err != nil {
-		return fmt.Errorf("relay handshake: %w", err)
+		return classifyHandshakeError(err)
 	}
 	logger.Printf("Windows relay ready (capabilities 0x%x)", capabilities)
 	var controlDone chan error
@@ -315,6 +315,13 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func classifyHandshakeError(err error) error {
+	if errors.Is(err, io.EOF) || errors.Is(err, relay.ErrClientClosed) {
+		return errRelayExited
+	}
+	return fmt.Errorf("relay handshake: %w", err)
 }
 
 func clonePortSet(source map[uint16]bool) map[uint16]bool {
