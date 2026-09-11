@@ -2,8 +2,10 @@ package autoforward
 
 import (
 	"bufio"
+	"encoding/hex"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"sort"
 	"strconv"
@@ -12,6 +14,7 @@ import (
 
 type Listener struct {
 	Network string
+	Host    string
 	Port    uint16
 }
 
@@ -62,12 +65,41 @@ func parseProcNet(r io.Reader, network string) ([]Listener, error) {
 		if err != nil || port == 0 {
 			return nil, fmt.Errorf("line %d: invalid port %q", line, address[1])
 		}
-		result = append(result, Listener{Network: network, Port: uint16(port)})
+		host, err := decodeProcAddress(address[0], network)
+		if err != nil {
+			return nil, fmt.Errorf("line %d: invalid address: %w", line, err)
+		}
+		result = append(result, Listener{Network: network, Host: host, Port: uint16(port)})
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+func decodeProcAddress(encoded, network string) (string, error) {
+	decoded, err := hex.DecodeString(encoded)
+	if err != nil {
+		return "", err
+	}
+	if network == "tcp4" {
+		if len(decoded) != net.IPv4len {
+			return "", fmt.Errorf("expected 4 bytes")
+		}
+		for left, right := 0, len(decoded)-1; left < right; left, right = left+1, right-1 {
+			decoded[left], decoded[right] = decoded[right], decoded[left]
+		}
+		return net.IP(decoded).String(), nil
+	}
+	if len(decoded) != net.IPv6len {
+		return "", fmt.Errorf("expected 16 bytes")
+	}
+	for offset := 0; offset < len(decoded); offset += 4 {
+		for left, right := offset, offset+3; left < right; left, right = left+1, right-1 {
+			decoded[left], decoded[right] = decoded[right], decoded[left]
+		}
+	}
+	return net.IP(decoded).String(), nil
 }
 
 // Prefer IPv4 when both families listen on the same port. A wildcard IPv6

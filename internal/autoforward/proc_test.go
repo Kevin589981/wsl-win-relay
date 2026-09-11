@@ -14,14 +14,24 @@ func TestParseProcNetFindsListeningPorts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].Port != 8000 || got[0].Network != "tcp4" {
+	if len(got) != 1 || got[0].Port != 8000 || got[0].Network != "tcp4" || got[0].Host != "127.0.0.1" {
 		t.Fatalf("got %#v", got)
 	}
 }
 
 func TestNormalizeListenersPrefersIPv4(t *testing.T) {
-	got := normalizeListeners([]Listener{{Network: "tcp6", Port: 8000}, {Network: "tcp4", Port: 8000}, {Network: "tcp6", Port: 9000}})
+	got := normalizeListeners([]Listener{{Network: "tcp6", Host: "::", Port: 8000}, {Network: "tcp4", Host: "0.0.0.0", Port: 8000}, {Network: "tcp6", Host: "::1", Port: 9000}})
 	if len(got) != 2 || got[0].Network != "tcp4" || got[1].Port != 9000 {
 		t.Fatalf("got %#v", got)
+	}
+}
+
+func TestDecodeProcIPv6Address(t *testing.T) {
+	host, err := decodeProcAddress("00000000000000000000000001000000", "tcp6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if host != "::1" {
+		t.Fatalf("got %s", host)
 	}
 }

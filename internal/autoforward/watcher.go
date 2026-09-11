@@ -91,8 +91,11 @@ func (w *Watcher) sync(ctx context.Context) error {
 			continue
 		}
 		windowsAddr := net.JoinHostPort(w.WindowsHost, strconv.Itoa(int(port)))
-		wslHost := "127.0.0.1"
-		if listener.Network == "tcp6" {
+		wslHost := listener.Host
+		if listener.Network == "tcp4" && (wslHost == "" || wslHost == "0.0.0.0") {
+			wslHost = "127.0.0.1"
+		}
+		if listener.Network == "tcp6" && (wslHost == "" || wslHost == "::") {
 			wslHost = "::1"
 		}
 		wslTarget := net.JoinHostPort(wslHost, strconv.Itoa(int(port)))
