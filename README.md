@@ -217,6 +217,9 @@ The script creates `tun0`, adds split default routes, starts tun2socks, and
 restores routes and the optional DNS file on exit. Set `WWR_DNS=1.1.1.1` when
 WSL DNS is unavailable; set `WWR_UPLINK_INTERFACE` if the default interface
 cannot be detected. Root, `iproute2`, `/dev/net/tun`, and tun2socks are required.
+The script searches `PATH` and the Go `GOPATH/bin` installation location; set
+`WWR_TUN2SOCKS_BIN` when running under `sudo` or another environment with a
+different tool path.
 
 ## Long-running service
 

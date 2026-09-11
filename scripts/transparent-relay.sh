@@ -7,7 +7,21 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 command -v ip >/dev/null 2>&1 || { echo "ip command is required" >&2; exit 1; }
-command -v tun2socks >/dev/null 2>&1 || { echo "tun2socks is required (run scripts/install-tun2socks.sh)" >&2; exit 1; }
+
+tun2socks_bin=${WWR_TUN2SOCKS_BIN:-}
+if [ -z "$tun2socks_bin" ]; then
+    tun2socks_bin=$(command -v tun2socks 2>/dev/null || true)
+fi
+if [ -z "$tun2socks_bin" ] && command -v go >/dev/null 2>&1; then
+    gopath=$(go env GOPATH 2>/dev/null || true)
+    if [ -n "$gopath" ] && [ -x "$gopath/bin/tun2socks" ]; then
+        tun2socks_bin="$gopath/bin/tun2socks"
+    fi
+fi
+if [ -z "$tun2socks_bin" ] || [ ! -x "$tun2socks_bin" ]; then
+    echo "tun2socks is required (run scripts/install-tun2socks.sh or set WWR_TUN2SOCKS_BIN)" >&2
+    exit 1
+fi
 
 device=${WWR_TUN_DEVICE:-tun0}
 tun_address=${WWR_TUN_ADDRESS:-198.18.0.1/15}
@@ -94,6 +108,6 @@ if ip -6 route add ::/1 dev "$device" metric 1 2>/dev/null; then
 fi
 
 echo "transparent relay active: $device -> $proxy via $uplink"
-tun2socks --device "$device" --proxy "$proxy" --interface "$uplink" &
+"$tun2socks_bin" --device "$device" --proxy "$proxy" --interface "$uplink" &
 tun_pid=$!
 wait "$tun_pid"
