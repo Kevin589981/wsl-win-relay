@@ -252,6 +252,10 @@ The script searches `PATH` and the Go `GOPATH/bin` installation location; set
 `WWR_TUN2SOCKS_BIN` when running under `sudo` or another environment with a
 different tool path.
 
+When WSL has lost its default interface because of an HNS failure, the script
+automatically falls back to `lo` if `WWR_TUN_PROXY` points at a local loopback
+SOCKS endpoint. Set `WWR_UPLINK_INTERFACE` explicitly for a non-loopback proxy.
+
 The TUN setup and rollback path has been smoke-tested under WSL as root,
 including IPv4 split routes, optional IPv6 routes, process shutdown, and device
 cleanup. DNS restoration also preserves the original `/etc/resolv.conf` shape,

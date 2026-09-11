@@ -28,6 +28,7 @@ tun_address=${WWR_TUN_ADDRESS:-198.18.0.1/15}
 proxy=${WWR_TUN_PROXY:-socks5://127.0.0.1:1080}
 uplink=${WWR_UPLINK_INTERFACE:-}
 dns=${WWR_DNS:-}
+uplink_fallback=0
 route_added=0
 route6_added=0
 tun_added=0
@@ -72,6 +73,19 @@ if [ -z "$uplink" ]; then
     uplink=$(ip route show default | awk 'NR==1 {print $5}')
 fi
 if [ -z "$uplink" ]; then
+    # When HNS has removed WSL's default interface, a local SOCKS relay is
+    # still reachable through loopback. Keep the emergency path usable without
+    # requiring an interface override in that specific case.
+    case "$proxy" in
+        socks5://127.0.0.1:*|socks5h://127.0.0.1:*|socks5://localhost:*|socks5h://localhost:*|socks5://\[::1\]:*|socks5h://\[::1\]:*)
+            if ip link show lo >/dev/null 2>&1; then
+                uplink=lo
+                uplink_fallback=1
+            fi
+            ;;
+    esac
+fi
+if [ -z "$uplink" ]; then
     echo "unable to determine uplink interface; set WWR_UPLINK_INTERFACE" >&2
     exit 1
 fi
@@ -107,6 +121,9 @@ if ip -6 route add ::/1 dev "$device" metric 1 2>/dev/null; then
     ip -6 route add 8000::/1 dev "$device" metric 1
 fi
 
+if [ "$uplink_fallback" -eq 1 ]; then
+    echo "no default route; using loopback for local proxy"
+fi
 echo "transparent relay active: $device -> $proxy via $uplink"
 "$tun2socks_bin" --device "$device" --proxy "$proxy" --interface "$uplink" &
 tun_pid=$!
