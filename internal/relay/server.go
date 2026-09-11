@@ -26,7 +26,10 @@ type Server struct {
 	nextStream atomic.Uint32
 	ctx        context.Context
 	cancel     context.CancelFunc
+	serveOnce  sync.Once
 }
+
+var ErrServerAlreadyRunning = errors.New("relay server is already running")
 
 type serverStream struct {
 	conn       net.Conn
@@ -58,6 +61,11 @@ func NewServer(rw io.ReadWriter, dial DialContextFunc) *Server {
 }
 
 func (s *Server) Serve(ctx context.Context) error {
+	started := false
+	s.serveOnce.Do(func() { started = true })
+	if !started {
+		return ErrServerAlreadyRunning
+	}
 	s.ctx, s.cancel = context.WithCancel(ctx)
 	defer s.shutdown()
 	for {

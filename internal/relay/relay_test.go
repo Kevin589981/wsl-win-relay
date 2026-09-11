@@ -84,6 +84,16 @@ func TestClientRunRejectsSecondReader(t *testing.T) {
 	}
 }
 
+func TestServerServeRejectsSecondReader(t *testing.T) {
+	server := NewServer(&discardReadWriter{}, nil)
+	if err := server.Serve(context.Background()); !errors.Is(err, io.EOF) {
+		t.Fatalf("first serve: %v", err)
+	}
+	if err := server.Serve(context.Background()); !errors.Is(err, ErrServerAlreadyRunning) {
+		t.Fatalf("second serve: %v", err)
+	}
+}
+
 func TestReverseForward(t *testing.T) {
 	clientSide, serverSide := net.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())
