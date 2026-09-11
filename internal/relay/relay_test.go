@@ -280,6 +280,28 @@ func TestReverseUDPForwardRejectsOccupiedWindowsPort(t *testing.T) {
 	_ = clientSide.Close()
 }
 
+func TestServerReverseUDPOpenCloseOrdering(t *testing.T) {
+	server := NewServer(&discardReadWriter{}, nil)
+	server.ctx = context.Background()
+
+	probe, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := probe.LocalAddr().String()
+	_ = probe.Close()
+
+	server.handle(protocol.Frame{Type: protocol.TypeListenDatagramOpen, StreamID: 17, Payload: []byte(address)})
+	server.handle(protocol.Frame{Type: protocol.TypeListenDatagramClose, StreamID: 17})
+
+	server.mu.Lock()
+	_, present := server.reverseDatagrams[17]
+	server.mu.Unlock()
+	if present {
+		t.Fatal("reverse UDP association remained after ordered close")
+	}
+}
+
 func TestReverseForwardReservationWaitsForCommit(t *testing.T) {
 	clientSide, serverSide := net.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())

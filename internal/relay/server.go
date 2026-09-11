@@ -110,7 +110,9 @@ func (s *Server) handle(frame protocol.Frame) {
 	case protocol.TypeListenCommit:
 		s.commitListener(frame.StreamID)
 	case protocol.TypeListenDatagramOpen:
-		go s.openReverseDatagram(frame.StreamID, string(frame.Payload))
+		// Bind before processing the next control frame. This preserves OPEN/CLOSE
+		// ordering so a client that cancels immediately cannot leave a late socket.
+		s.openReverseDatagram(frame.StreamID, string(frame.Payload))
 	case protocol.TypeListenDatagramData:
 		s.writeReverseDatagram(frame.StreamID, frame.Payload)
 	case protocol.TypeListenDatagramClose:
