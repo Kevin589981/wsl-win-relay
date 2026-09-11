@@ -221,7 +221,17 @@ func (c *Client) dispatch(frame protocol.Frame) {
 		l := c.listeners[listenerID]
 		c.mu.Unlock()
 		if l != nil {
-			go c.acceptInbound(l, frame.StreamID)
+			s := newClientStream(c, frame.StreamID, l.target)
+			s.openOnce.Do(func() { s.openDone <- nil })
+			c.mu.Lock()
+			if _, exists := c.streams[frame.StreamID]; exists {
+				c.mu.Unlock()
+				_ = c.write(protocol.Frame{Type: protocol.TypeReset, StreamID: frame.StreamID, Payload: []byte("duplicate inbound stream id")})
+				return
+			}
+			c.streams[frame.StreamID] = s
+			c.mu.Unlock()
+			go c.acceptInbound(l, s)
 		}
 		return
 	}
@@ -401,20 +411,15 @@ var _ net.PacketConn = (*clientPacketConn)(nil)
 
 func (c *Client) removeListener(id uint32) { c.mu.Lock(); delete(c.listeners, id); c.mu.Unlock() }
 
-func (c *Client) acceptInbound(l *clientListener, streamID uint32) {
-	s := newClientStream(c, streamID, l.target)
-	s.openOnce.Do(func() { s.openDone <- nil })
-	c.mu.Lock()
-	c.streams[streamID] = s
-	c.mu.Unlock()
+func (c *Client) acceptInbound(l *clientListener, s *clientStream) {
 	local, err := (&net.Dialer{}).DialContext(l.ctx, "tcp", l.target)
 	if err != nil {
-		_ = c.write(protocol.Frame{Type: protocol.TypeReset, StreamID: streamID, Payload: []byte(err.Error())})
-		c.removeStream(streamID)
+		_ = c.write(protocol.Frame{Type: protocol.TypeReset, StreamID: s.id, Payload: []byte(err.Error())})
+		c.removeStream(s.id)
 		return
 	}
 	bridge(local, s)
-	c.removeStream(streamID)
+	c.removeStream(s.id)
 }
 
 type clientListener struct {
