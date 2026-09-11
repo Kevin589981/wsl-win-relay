@@ -174,12 +174,13 @@ interposer. `WSL_WIN_RELAY_CONTROL` and `WSL_WIN_RELAY_PRELOAD` override the
 default control socket and shared-library paths.
 
 Strict mode currently covers dynamically linked applications using libc,
-including `dup()`, `dup2()`, `dup3()`, `close_range()`, and ordinary `fork()`
-descriptor inheritance. Static or setuid binaries, programs making raw
-syscalls, and `clone()`/`vfork()`-specific ownership patterns should use
-automatic polling until a kernel-aware adapter is available. The daemon tracks
-multiple process owners and reaps leases from processes that exit without
-closing their descriptors.
+including `dup()`, `dup2()`, `dup3()`, `fcntl(F_DUPFD*)`, `close_range()`, and
+ordinary `fork()` descriptor inheritance. Static or setuid binaries, programs
+making raw syscalls, and `clone()`/`vfork()`-specific ownership patterns should
+use automatic polling until a kernel-aware adapter is available. The native
+interposer targets the Linux amd64 build produced by the WSL scripts. The
+daemon tracks multiple process owners and reaps leases from processes that
+exit without closing their descriptors.
 
 The native lifecycle regression test can be run offline with
 `./scripts/test-interposer.sh`; it uses a local fake control socket and does

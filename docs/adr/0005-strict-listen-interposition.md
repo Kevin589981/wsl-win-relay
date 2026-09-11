@@ -18,9 +18,9 @@ Provide `libwsl_win_relay_listen.so` and a `wsl-win-relay-run` launcher. The int
 3. Returns the Windows error to the application if reservation fails.
 4. Calls the real Linux `listen()` only after Windows succeeds.
 5. Commits Windows accepting after Linux succeeds, or aborts on Linux failure.
-6. Tracks `dup()`, `dup2()`, and `dup3()` aliases, and intercepts
-   `close_range()` when it actually closes descriptors; the Windows mapping is
-   released only after the final alias in a process is closed.
+6. Tracks `dup()`, `dup2()`, `dup3()`, and `fcntl(F_DUPFD*)` aliases, and
+   intercepts `close_range()` when it actually closes descriptors; the Windows
+   mapping is released only after the final alias in a process is closed.
 7. Registers inherited leases for ordinary `fork()` children and releases a
    mapping only after every process owner has gone away.
 8. Releases abandoned mappings through the control daemon's process-identity
@@ -37,9 +37,10 @@ Provide `libwsl_win_relay_listen.so` and a `wsl-win-relay-run` launcher. The int
 ### Negative
 
 - Static binaries, setuid binaries, and programs that bypass libc are not interposed.
-- Descriptor duplication through the standard `dup*()` calls and ordinary
-  `fork()` are covered. `clone()` and `vfork()` ownership semantics remain
-  outside the interposer contract.
+- Descriptor duplication through the standard `dup*()` calls,
+  `fcntl(F_DUPFD*)`, and ordinary `fork()` are covered. `clone()` and `vfork()`
+  ownership semantics remain outside the interposer contract. The current
+  native build is Linux amd64, matching the supported WSL binary target.
 - Crash cleanup depends on daemon-side lease reaping rather than a `close()`
   callback.
 

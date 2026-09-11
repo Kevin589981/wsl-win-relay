@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
@@ -20,9 +21,20 @@ int main(void) {
         close_range((unsigned int)fd, (unsigned int)fd, 0);
         return 2;
     }
-    if (close_range((unsigned int)fd, (unsigned int)fd, CLOSE_RANGE_CLOEXEC) < 0) {
+    int duplicate = fcntl(fd, F_DUPFD, 0);
+    if (duplicate < 0) {
         close(fd);
         return 5;
+    }
+    if (close_range((unsigned int)fd, (unsigned int)fd, 0) < 0) {
+        close(fd);
+        close(duplicate);
+        return 6;
+    }
+    fd = duplicate;
+    if (close_range((unsigned int)fd, (unsigned int)fd, CLOSE_RANGE_CLOEXEC) < 0) {
+        close(fd);
+        return 7;
     }
     pid_t child = fork();
     if (child < 0) {

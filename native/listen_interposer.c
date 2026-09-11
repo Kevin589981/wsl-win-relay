@@ -3,11 +3,13 @@
 #include <arpa/inet.h>
 #include <dlfcn.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -22,6 +24,7 @@ typedef int (*dup2_fn)(int, int);
 typedef int (*dup3_fn)(int, int, int);
 typedef pid_t (*fork_fn)(void);
 typedef int (*close_range_fn)(unsigned int, unsigned int, int);
+typedef int (*fcntl_fn)(int, int, ...);
 
 struct tracked_lease { uint64_t id; unsigned refs; };
 
@@ -38,6 +41,7 @@ static dup2_fn real_dup2;
 static dup3_fn real_dup3;
 static fork_fn real_fork;
 static close_range_fn real_close_range;
+static fcntl_fn real_fcntl;
 static pthread_once_t init_once = PTHREAD_ONCE_INIT;
 static pthread_mutex_t tracked_mu = PTHREAD_MUTEX_INITIALIZER;
 static struct tracked_fd *tracked;
@@ -46,6 +50,31 @@ static void atfork_prepare(void);
 static void atfork_parent(void);
 static void atfork_child(void);
 static int release_lease(pid_t pid, uint64_t lease);
+
+static int fcntl_command_has_argument(int command) {
+    switch (command) {
+    case F_GETFD:
+    case F_GETFL:
+#ifdef F_GETOWN
+    case F_GETOWN:
+#endif
+#ifdef F_GETSIG
+    case F_GETSIG:
+#endif
+#ifdef F_GETLEASE
+    case F_GETLEASE:
+#endif
+#ifdef F_GETPIPE_SZ
+    case F_GETPIPE_SZ:
+#endif
+#ifdef F_GET_SEALS
+    case F_GET_SEALS:
+#endif
+        return 0;
+    default:
+        return 1;
+    }
+}
 
 static int debug_enabled(void) {
     const char *value = getenv("WSL_WIN_RELAY_DEBUG");
@@ -60,6 +89,7 @@ static void initialize(void) {
     real_dup3 = (dup3_fn)dlsym(RTLD_NEXT, "dup3");
     real_fork = (fork_fn)dlsym(RTLD_NEXT, "fork");
     real_close_range = (close_range_fn)dlsym(RTLD_NEXT, "close_range");
+    real_fcntl = (fcntl_fn)dlsym(RTLD_NEXT, "fcntl");
     (void)pthread_atfork(atfork_prepare, atfork_parent, atfork_child);
 }
 
@@ -478,6 +508,29 @@ int close_range(unsigned int first, unsigned int last, int flags) {
     int result = real_close_range(first, last, flags);
     if (result == 0 && (flags & CLOSE_RANGE_CLOEXEC) == 0) {
         release_tracked_range(first, last);
+    }
+    return result;
+}
+
+int fcntl(int fd, int command, ...) {
+    pthread_once(&init_once, initialize);
+    if (real_fcntl == NULL) {
+        errno = ENOSYS;
+        return -1;
+    }
+    unsigned long argument = 0;
+    if (fcntl_command_has_argument(command)) {
+        va_list arguments;
+        va_start(arguments, command);
+        /* Linux amd64 passes the optional fcntl word in one register-sized slot. */
+        argument = va_arg(arguments, unsigned long);
+        va_end(arguments);
+    }
+    int result = real_fcntl(fd, command, argument);
+    if (result >= 0 && (command == F_DUPFD || command == F_DUPFD_CLOEXEC) && duplicate_tracking(fd, result) < 0) {
+        (void)real_close(result);
+        errno = ENOMEM;
+        return -1;
     }
     return result;
 }
