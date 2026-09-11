@@ -43,6 +43,7 @@ func TestValidateRejectsInvalidFrames(t *testing.T) {
 		{Type: Type(99), StreamID: 1},
 		{Type: TypeOpen, StreamID: 1},
 		{Type: TypeClose, StreamID: 1, Payload: []byte("x")},
+		{Type: TypeHalfClose, StreamID: 1, Payload: []byte("x")},
 	}
 	for _, tc := range cases {
 		if err := tc.Validate(); err == nil {

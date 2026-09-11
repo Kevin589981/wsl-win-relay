@@ -8,7 +8,6 @@ import (
 	"log"
 	"net"
 	"strconv"
-	"sync"
 	"syscall"
 )
 
@@ -200,15 +199,25 @@ func mapDialError(err error) byte {
 
 func proxy(a, b net.Conn) error {
 	errCh := make(chan error, 2)
-	var once sync.Once
 	copyOne := func(dst, src net.Conn) {
 		_, err := io.Copy(dst, src)
-		once.Do(func() { _ = dst.Close(); _ = src.Close() })
+		// Preserve the opposite direction after one side sends FIN. TLS and
+		// HTTP clients commonly half-close their request before reading fully.
+		if cw, ok := dst.(interface{ CloseWrite() error }); ok {
+			_ = cw.CloseWrite()
+		} else {
+			// Some test and non-TCP connections have no half-close primitive.
+			// Closing both sides is the only way to unblock the peer.
+			_ = dst.Close()
+			_ = src.Close()
+		}
 		errCh <- err
 	}
 	go copyOne(a, b)
 	go copyOne(b, a)
 	first := <-errCh
 	<-errCh
+	_ = a.Close()
+	_ = b.Close()
 	return first
 }

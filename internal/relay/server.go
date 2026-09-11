@@ -61,6 +61,17 @@ func (s *Server) handle(frame protocol.Frame) {
 				s.reset(frame.StreamID, err)
 			}
 		}
+	case protocol.TypeHalfClose:
+		s.mu.Lock()
+		stream := s.streams[frame.StreamID]
+		s.mu.Unlock()
+		if stream != nil && stream.conn != nil {
+			if cw, ok := stream.conn.(interface{ CloseWrite() error }); ok {
+				if err := cw.CloseWrite(); err != nil {
+					s.reset(frame.StreamID, err)
+				}
+			}
+		}
 	case protocol.TypeClose, protocol.TypeReset:
 		s.remove(frame.StreamID)
 	}
@@ -114,8 +125,7 @@ func (s *Server) copyToClient(id uint32, conn net.Conn) {
 			}
 		}
 		if err != nil {
-			s.send(protocol.Frame{Type: protocol.TypeClose, StreamID: id})
-			s.remove(id)
+			s.send(protocol.Frame{Type: protocol.TypeHalfClose, StreamID: id})
 			return
 		}
 	}

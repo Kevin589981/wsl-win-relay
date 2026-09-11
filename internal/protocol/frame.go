@@ -23,6 +23,7 @@ const (
 	TypeOpenOK
 	TypeOpenError
 	TypeData
+	TypeHalfClose
 	TypeClose
 	TypeReset
 )
@@ -43,7 +44,7 @@ func (f Frame) Validate() error {
 	if len(f.Payload) > MaxPayloadSize {
 		return fmt.Errorf("payload exceeds %d bytes", MaxPayloadSize)
 	}
-	if (f.Type == TypeOpenOK || f.Type == TypeClose) && len(f.Payload) != 0 {
+	if (f.Type == TypeOpenOK || f.Type == TypeHalfClose || f.Type == TypeClose) && len(f.Payload) != 0 {
 		return fmt.Errorf("frame type %d must have an empty payload", f.Type)
 	}
 	if f.Type == TypeOpen && (len(f.Payload) == 0 || len(f.Payload) > MaxTargetSize) {

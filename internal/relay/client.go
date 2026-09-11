@@ -171,6 +171,11 @@ func (s *clientStream) handle(frame protocol.Frame) {
 		case s.incoming <- streamEvent{data: append([]byte(nil), frame.Payload...)}:
 		case <-s.client.closed:
 		}
+	case protocol.TypeHalfClose:
+		select {
+		case s.incoming <- streamEvent{err: io.EOF}:
+		case <-s.client.closed:
+		}
 	case protocol.TypeClose, protocol.TypeReset:
 		err := io.EOF
 		if frame.Type == protocol.TypeReset {
@@ -264,6 +269,11 @@ func (s *clientStream) Close() error {
 		s.fail(io.EOF)
 	})
 	return nil
+}
+
+// CloseWrite half-closes the client-to-Windows direction while keeping reads open.
+func (s *clientStream) CloseWrite() error {
+	return s.client.write(protocol.Frame{Type: protocol.TypeHalfClose, StreamID: s.id})
 }
 
 func (s *clientStream) LocalAddr() net.Addr  { return relayAddr("wsl") }
