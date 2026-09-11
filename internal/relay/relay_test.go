@@ -95,14 +95,19 @@ func TestServerServeRejectsSecondReader(t *testing.T) {
 }
 
 func TestStreamCloseUnblocksRead(t *testing.T) {
-	stream := newClientStream(NewClient(&discardReadWriter{}), 1, "example:1")
+	writer := &blockingWriteReadWriter{unblock: make(chan struct{})}
+	stream := newClientStream(NewClient(writer), 1, "example:1")
 	result := make(chan error, 1)
 	go func() {
 		_, err := stream.Read(make([]byte, 1))
 		result <- err
 	}()
 	time.Sleep(10 * time.Millisecond)
-	_ = stream.Close()
+	closeDone := make(chan struct{})
+	go func() {
+		_ = stream.Close()
+		close(closeDone)
+	}()
 	select {
 	case err := <-result:
 		if !errors.Is(err, io.EOF) {
@@ -110,6 +115,12 @@ func TestStreamCloseUnblocksRead(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("stream read remained blocked after close")
+	}
+	close(writer.unblock)
+	select {
+	case <-closeDone:
+	case <-time.After(time.Second):
+		t.Fatal("stream close remained blocked after writer release")
 	}
 }
 
@@ -411,3 +422,11 @@ type discardReadWriter struct{}
 
 func (*discardReadWriter) Read([]byte) (int, error)    { return 0, io.EOF }
 func (*discardReadWriter) Write(p []byte) (int, error) { return len(p), nil }
+
+type blockingWriteReadWriter struct{ unblock chan struct{} }
+
+func (*blockingWriteReadWriter) Read([]byte) (int, error) { return 0, io.EOF }
+func (w *blockingWriteReadWriter) Write(p []byte) (int, error) {
+	<-w.unblock
+	return len(p), nil
+}
