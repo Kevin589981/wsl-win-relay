@@ -5,12 +5,13 @@ import "encoding/binary"
 const (
 	CapabilityTCP uint64 = 1 << iota
 	CapabilityReverse
+	CapabilityReverseUDP
 	CapabilityReserveCommit
 	CapabilityUDP
 	CapabilityFlowControl
 )
 
-const AllCapabilities = CapabilityTCP | CapabilityReverse | CapabilityReserveCommit | CapabilityUDP | CapabilityFlowControl
+const AllCapabilities = CapabilityTCP | CapabilityReverse | CapabilityReverseUDP | CapabilityReserveCommit | CapabilityUDP | CapabilityFlowControl
 
 func EncodeCapabilities(capabilities uint64) []byte {
 	payload := make([]byte, 8)

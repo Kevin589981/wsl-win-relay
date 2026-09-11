@@ -9,7 +9,7 @@ The WSL proxy can accidentally launch an old relay executable or an unrelated pr
 
 ## Decision
 
-Exchange HELLO/HELLO_OK frames on control stream zero immediately after the Windows child starts. Advertise a capability bitset for TCP, reverse forwarding, reserve/commit, UDP, and flow control. The WSL entrypoint requires all capabilities used by the current release and applies a five-second timeout before starting control sockets or registering mappings.
+Exchange HELLO/HELLO_OK frames on control stream zero immediately after the Windows child starts. Advertise a capability bitset for TCP, reverse TCP, reverse UDP, reserve/commit, UDP, and flow control. The WSL entrypoint requires all capabilities used by the current release and applies a five-second timeout before starting control sockets or registering mappings.
 
 Real-process integration tests are opt-in through `WSL_WIN_RELAY_E2E=1` and require a freshly built Windows relay. Ordinary unit tests never trust stale ignored binaries.
 
