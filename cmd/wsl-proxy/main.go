@@ -211,7 +211,10 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 		defer httpListener.Close()
 	}
 
-	relayArgs := []string{"win-relay"}
+	// exec.Command already supplies the executable path as argv[0]. The
+	// Windows relay has no positional subcommand, so do not pass a synthetic
+	// "win-relay" argument here.
+	var relayArgs []string
 	if opts.upstreamProxy != "" {
 		relayArgs = append(relayArgs, "-upstream-proxy", opts.upstreamProxy)
 	}

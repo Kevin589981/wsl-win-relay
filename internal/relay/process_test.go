@@ -54,7 +54,7 @@ func TestWindowsRelayProcess(t *testing.T) {
 		}()
 	}
 
-	cmd := exec.Command(exe, "win-relay")
+	cmd := exec.Command(exe)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
