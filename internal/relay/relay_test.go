@@ -6,6 +6,8 @@ import (
 	"net"
 	"testing"
 	"time"
+
+	"github.com/Kevin589981/wsl-win-relay/internal/protocol"
 )
 
 func TestClientServerEcho(t *testing.T) {
@@ -241,6 +243,51 @@ func TestClientServerUDPDatagram(t *testing.T) {
 	}
 	if source.String() != echo.LocalAddr().String() {
 		t.Fatalf("source %s, want %s", source, echo.LocalAddr())
+	}
+	_ = client.Close()
+	_ = serverSide.Close()
+	_ = clientSide.Close()
+}
+
+func TestSlowStreamDoesNotBlockOtherStreams(t *testing.T) {
+	clientSide, serverSide := net.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := NewServer(serverSide, func(_ context.Context, target string) (net.Conn, error) {
+		local, remote := net.Pipe()
+		if target == "slow:1" {
+			return local, nil
+		}
+		go func() { _, _ = io.Copy(remote, remote); _ = remote.Close() }()
+		return local, nil
+	})
+	go func() { _ = server.Serve(ctx) }()
+	client := NewClient(clientSide)
+	go func() { _ = client.Run(ctx) }()
+	slow, err := client.DialContext(ctx, "slow:1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer slow.Close()
+	go func() { _, _ = slow.Write(make([]byte, protocol.InitialStreamWindow*2)) }()
+	time.Sleep(20 * time.Millisecond)
+	fastCtx, fastCancel := context.WithTimeout(ctx, time.Second)
+	defer fastCancel()
+	fast, err := client.DialContext(fastCtx, "fast:2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fast.Close()
+	_ = fast.SetDeadline(time.Now().Add(time.Second))
+	if _, err := fast.Write([]byte("fast")); err != nil {
+		t.Fatal(err)
+	}
+	buffer := make([]byte, 4)
+	if _, err := io.ReadFull(fast, buffer); err != nil {
+		t.Fatal(err)
+	}
+	if string(buffer) != "fast" {
+		t.Fatalf("got %q", buffer)
 	}
 	_ = client.Close()
 	_ = serverSide.Close()

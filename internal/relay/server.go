@@ -3,10 +3,12 @@ package relay
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/Kevin589981/wsl-win-relay/internal/protocol"
 )
@@ -27,8 +29,22 @@ type Server struct {
 }
 
 type serverStream struct {
-	conn   net.Conn
-	cancel context.CancelFunc
+	conn       net.Conn
+	cancel     context.CancelFunc
+	incoming   chan serverStreamEvent
+	sendWindow *flowWindow
+	done       chan struct{}
+	closeOnce  sync.Once
+}
+
+type serverStreamEvent struct {
+	data      []byte
+	halfClose bool
+}
+
+func newServerStream(conn net.Conn, cancel context.CancelFunc) *serverStream {
+	queueSize := protocol.InitialStreamWindow/protocol.MaxDataSize + 2
+	return &serverStream{conn: conn, cancel: cancel, incoming: make(chan serverStreamEvent, queueSize), sendWindow: newFlowWindow(), done: make(chan struct{})}
 }
 
 func NewServer(rw io.ReadWriter, dial DialContextFunc) *Server {
@@ -73,21 +89,30 @@ func (s *Server) handle(frame protocol.Frame) {
 		s.mu.Lock()
 		stream := s.streams[frame.StreamID]
 		s.mu.Unlock()
-		if stream != nil && stream.conn != nil {
-			if _, err := stream.conn.Write(frame.Payload); err != nil {
-				s.reset(frame.StreamID, err)
+		if stream != nil {
+			select {
+			case stream.incoming <- serverStreamEvent{data: append([]byte(nil), frame.Payload...)}:
+			case <-stream.done:
+			default:
+				s.reset(frame.StreamID, errors.New("stream receive window exceeded"))
 			}
 		}
 	case protocol.TypeHalfClose:
 		s.mu.Lock()
 		stream := s.streams[frame.StreamID]
 		s.mu.Unlock()
-		if stream != nil && stream.conn != nil {
-			if cw, ok := stream.conn.(interface{ CloseWrite() error }); ok {
-				if err := cw.CloseWrite(); err != nil {
-					s.reset(frame.StreamID, err)
-				}
+		if stream != nil {
+			select {
+			case stream.incoming <- serverStreamEvent{halfClose: true}:
+			case <-stream.done:
 			}
+		}
+	case protocol.TypeWindowUpdate:
+		s.mu.Lock()
+		stream := s.streams[frame.StreamID]
+		s.mu.Unlock()
+		if stream != nil && !stream.sendWindow.add(protocol.DecodeWindowUpdate(frame.Payload)) {
+			s.reset(frame.StreamID, errors.New("invalid stream window update"))
 		}
 	case protocol.TypeClose, protocol.TypeReset:
 		s.remove(frame.StreamID)
@@ -219,10 +244,11 @@ func (s *Server) openListener(id uint32, addr string) {
 			return
 		}
 		streamID := s.nextStream.Add(2)
-		stream := &serverStream{conn: conn, cancel: func() {}}
+		stream := newServerStream(conn, func() {})
 		s.mu.Lock()
 		s.streams[streamID] = stream
 		s.mu.Unlock()
+		go s.writeToRemote(streamID, stream)
 		payload := make([]byte, 4)
 		binary.BigEndian.PutUint32(payload, id)
 		if err := s.send(protocol.Frame{Type: protocol.TypeInboundOpen, StreamID: streamID, Payload: payload}); err != nil {
@@ -259,7 +285,7 @@ func (s *Server) open(id uint32, target string) {
 		return
 	}
 	ctx, cancel := context.WithCancel(s.ctx)
-	stream := &serverStream{cancel: cancel}
+	stream := newServerStream(nil, cancel)
 	s.mu.Lock()
 	if _, exists := s.streams[id]; exists {
 		s.mu.Unlock()
@@ -283,6 +309,7 @@ func (s *Server) open(id uint32, target string) {
 	}
 	current.conn = conn
 	s.mu.Unlock()
+	go s.writeToRemote(id, current)
 	if err := s.send(protocol.Frame{Type: protocol.TypeOpenOK, StreamID: id}); err != nil {
 		s.remove(id)
 		return
@@ -295,6 +322,15 @@ func (s *Server) copyToClient(id uint32, conn net.Conn) {
 	for {
 		n, err := conn.Read(buf)
 		if n > 0 {
+			s.mu.Lock()
+			stream := s.streams[id]
+			s.mu.Unlock()
+			if stream == nil {
+				return
+			}
+			if _, creditErr := stream.sendWindow.take(n, stream.done, time.Time{}); creditErr != nil {
+				return
+			}
 			if sendErr := s.send(protocol.Frame{Type: protocol.TypeData, StreamID: id, Payload: append([]byte(nil), buf[:n]...)}); sendErr != nil {
 				s.remove(id)
 				return
@@ -302,6 +338,44 @@ func (s *Server) copyToClient(id uint32, conn net.Conn) {
 		}
 		if err != nil {
 			s.send(protocol.Frame{Type: protocol.TypeHalfClose, StreamID: id})
+			return
+		}
+	}
+}
+
+func (s *Server) writeToRemote(id uint32, stream *serverStream) {
+	for {
+		select {
+		case event := <-stream.incoming:
+			if event.halfClose {
+				if cw, ok := stream.conn.(interface{ CloseWrite() error }); ok {
+					if err := cw.CloseWrite(); err != nil {
+						s.reset(id, err)
+						return
+					}
+				}
+				continue
+			}
+			written := 0
+			for written < len(event.data) {
+				count, err := stream.conn.Write(event.data[written:])
+				if count > 0 {
+					written += count
+					if sendErr := s.send(protocol.Frame{Type: protocol.TypeWindowUpdate, StreamID: id, Payload: protocol.EncodeWindowUpdate(uint32(count))}); sendErr != nil {
+						s.remove(id)
+						return
+					}
+				}
+				if err != nil {
+					s.reset(id, err)
+					return
+				}
+				if count == 0 {
+					s.reset(id, io.ErrShortWrite)
+					return
+				}
+			}
+		case <-stream.done:
 			return
 		}
 	}
@@ -324,10 +398,13 @@ func (s *Server) remove(id uint32) {
 	delete(s.streams, id)
 	s.mu.Unlock()
 	if stream != nil {
-		stream.cancel()
-		if stream.conn != nil {
-			stream.conn.Close()
-		}
+		stream.closeOnce.Do(func() {
+			close(stream.done)
+			stream.cancel()
+			if stream.conn != nil {
+				_ = stream.conn.Close()
+			}
+		})
 	}
 }
 

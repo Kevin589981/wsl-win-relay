@@ -8,10 +8,12 @@ import (
 )
 
 const (
-	Version        uint8 = 1
-	HeaderSize           = 16
-	MaxPayloadSize       = 1 << 20
-	MaxTargetSize        = 4096
+	Version             uint8 = 1
+	HeaderSize                = 16
+	MaxPayloadSize            = 1 << 20
+	MaxTargetSize             = 4096
+	MaxDataSize               = 32 << 10
+	InitialStreamWindow       = 256 << 10
 )
 
 var magic = [4]byte{'W', 'W', 'R', '1'}
@@ -37,6 +39,7 @@ const (
 	TypeDatagramError
 	TypeDatagramData
 	TypeDatagramClose
+	TypeWindowUpdate
 )
 
 type Frame struct {
@@ -69,6 +72,12 @@ func (f Frame) Validate() error {
 	}
 	if f.Type == TypeDatagramData && len(f.Payload) < 3 {
 		return errors.New("datagram data must contain an endpoint and payload")
+	}
+	if f.Type == TypeData && (len(f.Payload) == 0 || len(f.Payload) > MaxDataSize) {
+		return fmt.Errorf("stream data must be between 1 and %d bytes", MaxDataSize)
+	}
+	if f.Type == TypeWindowUpdate && len(f.Payload) != 4 {
+		return errors.New("window update must contain a byte count")
 	}
 	return nil
 }
@@ -115,7 +124,7 @@ func Read(r io.Reader) (Frame, error) {
 }
 
 func knownType(t Type) bool {
-	return t >= TypeOpen && t <= TypeDatagramClose
+	return t >= TypeOpen && t <= TypeWindowUpdate
 }
 
 func writeFull(w io.Writer, p []byte) error {

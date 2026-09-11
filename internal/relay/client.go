@@ -474,6 +474,10 @@ type clientStream struct {
 	deadlineMu    sync.Mutex
 	readDeadline  time.Time
 	writeDeadline time.Time
+	sendWindow    *flowWindow
+	done          chan struct{}
+	doneOnce      sync.Once
+	halfCloseOnce sync.Once
 }
 
 type streamEvent struct {
@@ -482,7 +486,8 @@ type streamEvent struct {
 }
 
 func newClientStream(c *Client, id uint32, target string) *clientStream {
-	return &clientStream{client: c, id: id, target: target, incoming: make(chan streamEvent, 64), openDone: make(chan error, 1)}
+	queueSize := protocol.InitialStreamWindow/protocol.MaxDataSize + 2
+	return &clientStream{client: c, id: id, target: target, incoming: make(chan streamEvent, queueSize), openDone: make(chan error, 1), sendWindow: newFlowWindow(), done: make(chan struct{})}
 }
 
 func (s *clientStream) handle(frame protocol.Frame) {
@@ -496,6 +501,14 @@ func (s *clientStream) handle(frame protocol.Frame) {
 		select {
 		case s.incoming <- streamEvent{data: append([]byte(nil), frame.Payload...)}:
 		case <-s.client.closed:
+		default:
+			err := errors.New("stream receive window exceeded")
+			_ = s.client.write(protocol.Frame{Type: protocol.TypeReset, StreamID: s.id, Payload: []byte(err.Error())})
+			s.fail(err)
+		}
+	case protocol.TypeWindowUpdate:
+		if !s.sendWindow.add(protocol.DecodeWindowUpdate(frame.Payload)) {
+			s.fail(errors.New("invalid stream window update"))
 		}
 	case protocol.TypeHalfClose:
 		select {
@@ -513,6 +526,7 @@ func (s *clientStream) handle(frame protocol.Frame) {
 
 func (s *clientStream) fail(err error) {
 	s.openOnce.Do(func() { s.openDone <- err })
+	s.doneOnce.Do(func() { close(s.done) })
 	s.stateMu.Lock()
 	if !s.closedRemote {
 		s.closedRemote = true
@@ -529,6 +543,9 @@ func (s *clientStream) Read(p []byte) (int, error) {
 		if len(s.readBuf) > 0 {
 			n := copy(p, s.readBuf)
 			s.readBuf = s.readBuf[n:]
+			if err := s.client.write(protocol.Frame{Type: protocol.TypeWindowUpdate, StreamID: s.id, Payload: protocol.EncodeWindowUpdate(uint32(n))}); err != nil {
+				return n, err
+			}
 			return n, nil
 		}
 		s.deadlineMu.Lock()
@@ -568,24 +585,26 @@ func (s *clientStream) Write(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
-	total := len(p)
+	written := 0
 	for len(p) > 0 {
 		s.deadlineMu.Lock()
 		deadline := s.writeDeadline
 		s.deadlineMu.Unlock()
-		if !deadline.IsZero() && time.Now().After(deadline) {
-			return 0, osTimeout{}
-		}
 		n := len(p)
-		if n > protocol.MaxPayloadSize {
-			n = protocol.MaxPayloadSize
+		if n > protocol.MaxDataSize {
+			n = protocol.MaxDataSize
+		}
+		n, err := s.sendWindow.take(n, s.done, deadline)
+		if err != nil {
+			return written, err
 		}
 		if err := s.client.write(protocol.Frame{Type: protocol.TypeData, StreamID: s.id, Payload: p[:n]}); err != nil {
-			return 0, err
+			return written, err
 		}
 		p = p[n:]
+		written += n
 	}
-	return total, nil
+	return written, nil
 }
 
 func (s *clientStream) Close() error {
@@ -599,7 +618,9 @@ func (s *clientStream) Close() error {
 
 // CloseWrite half-closes the client-to-Windows direction while keeping reads open.
 func (s *clientStream) CloseWrite() error {
-	return s.client.write(protocol.Frame{Type: protocol.TypeHalfClose, StreamID: s.id})
+	var err error
+	s.halfCloseOnce.Do(func() { err = s.client.write(protocol.Frame{Type: protocol.TypeHalfClose, StreamID: s.id}) })
+	return err
 }
 
 func (s *clientStream) LocalAddr() net.Addr  { return relayAddr("wsl") }
