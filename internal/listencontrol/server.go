@@ -21,12 +21,14 @@ type Reservation interface {
 	Close() error
 }
 type ReserveFunc func(context.Context, string, string) (Reservation, error)
+type ReserveDatagramFunc func(context.Context, string, string) (Reservation, error)
 type ProcessIdentityFunc func(int) (string, error)
 
 type Server struct {
 	Path            string
 	WindowsHost     string
 	Reserve         ReserveFunc
+	ReserveDatagram ReserveDatagramFunc
 	ProcessIdentity ProcessIdentityFunc
 	ReapInterval    time.Duration
 	mu              sync.Mutex
@@ -140,8 +142,12 @@ func (s *Server) handleReserve(ctx context.Context, conn net.Conn, parts []strin
 		writeError(conn, 22, "invalid pid")
 		return
 	}
-	if parts[2] != "tcp4" && parts[2] != "tcp6" {
+	if parts[2] != "tcp4" && parts[2] != "tcp6" && parts[2] != "udp4" && parts[2] != "udp6" {
 		writeError(conn, 97, "unsupported network")
+		return
+	}
+	if (parts[2] == "udp4" || parts[2] == "udp6") && s.ReserveDatagram == nil {
+		writeError(conn, 95, "UDP reverse forwarding is unavailable")
 		return
 	}
 	identity, err := s.ProcessIdentity(pid)
@@ -156,20 +162,30 @@ func (s *Server) handleReserve(ctx context.Context, conn net.Conn, parts []strin
 	}
 	windowsAddr := net.JoinHostPort(s.WindowsHost, strconv.Itoa(int(port)))
 	wslHost := "127.0.0.1"
-	if parts[2] == "tcp6" {
+	if parts[2] == "tcp6" || parts[2] == "udp6" {
 		wslHost = "::1"
 	}
 	if len(parts) == 5 && parts[4] != "" {
 		wslHost = parts[4]
-		if parts[2] == "tcp4" && (wslHost == "0.0.0.0" || wslHost == "::") {
+		if (parts[2] == "tcp4" || parts[2] == "udp4") && (wslHost == "0.0.0.0" || wslHost == "::") {
 			wslHost = "127.0.0.1"
 		}
-		if parts[2] == "tcp6" && wslHost == "::" {
+		if (parts[2] == "tcp6" || parts[2] == "udp6") && wslHost == "::" {
 			wslHost = "::1"
 		}
 	}
 	wslTarget := net.JoinHostPort(wslHost, strconv.Itoa(int(port)))
-	reservation, err := s.Reserve(ctx, windowsAddr, wslTarget)
+	var reserve func(context.Context, string, string) (Reservation, error)
+	if parts[2] == "udp4" || parts[2] == "udp6" {
+		reserve = func(reserveCtx context.Context, windows, wsl string) (Reservation, error) {
+			return s.ReserveDatagram(reserveCtx, windows, wsl)
+		}
+	} else {
+		reserve = func(reserveCtx context.Context, windows, wsl string) (Reservation, error) {
+			return s.Reserve(reserveCtx, windows, wsl)
+		}
+	}
+	reservation, err := reserve(ctx, windowsAddr, wslTarget)
 	if err != nil {
 		writeError(conn, errnoFor(err), err.Error())
 		return

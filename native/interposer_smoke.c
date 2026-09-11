@@ -36,6 +36,18 @@ int main(void) {
         close(fd);
         return 7;
     }
+    int udp = socket(AF_INET, SOCK_DGRAM, 0);
+    if (udp < 0) {
+        close(fd);
+        return 8;
+    }
+    address.sin_port = htons(47124);
+    if (bind(udp, (struct sockaddr *)&address, sizeof(address)) < 0) {
+        close(udp);
+        close(fd);
+        return 9;
+    }
+    close(udp);
     pid_t child = fork();
     if (child < 0) {
         close_range((unsigned int)fd, (unsigned int)fd, 0);

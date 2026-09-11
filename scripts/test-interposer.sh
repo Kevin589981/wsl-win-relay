@@ -32,8 +32,8 @@ reserve_count=$(awk '$1 == "RESERVE" { count++ } END { print count + 0 }' "$requ
 commit_count=$(awk '$1 == "COMMIT" { count++ } END { print count + 0 }' "$request_log")
 adopt_count=$(awk '$1 == "ADOPT" { count++ } END { print count + 0 }' "$request_log")
 release_count=$(awk '$1 == "RELEASE" { count++ } END { print count + 0 }' "$request_log")
-[ "$reserve_count" -eq 1 ] || { echo "expected one RESERVE, got $reserve_count" >&2; exit 1; }
+[ "$reserve_count" -eq 2 ] || { echo "expected two RESERVE requests, got $reserve_count" >&2; exit 1; }
 [ "$commit_count" -eq 1 ] || { echo "expected one COMMIT, got $commit_count" >&2; exit 1; }
 [ "$adopt_count" -ge 2 ] || { echo "expected parent and child ADOPT, got $adopt_count" >&2; exit 1; }
-[ "$release_count" -eq 2 ] || { echo "expected one RELEASE per owner, got $release_count" >&2; exit 1; }
-echo "native interposer fork lifecycle passed"
+[ "$release_count" -eq 3 ] || { echo "expected TCP owners plus UDP RELEASE, got $release_count" >&2; exit 1; }
+echo "native interposer TCP/UDP lifecycle passed"

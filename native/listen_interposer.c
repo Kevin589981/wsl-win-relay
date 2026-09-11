@@ -19,6 +19,7 @@
 #include <unistd.h>
 
 typedef int (*listen_fn)(int, int);
+typedef int (*bind_fn)(int, const struct sockaddr *, socklen_t);
 typedef int (*close_fn)(int);
 typedef int (*dup_fn)(int);
 typedef int (*dup2_fn)(int, int);
@@ -36,6 +37,7 @@ struct tracked_fd {
 };
 
 static listen_fn real_listen;
+static bind_fn real_bind;
 static close_fn real_close;
 static dup_fn real_dup;
 static dup2_fn real_dup2;
@@ -84,6 +86,7 @@ static int debug_enabled(void) {
 
 static void initialize(void) {
     real_listen = (listen_fn)dlsym(RTLD_NEXT, "listen");
+    real_bind = (bind_fn)dlsym(RTLD_NEXT, "bind");
     real_close = (close_fn)dlsym(RTLD_NEXT, "close");
     real_dup = (dup_fn)dlsym(RTLD_NEXT, "dup");
     real_dup2 = (dup2_fn)dlsym(RTLD_NEXT, "dup2");
@@ -433,6 +436,68 @@ int listen(int sockfd, int backlog) {
 		errno = ENOMEM;
 		return -1;
 	}
+    return 0;
+}
+
+int bind(int sockfd, const struct sockaddr *address, socklen_t address_length) {
+    pthread_once(&init_once, initialize);
+    if (real_bind == NULL) {
+        errno = ENOSYS;
+        return -1;
+    }
+    if (find_tracked(sockfd) || address == NULL) {
+        return real_bind(sockfd, address, address_length);
+    }
+    int socket_type = 0;
+    socklen_t type_length = sizeof(socket_type);
+    if (getsockopt(sockfd, SOL_SOCKET, SO_TYPE, &socket_type, &type_length) < 0 || socket_type != SOCK_DGRAM) {
+        return real_bind(sockfd, address, address_length);
+    }
+    const char *network;
+    char host[INET6_ADDRSTRLEN];
+    uint16_t port;
+    if (address->sa_family == AF_INET) {
+        if (address_length < sizeof(struct sockaddr_in)) {
+            return real_bind(sockfd, address, address_length);
+        }
+        network = "udp4";
+        const struct sockaddr_in *ipv4 = (const struct sockaddr_in *)address;
+        port = ntohs(ipv4->sin_port);
+        if (inet_ntop(AF_INET, &ipv4->sin_addr, host, sizeof(host)) == NULL) {
+            return real_bind(sockfd, address, address_length);
+        }
+    } else if (address->sa_family == AF_INET6) {
+        if (address_length < sizeof(struct sockaddr_in6)) {
+            return real_bind(sockfd, address, address_length);
+        }
+        network = "udp6";
+        const struct sockaddr_in6 *ipv6 = (const struct sockaddr_in6 *)address;
+        port = ntohs(ipv6->sin6_port);
+        if (inet_ntop(AF_INET6, &ipv6->sin6_addr, host, sizeof(host)) == NULL) {
+            return real_bind(sockfd, address, address_length);
+        }
+    } else {
+        return real_bind(sockfd, address, address_length);
+    }
+    if (port == 0 || getenv("WSL_WIN_RELAY_CONTROL") == NULL) {
+        return real_bind(sockfd, address, address_length);
+    }
+    uint64_t lease;
+    if (reserve_listener(network, port, host, &lease) < 0) {
+        return -1;
+    }
+    if (real_bind(sockfd, address, address_length) < 0) {
+        int saved = errno;
+        (void)lease_operation("ABORT", lease);
+        errno = saved;
+        return -1;
+    }
+    if (add_tracked(sockfd, lease) < 0) {
+        (void)lease_operation("CLOSE", lease);
+        (void)real_close(sockfd);
+        errno = ENOMEM;
+        return -1;
+    }
     return 0;
 }
 

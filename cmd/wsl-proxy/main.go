@@ -270,6 +270,12 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 	if opts.controlSocket != "" {
 		control := &listencontrol.Server{Path: opts.controlSocket, WindowsHost: opts.strictListenHost, Reserve: func(reserveCtx context.Context, windows, wsl string) (listencontrol.Reservation, error) {
 			return client.ReserveReverseForward(reserveCtx, windows, wsl)
+		}, ReserveDatagram: func(reserveCtx context.Context, windows, wsl string) (listencontrol.Reservation, error) {
+			closer, err := client.ReverseDatagramForward(reserveCtx, windows, wsl)
+			if err != nil {
+				return nil, err
+			}
+			return noCommitReservation{Closer: closer}, nil
 		}}
 		controlDone = make(chan error, 1)
 		go func() { controlDone <- control.Serve(ctx) }()
@@ -348,6 +354,10 @@ func relayArguments(opts options) []string {
 	}
 	return []string{"-upstream-proxy", opts.upstreamProxy}
 }
+
+type noCommitReservation struct{ io.Closer }
+
+func (noCommitReservation) Commit() error { return nil }
 
 func classifyHandshakeError(err error) error {
 	if errors.Is(err, io.EOF) || errors.Is(err, relay.ErrClientClosed) {

@@ -197,6 +197,11 @@ use, the application receives Linux `EADDRINUSE` and its `listen()` fails. If
 Linux itself rejects the listen, the Windows reservation is aborted. Windows
 does not accept clients until both sides have succeeded.
 
+The same coordination applies to non-zero UDP `bind()` calls. A WSL UDP
+service can therefore be exposed on the same Windows port without a manual
+`-reverse-udp` entry. `bind(...:0)` remains native-only so ordinary ephemeral
+UDP clients are not mirrored.
+
 If the control socket is briefly unavailable while the relay is starting or
 recovering, the interposer retries the reservation for up to two seconds.
 Definitive Windows bind errors are returned immediately.
@@ -211,8 +216,9 @@ interposer. `WSL_WIN_RELAY_CONTROL` and `WSL_WIN_RELAY_PRELOAD` override the
 default control socket and shared-library paths.
 
 Strict mode currently covers dynamically linked applications using libc,
-including `dup()`, `dup2()`, `dup3()`, `fcntl(F_DUPFD*)`, `close_range()`, and
-ordinary `fork()` descriptor inheritance. Static or setuid binaries, programs
+including TCP `listen()`, non-zero UDP `bind()`, `dup()`, `dup2()`, `dup3()`,
+`fcntl(F_DUPFD*)`, `close_range()`, and ordinary `fork()` descriptor inheritance.
+Static or setuid binaries, programs
 making raw syscalls, and `clone()`/`vfork()`-specific ownership patterns should
 use automatic polling until a kernel-aware adapter is available. The native
 interposer targets the Linux amd64 build produced by the WSL scripts. The

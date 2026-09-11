@@ -3,6 +3,7 @@ package listencontrol
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -54,6 +55,45 @@ func TestReserveCommitAndClose(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("server did not stop")
+	}
+}
+
+func TestReserveUDP(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "control.sock")
+	reservation := &fakeReservation{}
+	server := &Server{
+		Path:            path,
+		ProcessIdentity: func(int) (string, error) { return "start", nil },
+		Reserve: func(context.Context, string, string) (Reservation, error) {
+			return nil, errors.New("unexpected TCP reserve")
+		},
+		ReserveDatagram: func(_ context.Context, windows, wsl string) (Reservation, error) {
+			if windows != "127.0.0.1:5353" || wsl != "127.0.0.1:5353" {
+				t.Fatalf("UDP mapping %s -> %s", windows, wsl)
+			}
+			return reservation, nil
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(ctx) }()
+	waitForSocket(t, path)
+	response := request(t, path, "RESERVE 123 udp4 5353\n")
+	if !strings.HasPrefix(response, "OK ") {
+		t.Fatalf("UDP reserve: %q", response)
+	}
+	id := strings.TrimSpace(strings.TrimPrefix(response, "OK "))
+	if got := request(t, path, "CLOSE "+id+"\n"); got != "OK\n" {
+		t.Fatalf("UDP close: %q", got)
+	}
+	_, closed := reservation.values()
+	if !closed {
+		t.Fatal("UDP reservation was not closed")
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }
 

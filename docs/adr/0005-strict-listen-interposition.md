@@ -13,11 +13,13 @@ Linux dynamically linked applications can opt into function interposition withou
 
 Provide `libwsl_win_relay_listen.so` and a `wsl-win-relay-run` launcher. The interposer:
 
-1. Intercepts TCP `listen()`.
+1. Intercepts TCP `listen()` and non-zero UDP `bind()`.
 2. Requests a Windows listener reservation over a mode-`0600` Unix socket.
 3. Returns the Windows error to the application if reservation fails.
 4. Calls the real Linux `listen()` only after Windows succeeds.
-5. Commits Windows accepting after Linux succeeds, or aborts on Linux failure.
+5. Commits Windows TCP accepting after Linux succeeds, or aborts on Linux
+   failure. UDP mappings are opened before Linux `bind()` because datagrams do
+   not have an accept queue; a failed Linux bind closes the Windows mapping.
 6. Tracks `dup()`, `dup2()`, `dup3()`, and `fcntl(F_DUPFD*)` aliases, and
    intercepts `close_range()` when it actually closes descriptors; the Windows
    mapping is released only after the final alias in a process is closed.
@@ -48,6 +50,8 @@ Provide `libwsl_win_relay_listen.so` and a `wsl-win-relay-run` launcher. The int
   callback.
 - A `listen()` call can wait up to two seconds when the relay control service
   is restarting or has not started yet.
+- UDP `bind()` calls using port zero are deliberately excluded so ephemeral
+  client sockets are not exposed as Windows listeners.
 
 ## Alternatives Considered
 
