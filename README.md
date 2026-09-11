@@ -218,19 +218,3 @@ present it also installs it under `~/lib`. It then creates a private
 already exist. It rejects symlinked/non-regular config paths and enforces mode
 `0600` on every run. Build with `scripts/build-wsl.sh` first and set the
 Windows `relay_exe` path in the config.
-
-## Transparent mode
-
-For applications without proxy support, install the pinned TUN adapter and keep
-the relay running:
-
-```bash
-./scripts/install-tun2socks.sh
-sudo env WWR_TUN_PROXY=socks5://127.0.0.1:1080 \
-  ./scripts/transparent-relay.sh
-```
-
-The script creates `tun0`, adds split default routes, starts tun2socks, and
-restores routes and the optional DNS file on exit. Set `WWR_DNS=1.1.1.1` when
-WSL DNS is unavailable; set `WWR_UPLINK_INTERFACE` if the default interface
-cannot be detected. Root, `iproute2`, `/dev/net/tun`, and tun2socks are required.
