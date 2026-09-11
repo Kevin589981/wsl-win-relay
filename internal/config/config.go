@@ -11,6 +11,7 @@ import (
 
 type File struct {
 	RelayExecutable   string            `json:"relay_exe"`
+	UpstreamProxy     string            `json:"upstream_proxy"`
 	SOCKS5Listen      string            `json:"socks5_listen"`
 	HTTPConnectListen string            `json:"http_connect_listen"`
 	ControlSocket     string            `json:"control_socket"`

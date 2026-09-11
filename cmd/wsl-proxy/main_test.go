@@ -82,11 +82,11 @@ func TestParsePortSet(t *testing.T) {
 }
 
 func TestParseOptionsSupportsRepeatedMappings(t *testing.T) {
-	opts, err := parseOptions([]string{"-relay-exe", "/mnt/c/relay.exe", "-reverse", "127.0.0.1:80=127.0.0.1:8080", "-reverse", "127.0.0.1:90=127.0.0.1:9090", "-strict-listen-host", "0.0.0.0"})
+	opts, err := parseOptions([]string{"-relay-exe", "/mnt/c/relay.exe", "-upstream-proxy", "socks5h://127.0.0.1:7890", "-reverse", "127.0.0.1:80=127.0.0.1:8080", "-reverse", "127.0.0.1:90=127.0.0.1:9090", "-strict-listen-host", "0.0.0.0"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(opts.reverse) != 2 || opts.strictListenHost != "0.0.0.0" {
+	if len(opts.reverse) != 2 || opts.strictListenHost != "0.0.0.0" || opts.upstreamProxy != "socks5h://127.0.0.1:7890" {
 		t.Fatalf("options: %#v", opts)
 	}
 }

@@ -32,6 +32,7 @@ type options struct {
 	socksListen         string
 	httpListen          string
 	relayExe            string
+	upstreamProxy       string
 	reverse             forward.Mappings
 	autoForward         bool
 	autoForwardHost     string
@@ -112,7 +113,7 @@ func parseOptions(args []string) (options, error) {
 	}
 	opts := options{
 		socksListen: fileConfig.SOCKS5Listen, httpListen: fileConfig.HTTPConnectListen,
-		relayExe: fileConfig.RelayExecutable, autoForward: fileConfig.AutoForward.Enabled,
+		relayExe: fileConfig.RelayExecutable, upstreamProxy: fileConfig.UpstreamProxy, autoForward: fileConfig.AutoForward.Enabled,
 		autoForwardHost: fileConfig.AutoForward.WindowsHost, autoForwardInterval: interval,
 		controlSocket: fileConfig.ControlSocket, strictListenHost: fileConfig.StrictListenHost,
 		udpAssociateIdle: udpAssociateIdle,
@@ -129,6 +130,7 @@ func parseOptions(args []string) (options, error) {
 	set.StringVar(&opts.socksListen, "listen", opts.socksListen, "SOCKS5 listen address")
 	set.StringVar(&opts.httpListen, "http-listen", opts.httpListen, "optional HTTP CONNECT proxy listen address")
 	set.StringVar(&opts.relayExe, "relay-exe", opts.relayExe, "Windows relay executable")
+	set.StringVar(&opts.upstreamProxy, "upstream-proxy", opts.upstreamProxy, "optional Windows-side HTTP CONNECT or SOCKS5 proxy URL")
 	set.Var(&opts.reverse, "reverse", "reverse mapping WINDOWS_ADDR=WSL_TARGET (repeatable)")
 	set.BoolVar(&opts.autoForward, "auto-forward", opts.autoForward, "automatically mirror WSL TCP listeners to Windows")
 	set.StringVar(&opts.autoForwardHost, "auto-forward-host", opts.autoForwardHost, "Windows bind host for automatic mappings")
@@ -209,7 +211,11 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 		defer httpListener.Close()
 	}
 
-	cmd := exec.CommandContext(ctx, opts.relayExe, "win-relay")
+	relayArgs := []string{"win-relay"}
+	if opts.upstreamProxy != "" {
+		relayArgs = append(relayArgs, "-upstream-proxy", opts.upstreamProxy)
+	}
+	cmd := exec.CommandContext(ctx, opts.relayExe, relayArgs...)
 	cmd.Stderr = os.Stderr
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
