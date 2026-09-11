@@ -25,6 +25,9 @@ Provide `libwsl_win_relay_listen.so` and a `wsl-win-relay-run` launcher. The int
    mapping only after every process owner has gone away.
 8. Releases abandoned mappings through the control daemon's process-identity
    lease reaper when an owner exits without callbacks.
+9. Retries only transient control-socket availability errors for a bounded
+   two-second startup/recovery window; definitive Windows bind errors are
+   returned immediately.
 
 ## Consequences
 
@@ -43,6 +46,8 @@ Provide `libwsl_win_relay_listen.so` and a `wsl-win-relay-run` launcher. The int
   native build is Linux amd64, matching the supported WSL binary target.
 - Crash cleanup depends on daemon-side lease reaping rather than a `close()`
   callback.
+- A `listen()` call can wait up to two seconds when the relay control service
+  is restarting or has not started yet.
 
 ## Alternatives Considered
 
