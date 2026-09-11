@@ -14,9 +14,12 @@ The repository is under active implementation. The current milestone is usable a
 - Loopback SOCKS5 no-auth proxy with IPv4, IPv6, and domain CONNECT.
 - TCP half-close propagation so TLS/HTTP clients can finish writes before reading responses.
 - Cross-platform builds and WSL interop integration coverage.
+- Dynamic `/proc/net/tcp{,6}` listener discovery with automatic Windows add/remove.
 - Verified in the target failure mode: WSL could not reach the configured Windows proxy port, while this relay still reached the public Internet and cloned a GitHub repository.
 
-Explicit reverse port forwarding is now implemented: Windows listens on chosen ports and forwards accepted connections to WSL destinations through the same relay. Transparent automatic discovery of arbitrary WSL `listen(2)` calls is the next layer because a user-space process cannot safely steal an already-bound port without kernel/routing support.
+Explicit reverse port forwarding is now implemented: Windows listens on chosen ports and forwards accepted connections to WSL destinations through the same relay. Strict synchronization with arbitrary WSL `listen(2)` calls is the next layer because a polling user-space process cannot change the result of an already-completed system call.
+
+Automatic discovery is available as an opt-in polling mode. It mirrors detected TCP listeners after they begin listening. This provides zero-configuration reachability but cannot retroactively make the application's already-successful `listen(2)` fail when Windows rejects the corresponding port; strict synchronized rejection requires the planned launcher/interposition mode.
 
 ## Security model
 
@@ -80,3 +83,22 @@ owns `0.0.0.0:8000` and forwards each accepted connection. A Windows bind
 conflict is reported during startup. All repeated `-reverse` registrations are
 transactional: if one fails, earlier registrations are removed. Firewall policy
 can still reject later connections, so it must be checked separately.
+
+To discover WSL listeners dynamically and bind matching Windows loopback ports:
+
+```bash
+./bin/wsl-proxy-linux \
+  -relay-exe /mnt/d/Code/net/wsl-win-relay/bin/wsl-win-relay.exe \
+  -auto-forward
+```
+
+Useful controls:
+
+```text
+-auto-forward-host 127.0.0.1       Windows bind host; use 0.0.0.0 deliberately for LAN access
+-auto-forward-include 8000,9000    Optional allowlist; empty means all discovered ports
+-auto-forward-exclude 22,53        Ports that must never be mirrored
+-auto-forward-interval 1s          Discovery interval
+```
+
+The SOCKS5 listener and explicit reverse-forward destinations are excluded automatically. Automatic mappings are removed when their WSL listener disappears.

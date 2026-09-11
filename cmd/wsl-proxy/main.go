@@ -10,9 +10,12 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/Kevin589981/wsl-win-relay/internal/autoforward"
 	"github.com/Kevin589981/wsl-win-relay/internal/forward"
 	"github.com/Kevin589981/wsl-win-relay/internal/relay"
 	"github.com/Kevin589981/wsl-win-relay/internal/socks5"
@@ -24,6 +27,11 @@ func main() {
 	relayExe := flag.String("relay-exe", "wsl-win-relay.exe", "Windows relay executable")
 	var reverseMappings forward.Mappings
 	flag.Var(&reverseMappings, "reverse", "reverse mapping WINDOWS_ADDR=WSL_TARGET (repeatable)")
+	autoForward := flag.Bool("auto-forward", false, "automatically mirror WSL TCP listeners to Windows")
+	autoForwardHost := flag.String("auto-forward-host", "127.0.0.1", "Windows bind host for automatic mappings")
+	autoForwardInterval := flag.Duration("auto-forward-interval", time.Second, "automatic listener scan interval")
+	autoForwardInclude := flag.String("auto-forward-include", "", "comma-separated allowlist of ports for automatic mapping")
+	autoForwardExclude := flag.String("auto-forward-exclude", "", "comma-separated ports excluded from automatic mapping")
 	flag.Parse()
 
 	logger := log.New(os.Stderr, "wsl-proxy: ", log.LstdFlags)
@@ -67,6 +75,25 @@ func main() {
 		logger.Fatalf("listen on %s: %v", *listenAddr, err)
 	}
 	logger.Printf("SOCKS5 listening on %s", listener.Addr())
+	var autoDone chan error
+	if *autoForward {
+		included, parseErr := parsePortSet(*autoForwardInclude)
+		if parseErr != nil {
+			logger.Fatalf("parse -auto-forward-include: %v", parseErr)
+		}
+		excluded, parseErr := parsePortSet(*autoForwardExclude)
+		if parseErr != nil {
+			logger.Fatalf("parse -auto-forward-exclude: %v", parseErr)
+		}
+		addAddressPort(excluded, listener.Addr().String())
+		for _, mapping := range reverseMappings {
+			addAddressPort(excluded, mapping.WSL)
+		}
+		watcher := &autoforward.Watcher{Scanner: autoforward.DefaultProcScanner(), Opener: client, WindowsHost: *autoForwardHost, Interval: *autoForwardInterval, Included: included, Excluded: excluded, Logger: logger}
+		autoDone = make(chan error, 1)
+		go func() { autoDone <- watcher.Run(ctx) }()
+		logger.Printf("automatic forwarding enabled on Windows host %s", *autoForwardHost)
+	}
 	proxy := &socks5.Server{Listener: listener, Dialer: client, Logger: logger}
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- proxy.Serve(ctx) }()
@@ -81,6 +108,10 @@ func main() {
 			logger.Printf("proxy stopped: %v", err)
 		}
 	case <-ctx.Done():
+	case err := <-autoDone:
+		if err != nil {
+			logger.Printf("automatic forwarding stopped: %v", err)
+		}
 	}
 
 	stop()
@@ -97,5 +128,31 @@ func main() {
 	case <-waitDone:
 	case <-time.After(2 * time.Second):
 		logger.Printf("relay process did not exit promptly")
+	}
+}
+
+func parsePortSet(value string) (map[uint16]bool, error) {
+	result := make(map[uint16]bool)
+	if strings.TrimSpace(value) == "" {
+		return result, nil
+	}
+	for _, raw := range strings.Split(value, ",") {
+		port, err := strconv.ParseUint(strings.TrimSpace(raw), 10, 16)
+		if err != nil || port == 0 {
+			return nil, errors.New("ports must be integers between 1 and 65535")
+		}
+		result[uint16(port)] = true
+	}
+	return result, nil
+}
+
+func addAddressPort(set map[uint16]bool, address string) {
+	_, rawPort, err := net.SplitHostPort(address)
+	if err != nil {
+		return
+	}
+	port, err := strconv.ParseUint(rawPort, 10, 16)
+	if err == nil && port != 0 {
+		set[uint16(port)] = true
 	}
 }

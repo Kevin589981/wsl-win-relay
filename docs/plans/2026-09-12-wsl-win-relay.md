@@ -63,3 +63,11 @@ Clone the repository in WSL, build the Linux proxy and Windows relay, exercise `
 ### Task 8: Reverse port forwarding
 
 Extend the protocol with listener registration and inbound stream frames. Add a Windows listener manager and a WSL mapping that dials a configured local destination for each accepted connection. Return Windows bind failures to the WSL process and preserve half-close semantics for forwarded connections. Keep automatic discovery of arbitrary application listeners out of this task; it requires a separate transparent interception adapter.
+
+### Task 9: Automatic WSL listener discovery
+
+Poll `/proc/net/tcp` and `/proc/net/tcp6`, normalize dual-stack listeners, and dynamically reconcile Windows reverse forwards. Provide safe loopback defaults, include/exclude policies, cleanup, retry after Windows rejection, parser tests, and a real WSL-to-Windows lifecycle check.
+
+### Task 10: Strict synchronized listen mode
+
+Design an opt-in launcher/interposition path that registers the Windows listener before the application observes `listen(2)` success. Return the Windows bind error to the application when registration fails. Document unsupported static/setuid binaries and keep polling discovery as the compatibility fallback.
