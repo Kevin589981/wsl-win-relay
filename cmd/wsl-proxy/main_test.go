@@ -66,6 +66,15 @@ func TestNextRestartDelayCapsExponentialBackoff(t *testing.T) {
 	}
 }
 
+func TestResetRestartDelayAfterStableSession(t *testing.T) {
+	if got := resetRestartDelay(30*time.Second, 2*time.Second, time.Minute, time.Minute); got != 2*time.Second {
+		t.Fatalf("reset delay=%s", got)
+	}
+	if got := resetRestartDelay(30*time.Second, 2*time.Second, 30*time.Second, time.Minute); got != 30*time.Second {
+		t.Fatalf("premature reset delay=%s", got)
+	}
+}
+
 func TestHandshakeFailureClassification(t *testing.T) {
 	if !errors.Is(classifyHandshakeError(io.EOF), errRelayExited) {
 		t.Fatal("EOF should trigger relay restart")

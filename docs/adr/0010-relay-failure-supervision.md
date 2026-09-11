@@ -19,9 +19,10 @@ local listener errors must still be visible instead of being retried forever.
 Treat a relay EOF or broken stdio transport during startup handshake or normal
 operation as a transient session failure. The WSL entrypoint tears down the
 failed session, starts a fresh Windows relay process after a bounded
-exponential backoff (two seconds initially, capped at thirty seconds), performs
-the capability handshake again, and recreates configured reverse mappings and
-control state.
+exponential backoff (two seconds initially, capped at thirty seconds). After a
+session has stayed healthy for at least one minute, a later failure starts again
+at the initial two-second delay. Each restart performs the capability handshake
+again and recreates configured reverse mappings and control state.
 
 Treat local bind errors, invalid configuration, capability mismatches, and
 reverse registration failures during a healthy session as fatal. The existing
@@ -43,6 +44,8 @@ systemd user unit may additionally restart the whole proxy after a fatal exit.
   when the relay session fails.
 - New relay starts back off to thirty seconds at most, avoiding a restart storm
   while keeping recovery automatic.
+- A stable session resets the backoff so a later isolated failure recovers
+  promptly.
 - True in-process hot reconnect would require a session-independent dialer,
   replayable mapping registry, and explicit handling for in-flight requests;
   it remains a future enhancement.

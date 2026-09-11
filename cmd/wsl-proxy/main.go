@@ -51,6 +51,7 @@ var errRelayExited = errors.New("Windows relay exited")
 
 const relayRestartDelay = 2 * time.Second
 const relayRestartMaxDelay = 30 * time.Second
+const relayRestartResetAfter = time.Minute
 
 func main() {
 	logger := log.New(os.Stderr, "wsl-proxy: ", log.LstdFlags)
@@ -69,6 +70,7 @@ func main() {
 
 func supervise(ctx context.Context, opts options, logger *log.Logger, execute func(context.Context, options, *log.Logger) error, restartDelay time.Duration) error {
 	currentDelay := restartDelay
+	sessionStarted := time.Now()
 	for {
 		err := execute(ctx, opts, logger)
 		if err == nil || errors.Is(err, context.Canceled) {
@@ -80,6 +82,7 @@ func supervise(ctx context.Context, opts options, logger *log.Logger, execute fu
 		if !errors.Is(err, errRelayExited) {
 			return err
 		}
+		currentDelay = resetRestartDelay(currentDelay, restartDelay, time.Since(sessionStarted), relayRestartResetAfter)
 		logger.Printf("%v; restarting in %s", err, currentDelay)
 		timer := time.NewTimer(currentDelay)
 		select {
@@ -94,7 +97,15 @@ func supervise(ctx context.Context, opts options, logger *log.Logger, execute fu
 			return ctx.Err()
 		}
 		currentDelay = nextRestartDelay(currentDelay, relayRestartMaxDelay)
+		sessionStarted = time.Now()
 	}
+}
+
+func resetRestartDelay(current, initial, elapsed, threshold time.Duration) time.Duration {
+	if threshold > 0 && elapsed >= threshold {
+		return initial
+	}
+	return current
 }
 
 func nextRestartDelay(current, maximum time.Duration) time.Duration {
