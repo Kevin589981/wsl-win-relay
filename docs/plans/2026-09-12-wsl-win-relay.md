@@ -59,3 +59,7 @@ Run `go test ./...`, build Linux and Windows binaries, and run a local Windows-s
 ### Task 7: Cross-environment verification
 
 Clone the repository in WSL, build the Linux proxy and Windows relay, exercise `curl` through SOCKS5, and record any interop or path quoting issues. Keep this verification separate from protocol unit tests so WSL/HNS failures are distinguishable from application failures.
+
+### Task 8: Reverse port forwarding
+
+Extend the protocol with listener registration and inbound stream frames. Add a Windows listener manager and a WSL mapping that dials a configured local destination for each accepted connection. Return Windows bind failures to the WSL process and preserve half-close semantics for forwarded connections. Keep automatic discovery of arbitrary application listeners out of this task; it requires a separate transparent interception adapter.

@@ -6,7 +6,17 @@ The first release exposes a loopback SOCKS5 proxy inside WSL. A Windows helper p
 
 ## Status
 
-The repository is under active implementation. The initial milestone is SOCKS5 CONNECT for IPv4, IPv6, and domain targets.
+The repository is under active implementation. The current milestone is usable and tested:
+
+- Versioned, bounded multiplexed protocol with explicit stream lifecycle.
+- Stdio transport for WSL-to-Windows process interop.
+- Windows-side WinSock TCP dialing, including Windows-side DNS for domain targets.
+- Loopback SOCKS5 no-auth proxy with IPv4, IPv6, and domain CONNECT.
+- TCP half-close propagation so TLS/HTTP clients can finish writes before reading responses.
+- Cross-platform builds and WSL interop integration coverage.
+- Verified in the target failure mode: WSL could not reach the configured Windows proxy port, while this relay still reached the public Internet and cloned a GitHub repository.
+
+The next milestone is explicit reverse port forwarding: Windows listens on a chosen port and forwards accepted connections to a chosen WSL destination through the same relay. Transparent automatic discovery of arbitrary WSL `listen(2)` calls is intentionally a later layer because a user-space process cannot safely steal an already-bound port without kernel/routing support.
 
 ## Security model
 
@@ -28,6 +38,12 @@ SOCKS5 / future transparent adapters
 ```
 
 See [the implementation plan](docs/plans/2026-09-12-wsl-win-relay.md) and [architecture ADR](docs/adr/0001-layered-relay-architecture.md).
+
+## Port direction semantics
+
+Outbound proxy connections do **not** need matching ports. For a request such as `curl -> example.com:443`, WSL only sends the destination; Windows creates an ordinary outbound socket and chooses an ephemeral source port. Source-port correspondence would add no useful information and would create avoidable collisions.
+
+Inbound exposure is different. A Windows port must be bound before Windows clients can connect. The planned reverse-forward command will therefore look like `windows-port:WSL-address`, for example `8000:127.0.0.1:8000`; the WSL application keeps owning its local `8000`, while the relay owns Windows `8000` and connects to the WSL application for each accepted connection.
 
 ## Build
 
