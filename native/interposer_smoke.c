@@ -51,18 +51,6 @@ int main(void) {
         close(fd);
         return 7;
     }
-    pid_t vchild = vfork();
-    if (vchild < 0) {
-        close(fd);
-        return 14;
-    }
-    if (vchild == 0) {
-        _exit(0);
-    }
-    if (waitpid(vchild, NULL, 0) != vchild) {
-        close(fd);
-        return 15;
-    }
     int udp = socket(AF_INET, SOCK_DGRAM, 0);
     if (udp < 0) {
         close(fd);

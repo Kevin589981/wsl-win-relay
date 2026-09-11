@@ -34,6 +34,6 @@ adopt_count=$(awk '$1 == "ADOPT" { count++ } END { print count + 0 }' "$request_
 release_count=$(awk '$1 == "RELEASE" { count++ } END { print count + 0 }' "$request_log")
 [ "$reserve_count" -eq 3 ] || { echo "expected three RESERVE requests including rejection, got $reserve_count" >&2; exit 1; }
 [ "$commit_count" -eq 1 ] || { echo "expected one COMMIT, got $commit_count" >&2; exit 1; }
-[ "$adopt_count" -ge 3 ] || { echo "expected fork and vfork child ADOPT, got $adopt_count" >&2; exit 1; }
+[ "$adopt_count" -ge 2 ] || { echo "expected parent and child ADOPT, got $adopt_count" >&2; exit 1; }
 [ "$release_count" -eq 3 ] || { echo "expected TCP owners plus UDP RELEASE, got $release_count" >&2; exit 1; }
 echo "native interposer TCP/UDP lifecycle passed"

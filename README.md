@@ -228,8 +228,8 @@ default control socket and shared-library paths.
 Strict mode currently covers dynamically linked applications using libc,
 including TCP `listen()`, non-zero UDP `bind()`, `dup()`, `dup2()`, `dup3()`,
 `fcntl(F_DUPFD*)`, `close_range()`, and ordinary `fork()` descriptor inheritance.
-`vfork()` child ownership adoption is also covered. Static or setuid binaries,
-programs making raw syscalls, and `clone()`-specific ownership patterns should
+Static or setuid binaries, programs
+making raw syscalls, and `clone()`/`vfork()`-specific ownership patterns should
 use automatic polling until a kernel-aware adapter is available. The native
 interposer targets the Linux amd64 build produced by the WSL scripts. The
 daemon tracks multiple process owners and reaps leases from processes that

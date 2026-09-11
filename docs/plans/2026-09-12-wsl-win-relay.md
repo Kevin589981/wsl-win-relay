@@ -25,10 +25,8 @@
 - [ ] Automatic UDP listener discovery. This remains intentionally deferred:
       `/proc/net/udp` does not safely identify server sockets versus ephemeral
       client sockets; use explicit `-reverse-udp` or strict UDP `bind()` mode.
-- [x] `vfork()` descriptor ownership adoption is covered by the native
-      interposer lifecycle test.
 - [ ] Kernel-level coverage for static binaries, raw syscalls, and all
-      `clone()` ownership patterns.
+      `clone()`/`vfork()` ownership patterns.
 - [ ] In-process hot reconnect that preserves existing connections across a
       broken stdio session.
 

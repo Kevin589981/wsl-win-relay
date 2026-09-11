@@ -43,9 +43,8 @@ Provide `libwsl_win_relay_listen.so` and a `wsl-win-relay-run` launcher. The int
 
 - Static binaries, setuid binaries, and programs that bypass libc are not interposed.
 - Descriptor duplication through the standard `dup*()` calls,
-  `fcntl(F_DUPFD*)`, ordinary `fork()`, and `vfork()` child ownership adoption
-  are covered. `clone()` ownership semantics remain outside the interposer
-  contract. The current
+  `fcntl(F_DUPFD*)`, and ordinary `fork()` are covered. `clone()` and `vfork()`
+  ownership semantics remain outside the interposer contract. The current
   native build is Linux amd64, matching the supported WSL binary target.
 - Crash cleanup depends on daemon-side lease reaping rather than a `close()`
   callback.
