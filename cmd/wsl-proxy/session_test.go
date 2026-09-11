@@ -66,6 +66,40 @@ func TestSessionDialerIgnoresStaleSessionClear(t *testing.T) {
 	}
 }
 
+func TestSessionDialerRetriesPacketAfterSessionReplacement(t *testing.T) {
+	oldClient := &fakeSessionClient{packetErr: relay.ErrClientClosed, called: make(chan struct{}, 1)}
+	newClient, packet := newFakePacketClient(t)
+	dialer := newSessionDialer()
+	dialer.set(oldClient)
+
+	type result struct {
+		packet net.PacketConn
+		err    error
+	}
+	done := make(chan result, 1)
+	go func() {
+		value, err := dialer.OpenPacketContext(context.Background())
+		done <- result{packet: value, err: err}
+	}()
+	select {
+	case <-oldClient.called:
+	case <-time.After(time.Second):
+		t.Fatal("old packet session was not used")
+	}
+	dialer.clear(oldClient)
+	dialer.set(newClient)
+	select {
+	case got := <-done:
+		if got.err != nil || got.packet == nil {
+			t.Fatalf("result=%+v", got)
+		}
+		_ = got.packet.Close()
+	case <-time.After(time.Second):
+		t.Fatal("packet dialer did not use replacement session")
+	}
+	_ = packet.Close()
+}
+
 func TestSessionRetryErrorIncludesClosedNetwork(t *testing.T) {
 	if !isSessionRetryError(net.ErrClosed) {
 		t.Fatal("net.ErrClosed should trigger session retry")
@@ -73,9 +107,11 @@ func TestSessionRetryErrorIncludesClosedNetwork(t *testing.T) {
 }
 
 type fakeSessionClient struct {
-	dialErr error
-	conn    net.Conn
-	called  chan struct{}
+	dialErr   error
+	packetErr error
+	conn      net.Conn
+	packet    net.PacketConn
+	called    chan struct{}
 }
 
 func newFakeSessionClient() (*fakeSessionClient, net.Conn) {
@@ -97,5 +133,26 @@ func (f *fakeSessionClient) DialContext(context.Context, string) (net.Conn, erro
 }
 
 func (f *fakeSessionClient) OpenPacketContext(context.Context) (net.PacketConn, error) {
-	return nil, errors.New("packet test client not implemented")
+	if f.called != nil {
+		select {
+		case f.called <- struct{}{}:
+		default:
+		}
+	}
+	if f.packetErr != nil {
+		return nil, f.packetErr
+	}
+	if f.packet == nil {
+		return nil, errors.New("packet test client not implemented")
+	}
+	return f.packet, nil
+}
+
+func newFakePacketClient(t *testing.T) (*fakeSessionClient, net.PacketConn) {
+	t.Helper()
+	packet, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &fakeSessionClient{packet: packet, called: make(chan struct{}, 1)}, packet
 }
