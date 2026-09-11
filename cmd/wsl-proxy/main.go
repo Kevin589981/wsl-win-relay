@@ -329,18 +329,22 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 
 	select {
 	case err := <-relayDone:
+		err = sessionCompletion(ctx, err)
+		if ctx.Err() != nil {
+			return err
+		}
 		if isRelayTransportExit(err) {
 			return errRelayExited
 		}
 		return err
 	case err := <-socksDone:
-		return err
+		return sessionCompletion(ctx, err)
 	case err := <-httpDone:
-		return err
+		return sessionCompletion(ctx, err)
 	case err := <-autoDone:
-		return err
+		return sessionCompletion(ctx, err)
 	case err := <-controlDone:
-		return err
+		return sessionCompletion(ctx, err)
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -348,6 +352,13 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 
 func isRelayTransportExit(err error) bool {
 	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.ErrClosedPipe)
+}
+
+func sessionCompletion(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
 }
 
 func relayArguments(opts options) []string {

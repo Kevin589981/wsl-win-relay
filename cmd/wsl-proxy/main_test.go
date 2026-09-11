@@ -86,6 +86,18 @@ func TestHandshakeTransportExitClassification(t *testing.T) {
 	}
 }
 
+func TestSessionCompletionPrefersContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if !errors.Is(sessionCompletion(ctx, errors.New("listener closed")), context.Canceled) {
+		t.Fatal("context cancellation should win over listener error")
+	}
+	want := errors.New("listener closed")
+	if got := sessionCompletion(context.Background(), want); got != want {
+		t.Fatal("non-canceled session should preserve its error")
+	}
+}
+
 func TestParsePortSet(t *testing.T) {
 	got, err := parsePortSet("53, 1080,8000")
 	if err != nil {
