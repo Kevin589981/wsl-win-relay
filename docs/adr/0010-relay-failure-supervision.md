@@ -34,6 +34,8 @@ systemd user unit may additionally restart the whole proxy after a fatal exit.
 
 - A direct invocation recovers from a crashed or prematurely exited Windows
   relay without requiring systemd.
+- Local SOCKS5 and HTTP listener sockets can stay bound while a replacement
+  relay session is starting; new dial/UDP operations wait for that session.
 - Every new session starts with clean stream IDs, flow-control windows, UDP
   associations, and listener registrations.
 - Real configuration errors are not hidden by an unbounded retry loop.
@@ -41,7 +43,8 @@ systemd user unit may additionally restart the whole proxy after a fatal exit.
 ### Negative
 
 - Existing SOCKS connections and reverse-forward client connections are lost
-  when the relay session fails.
+  when the relay session fails. The reconnecting dialer only covers new local
+  operations; it does not migrate an in-flight protocol stream.
 - New relay starts back off to thirty seconds at most, avoiding a restart storm
   while keeping recovery automatic.
 - A stable session resets the backoff so a later isolated failure recovers

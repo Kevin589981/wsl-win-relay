@@ -296,7 +296,9 @@ transport; startup handshake, reverse registrations, and control sockets are
 recreated on each restart. The proxy also retries a relay-only EOF on its own
 with an exponential backoff from two seconds up to thirty seconds when run
 directly; after a minute of stable operation the next failure starts again at
-two seconds. Configuration and listener errors remain fatal. The
+two seconds. Local SOCKS5/HTTP listener ports stay bound while a replacement
+session starts, and new requests wait for it; in-flight streams still end with
+the failed session. Configuration and listener errors remain fatal. The
 installer copies the built Linux proxy to `~/bin/wsl-proxy-linux`, the service
 wrapper to `~/bin/wsl-win-relay-service`, and the strict-listen launcher to
 `~/bin/wsl-win-relay-run`; when the native library is present it also installs

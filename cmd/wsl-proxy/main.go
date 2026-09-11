@@ -62,7 +62,7 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := supervise(ctx, opts, logger, run, relayRestartDelay); err != nil && !errors.Is(err, context.Canceled) {
+	if err := run(ctx, opts, logger); err != nil && !errors.Is(err, context.Canceled) {
 		logger.Printf("stopped: %v", err)
 		os.Exit(1)
 	}
@@ -245,6 +245,39 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 		}
 		defer httpListener.Close()
 	}
+	dialer := newSessionDialer()
+	logger.Printf("SOCKS5 listening on %s", socksListener.Addr())
+	socksDone := make(chan error, 1)
+	proxy := &socks5.Server{Listener: socksListener, Dialer: dialer, Logger: logger, UDPAssociateIdleTimeout: opts.udpAssociateIdle}
+	go func() { socksDone <- proxy.Serve(ctx) }()
+	var httpDone chan error
+	if httpListener != nil {
+		httpDone = make(chan error, 1)
+		httpProxy := &httpproxy.Server{Listener: httpListener, Dialer: dialer, Logger: logger}
+		go func() { httpDone <- httpProxy.Serve(ctx) }()
+		logger.Printf("HTTP CONNECT proxy listening on %s", httpListener.Addr())
+	}
+	sessionDone := make(chan error, 1)
+	go func() {
+		sessionDone <- supervise(ctx, opts, logger, func(sessionCtx context.Context, sessionOpts options, sessionLogger *log.Logger) error {
+			return runSession(sessionCtx, sessionOpts, sessionLogger, socksListener, httpListener, dialer)
+		}, relayRestartDelay)
+	}()
+	select {
+	case err := <-sessionDone:
+		return err
+	case err := <-socksDone:
+		return sessionCompletion(ctx, err)
+	case err := <-httpDone:
+		return sessionCompletion(ctx, err)
+	case <-parent.Done():
+		return parent.Err()
+	}
+}
+
+func runSession(parent context.Context, opts options, logger *log.Logger, socksListener net.Listener, httpListener net.Listener, dialer *sessionDialer) error {
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
 
 	cmd := exec.CommandContext(ctx, opts.relayExe, relayArguments(opts)...)
 	cmd.Stderr = os.Stderr
@@ -293,6 +326,8 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 	if err != nil {
 		return classifyHandshakeError(err)
 	}
+	dialer.set(client)
+	defer dialer.clear(client)
 	logger.Printf("Windows relay ready (capabilities 0x%x)", capabilities)
 	var controlDone chan error
 	if opts.controlSocket != "" {
@@ -322,18 +357,6 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 	}
 	for _, mapping := range opts.reverseUDP {
 		logger.Printf("reverse UDP forwarding %s -> %s", mapping.Windows, mapping.WSL)
-	}
-
-	logger.Printf("SOCKS5 listening on %s", socksListener.Addr())
-	proxy := &socks5.Server{Listener: socksListener, Dialer: client, Logger: logger, UDPAssociateIdleTimeout: opts.udpAssociateIdle}
-	socksDone := make(chan error, 1)
-	go func() { socksDone <- proxy.Serve(ctx) }()
-	var httpDone chan error
-	if httpListener != nil {
-		httpProxy := &httpproxy.Server{Listener: httpListener, Dialer: client, Logger: logger}
-		httpDone = make(chan error, 1)
-		go func() { httpDone <- httpProxy.Serve(ctx) }()
-		logger.Printf("HTTP CONNECT proxy listening on %s", httpListener.Addr())
 	}
 
 	var autoDone chan error
@@ -367,10 +390,6 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 			return errRelayExited
 		}
 		return err
-	case err := <-socksDone:
-		return sessionCompletion(ctx, err)
-	case err := <-httpDone:
-		return sessionCompletion(ctx, err)
 	case err := <-autoDone:
 		return sessionCompletion(ctx, err)
 	case err := <-controlDone:

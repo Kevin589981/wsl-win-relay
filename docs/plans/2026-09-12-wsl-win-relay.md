@@ -22,6 +22,8 @@
 - [x] systemd user-service installer and private configuration handling.
 - [x] Independent IPv4/IPv6 Windows bind hosts for automatic and strict
       listener mappings.
+- [x] Session-independent local SOCKS5/HTTP listeners with a reconnecting
+      dialer for new requests during relay restarts.
 - [ ] Automatic UDP listener discovery. This remains intentionally deferred:
       `/proc/net/udp` does not safely identify server sockets versus ephemeral
       client sockets; use explicit `-reverse-udp` or strict UDP `bind()` mode.
