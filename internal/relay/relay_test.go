@@ -234,6 +234,60 @@ func TestReverseForward(t *testing.T) {
 	_ = clientSide.Close()
 }
 
+func TestReverseForwardIPv6(t *testing.T) {
+	clientSide, serverSide := net.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := NewServer(serverSide, nil)
+	go func() { _ = server.Serve(ctx) }()
+	client := NewClient(clientSide)
+	go func() { _ = client.Run(ctx) }()
+
+	local, err := net.Listen("tcp6", "[::1]:0")
+	if err != nil {
+		t.Skipf("IPv6 loopback unavailable: %v", err)
+	}
+	defer local.Close()
+	go func() {
+		conn, acceptErr := local.Accept()
+		if acceptErr == nil {
+			_, _ = io.Copy(conn, conn)
+			_ = conn.Close()
+		}
+	}()
+	probe, err := net.Listen("tcp6", "[::1]:0")
+	if err != nil {
+		t.Skipf("IPv6 loopback unavailable: %v", err)
+	}
+	windowsAddr := probe.Addr().String()
+	_ = probe.Close()
+
+	forward, err := client.ReverseForward(ctx, windowsAddr, local.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer forward.Close()
+	conn, err := net.Dial("tcp6", windowsAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err := conn.Write([]byte("reverse-v6")); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 10)
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		t.Fatal(err)
+	}
+	if string(buf) != "reverse-v6" {
+		t.Fatalf("got %q", buf)
+	}
+	_ = client.Close()
+	_ = serverSide.Close()
+	_ = clientSide.Close()
+}
+
 func TestReverseForwardRejectsOccupiedWindowsPort(t *testing.T) {
 	clientSide, serverSide := net.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())
