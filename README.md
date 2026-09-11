@@ -268,6 +268,11 @@ v2.7.0 binary: in a WSL instance with no `eth0` or default route, setting
 relay. The test also verified that the TUN device, split routes, relay process,
 and DNS state were cleaned up afterward.
 
+The same test also passed with the Windows relay configured for
+`socks5h://matebookxpro.local:7890`, demonstrating the intended failure-mode
+path: WSL only reaches its local relay, while Windows resolves and connects to
+the upstream proxy.
+
 ## Long-running service
 
 With WSL systemd enabled, install the user service:
