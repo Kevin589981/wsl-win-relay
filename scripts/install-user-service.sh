@@ -21,15 +21,20 @@ fi
 mkdir -p "$service_dir" "$config_dir"
 chmod 700 "$config_dir"
 install -m 0644 "$repo_dir/systemd/wsl-win-relay.service" "$service_dir/wsl-win-relay.service"
-if [ ! -e "$config_dir/config.json" ]; then
+config_path=$config_dir/config.json
+if [ -L "$config_path" ]; then
+    echo "refusing symlinked config path: $config_path" >&2
+    exit 1
+fi
+if [ ! -e "$config_path" ]; then
     install -m 0600 "$repo_dir/wsl-win-relay.example.json" "$config_dir/config.json"
     echo "created $config_dir/config.json; edit relay_exe before starting" >&2
 fi
-if [ -L "$config_dir/config.json" ] || [ ! -f "$config_dir/config.json" ]; then
-    echo "refusing non-regular config path: $config_dir/config.json" >&2
+if [ ! -f "$config_path" ]; then
+    echo "refusing non-regular config path: $config_path" >&2
     exit 1
 fi
-chmod 600 "$config_dir/config.json"
+chmod 600 "$config_path"
 systemctl --user daemon-reload
 if [ -n "${XDG_CONFIG_HOME:-}" ]; then
     systemctl --user import-environment XDG_CONFIG_HOME
