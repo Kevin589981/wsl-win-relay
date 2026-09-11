@@ -31,7 +31,7 @@ func main() {
 		logger.Printf("upstream proxy: %v", err)
 		os.Exit(2)
 	}
-	server := relay.NewServer(endpoint, dialer.DialContext)
+	server := relay.NewServerWithPacketDialer(endpoint, dialer.DialContext, dialer.OpenPacketContext)
 	if err := server.Serve(context.Background()); err != nil && !errors.Is(err, io.EOF) {
 		logger.Printf("stopped: %v", err)
 		os.Exit(1)

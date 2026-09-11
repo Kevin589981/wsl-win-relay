@@ -89,11 +89,11 @@ mappings. SOCKS5 UDP associations are reclaimed after
 `-udp-associate-idle-timeout` when needed.
 
 Set `upstream_proxy` or `-upstream-proxy` when Windows itself should use an
-HTTP CONNECT or SOCKS5/SOCKS5H proxy for relay TCP egress, for example
-`socks5h://matebookxpro.local:7890`. The default is direct Windows WinSock
-egress. This option currently applies to TCP streams; relay UDP sockets remain
-native Windows UDP so SOCKS5 UDP ASSOCIATE continues to work without an
-upstream proxy.
+upstream proxy, for example `socks5h://matebookxpro.local:7890`. The default
+is direct Windows WinSock egress. SOCKS5/SOCKS5H upstreams proxy both relay
+TCP streams and relay UDP datagrams through UDP ASSOCIATE. HTTP/HTTPS upstreams
+only support TCP CONNECT; relay UDP remains native Windows UDP because HTTP
+CONNECT has no interoperable UDP datagram mode.
 
 Place `wsl-win-relay.exe` somewhere visible to WSL interop (or pass its absolute path with `-relay-exe`) and start:
 

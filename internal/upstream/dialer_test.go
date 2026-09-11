@@ -3,6 +3,7 @@ package upstream
 import (
 	"bufio"
 	"context"
+	"encoding/binary"
 	"io"
 	"net"
 	"strings"
@@ -166,6 +167,105 @@ func TestSOCKS5Dialer(t *testing.T) {
 	_ = conn.Close()
 	if err := <-serverErr; err != nil && !strings.Contains(err.Error(), "closed") {
 		t.Fatal(err)
+	}
+}
+
+func TestSOCKS5PacketDialer(t *testing.T) {
+	udpProxy, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer udpProxy.Close()
+	tcpProxy, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tcpProxy.Close()
+	serverErr := make(chan error, 2)
+	go func() {
+		conn, acceptErr := tcpProxy.Accept()
+		if acceptErr != nil {
+			serverErr <- acceptErr
+			return
+		}
+		defer conn.Close()
+		methods := make([]byte, 3)
+		if _, err := io.ReadFull(conn, methods); err != nil {
+			serverErr <- err
+			return
+		}
+		if methods[0] != 5 || methods[1] != 1 || methods[2] != 0 {
+			serverErr <- io.ErrUnexpectedEOF
+			return
+		}
+		if _, err := conn.Write([]byte{5, 0}); err != nil {
+			serverErr <- err
+			return
+		}
+		request := make([]byte, 10)
+		if _, err := io.ReadFull(conn, request); err != nil {
+			serverErr <- err
+			return
+		}
+		if request[0] != 5 || request[1] != 3 || request[3] != 1 {
+			serverErr <- io.ErrUnexpectedEOF
+			return
+		}
+		port := udpProxy.LocalAddr().(*net.UDPAddr).Port
+		reply := []byte{5, 0, 0, 1, 127, 0, 0, 1, byte(port >> 8), byte(port)}
+		_, writeErr := conn.Write(reply)
+		serverErr <- writeErr
+		if writeErr == nil {
+			_, _ = io.Copy(io.Discard, conn)
+		}
+	}()
+	go func() {
+		buffer := make([]byte, 2048)
+		count, source, readErr := udpProxy.ReadFromUDP(buffer)
+		if readErr != nil {
+			serverErr <- readErr
+			return
+		}
+		if count < 4 || buffer[0] != 0 || buffer[1] != 0 || buffer[2] != 0 || buffer[3] != 1 {
+			serverErr <- io.ErrUnexpectedEOF
+			return
+		}
+		if binary.BigEndian.Uint16(buffer[8:10]) != 5353 || string(buffer[10:count]) != "ping" {
+			serverErr <- io.ErrUnexpectedEOF
+			return
+		}
+		response := append([]byte{0, 0, 0, 1, 8, 8, 8, 8, 0, 53}, []byte("pong")...)
+		_, writeErr := udpProxy.WriteToUDP(response, source)
+		serverErr <- writeErr
+	}()
+
+	dialer, err := New("socks5://" + tcpProxy.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	packet, err := dialer.OpenPacketContext(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer packet.Close()
+	if _, err := packet.WriteTo([]byte("ping"), &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 5353}); err != nil {
+		t.Fatal(err)
+	}
+	buffer := make([]byte, 16)
+	_ = packet.SetReadDeadline(time.Now().Add(time.Second))
+	count, source, err := packet.ReadFrom(buffer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(buffer[:count]) != "pong" || source.String() != "8.8.8.8:53" {
+		t.Fatalf("response %q from %s", buffer[:count], source)
+	}
+	for i := 0; i < 2; i++ {
+		if err := <-serverErr; err != nil && !strings.Contains(err.Error(), "closed") {
+			t.Fatal(err)
+		}
 	}
 }
 

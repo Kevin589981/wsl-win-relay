@@ -1,9 +1,11 @@
 package upstream
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -11,12 +13,17 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 const maxProxyHeader = 64 << 10
 
-// Dialer optionally sends TCP connections through an upstream HTTP CONNECT or
-// SOCKS5 proxy. An empty URL preserves direct WinSock dialing.
+const maxSOCKS5UDPPayload = 65535
+
+// Dialer optionally sends TCP connections and UDP datagrams through an
+// upstream HTTP CONNECT or SOCKS5 proxy. An empty URL preserves direct WinSock
+// dialing.
 type Dialer struct {
 	proxy  *url.URL
 	dialer net.Dialer
@@ -87,6 +94,88 @@ func (d *Dialer) DialContext(ctx context.Context, target string) (net.Conn, erro
 	return conn, nil
 }
 
+// OpenPacketContext opens a UDP PacketConn. SOCKS5 upstreams use UDP
+// ASSOCIATE; HTTP upstreams do not define a UDP tunnel and therefore retain
+// direct native UDP egress.
+func (d *Dialer) OpenPacketContext(ctx context.Context) (net.PacketConn, error) {
+	if d == nil || d.proxy == nil || strings.EqualFold(d.proxy.Scheme, "http") || strings.EqualFold(d.proxy.Scheme, "https") {
+		return net.ListenUDP("udp", nil)
+	}
+	control, err := d.dialer.DialContext(ctx, "tcp", d.proxy.Host)
+	if err != nil {
+		return nil, err
+	}
+	finished := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = control.Close()
+		case <-finished:
+		}
+	}()
+	if err := socks5Handshake(control, d.proxy.User); err != nil {
+		close(finished)
+		_ = control.Close()
+		return nil, err
+	}
+	request := []byte{5, 3, 0, 1, 0, 0, 0, 0, 0, 0}
+	if err := writeAll(control, request); err != nil {
+		close(finished)
+		_ = control.Close()
+		return nil, fmt.Errorf("upstream SOCKS5 UDP associate request: %w", err)
+	}
+	header := make([]byte, 4)
+	if _, err := io.ReadFull(control, header); err != nil {
+		close(finished)
+		_ = control.Close()
+		return nil, fmt.Errorf("read upstream SOCKS5 UDP associate response: %w", err)
+	}
+	if header[0] != 5 || header[1] != 0 {
+		close(finished)
+		_ = control.Close()
+		return nil, fmt.Errorf("upstream SOCKS5 rejected UDP associate with code %d", header[1])
+	}
+	bind, err := readSocksAddress(control, header[3])
+	if err != nil {
+		close(finished)
+		_ = control.Close()
+		return nil, fmt.Errorf("read upstream SOCKS5 UDP relay address: %w", err)
+	}
+	relayHost, _, err := net.SplitHostPort(bind)
+	if err != nil {
+		close(finished)
+		_ = control.Close()
+		return nil, err
+	}
+	if relayHost == "0.0.0.0" || relayHost == "::" || relayHost == "" {
+		relayHost, _, _ = net.SplitHostPort(d.proxy.Host)
+	}
+	_, relayPort, _ := net.SplitHostPort(bind)
+	relayAddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(relayHost, relayPort))
+	if err != nil {
+		close(finished)
+		_ = control.Close()
+		return nil, fmt.Errorf("resolve upstream SOCKS5 UDP relay address: %w", err)
+	}
+	udp, err := net.ListenUDP("udp", nil)
+	if err != nil {
+		close(finished)
+		_ = control.Close()
+		return nil, err
+	}
+	packet := &socks5PacketConn{control: control, udp: udp, relay: relayAddr}
+	close(finished)
+	go func() {
+		<-ctx.Done()
+		_ = packet.Close()
+	}()
+	if err := ctx.Err(); err != nil {
+		_ = packet.Close()
+		return nil, err
+	}
+	return packet, nil
+}
+
 func httpConnect(conn net.Conn, target string, user *url.Userinfo) error {
 	request := "CONNECT " + target + " HTTP/1.1\r\nHost: " + target + "\r\nProxy-Connection: Keep-Alive\r\n"
 	if user != nil {
@@ -148,6 +237,31 @@ func httpConnect(conn net.Conn, target string, user *url.Userinfo) error {
 }
 
 func socks5Connect(conn net.Conn, target string, user *url.Userinfo) error {
+	if err := socks5Handshake(conn, user); err != nil {
+		return err
+	}
+	address, err := encodeTarget(target)
+	if err != nil {
+		return err
+	}
+	request := append([]byte{5, 1, 0}, address...)
+	if err := writeAll(conn, request); err != nil {
+		return fmt.Errorf("upstream SOCKS5 connect request: %w", err)
+	}
+	header := make([]byte, 4)
+	if _, err := io.ReadFull(conn, header); err != nil {
+		return fmt.Errorf("read upstream SOCKS5 connect response: %w", err)
+	}
+	if header[0] != 5 || header[1] != 0 {
+		return fmt.Errorf("upstream SOCKS5 rejected target with code %d", header[1])
+	}
+	if _, err := readSocksAddress(conn, header[3]); err != nil {
+		return fmt.Errorf("read upstream SOCKS5 bind address: %w", err)
+	}
+	return nil
+}
+
+func socks5Handshake(conn net.Conn, user *url.Userinfo) error {
 	methods := []byte{0}
 	if user != nil {
 		methods = append(methods, 2)
@@ -187,24 +301,6 @@ func socks5Connect(conn net.Conn, target string, user *url.Userinfo) error {
 	} else if methodReply[1] != 0 {
 		return fmt.Errorf("unsupported upstream SOCKS5 method %d", methodReply[1])
 	}
-	address, err := encodeTarget(target)
-	if err != nil {
-		return err
-	}
-	request := append([]byte{5, 1, 0}, address...)
-	if err := writeAll(conn, request); err != nil {
-		return fmt.Errorf("upstream SOCKS5 connect request: %w", err)
-	}
-	header := make([]byte, 4)
-	if _, err := io.ReadFull(conn, header); err != nil {
-		return fmt.Errorf("read upstream SOCKS5 connect response: %w", err)
-	}
-	if header[0] != 5 || header[1] != 0 {
-		return fmt.Errorf("upstream SOCKS5 rejected target with code %d", header[1])
-	}
-	if err := discardAddress(conn, header[3]); err != nil {
-		return fmt.Errorf("read upstream SOCKS5 bind address: %w", err)
-	}
 	return nil
 }
 
@@ -231,8 +327,9 @@ func encodeTarget(target string) ([]byte, error) {
 	return append([]byte{3, byte(len(host))}, append([]byte(host), byte(port>>8), byte(port))...), nil
 }
 
-func discardAddress(reader io.Reader, addressType byte) error {
+func readSocksAddress(reader io.Reader, addressType byte) (string, error) {
 	var length int
+	var host string
 	switch addressType {
 	case 1:
 		length = 4
@@ -241,16 +338,96 @@ func discardAddress(reader io.Reader, addressType byte) error {
 	case 3:
 		nameLength := []byte{0}
 		if _, err := io.ReadFull(reader, nameLength); err != nil {
-			return err
+			return "", err
 		}
 		length = int(nameLength[0])
 	default:
-		return fmt.Errorf("unsupported address type %d", addressType)
+		return "", fmt.Errorf("unsupported address type %d", addressType)
 	}
 	address := make([]byte, length+2)
-	_, err := io.ReadFull(reader, address)
-	return err
+	if _, err := io.ReadFull(reader, address); err != nil {
+		return "", err
+	}
+	if addressType == 3 {
+		host = string(address[:length])
+	} else {
+		host = net.IP(address[:length]).String()
+	}
+	port := binary.BigEndian.Uint16(address[length:])
+	return net.JoinHostPort(host, strconv.Itoa(int(port))), nil
 }
+
+type socks5PacketConn struct {
+	mu      sync.Mutex
+	control net.Conn
+	udp     *net.UDPConn
+	relay   *net.UDPAddr
+	closed  bool
+}
+
+func (p *socks5PacketConn) ReadFrom(buffer []byte) (int, net.Addr, error) {
+	packet := make([]byte, maxSOCKS5UDPPayload)
+	count, _, err := p.udp.ReadFromUDP(packet)
+	if err != nil {
+		return 0, nil, err
+	}
+	if count < 4 || packet[0] != 0 || packet[1] != 0 || packet[2] != 0 {
+		return 0, nil, errors.New("invalid upstream SOCKS5 UDP packet")
+	}
+	reader := bytes.NewReader(packet[4:count])
+	address, err := readSocksAddress(reader, packet[3])
+	if err != nil {
+		return 0, nil, err
+	}
+	consumed := count - 4 - reader.Len()
+	payload := packet[4+consumed : count]
+	if len(payload) > len(buffer) {
+		copy(buffer, payload[:len(buffer)])
+		return len(buffer), packetAddr(address), io.ErrShortBuffer
+	}
+	copy(buffer, payload)
+	return len(payload), packetAddr(address), nil
+}
+
+func (p *socks5PacketConn) WriteTo(data []byte, address net.Addr) (int, error) {
+	if address == nil {
+		return 0, errors.New("datagram destination is required")
+	}
+	target, err := encodeTarget(address.String())
+	if err != nil {
+		return 0, err
+	}
+	packet := make([]byte, 0, 3+len(target)+len(data))
+	packet = append(packet, 0, 0, 0)
+	packet = append(packet, target...)
+	packet = append(packet, data...)
+	if _, err := p.udp.WriteToUDP(packet, p.relay); err != nil {
+		return 0, err
+	}
+	return len(data), nil
+}
+
+func (p *socks5PacketConn) Close() error {
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return nil
+	}
+	p.closed = true
+	control, udp := p.control, p.udp
+	p.mu.Unlock()
+	_ = control.Close()
+	return udp.Close()
+}
+func (p *socks5PacketConn) LocalAddr() net.Addr                { return p.udp.LocalAddr() }
+func (p *socks5PacketConn) SetDeadline(t time.Time) error      { return p.udp.SetDeadline(t) }
+func (p *socks5PacketConn) SetReadDeadline(t time.Time) error  { return p.udp.SetReadDeadline(t) }
+func (p *socks5PacketConn) SetWriteDeadline(t time.Time) error { return p.udp.SetWriteDeadline(t) }
+
+type packetAddr string
+
+func (a packetAddr) Network() string { return "udp" }
+func (a packetAddr) String() string  { return string(a) }
 
 func writeAll(writer io.Writer, data []byte) error {
 	for len(data) > 0 {

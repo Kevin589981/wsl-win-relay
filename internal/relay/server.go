@@ -14,10 +14,12 @@ import (
 )
 
 type DialContextFunc func(context.Context, string) (net.Conn, error)
+type PacketDialContextFunc func(context.Context) (net.PacketConn, error)
 
 type Server struct {
 	rw         io.ReadWriter
 	dial       DialContextFunc
+	packetDial PacketDialContextFunc
 	writeMu    sync.Mutex
 	mu         sync.Mutex
 	streams    map[uint32]*serverStream
@@ -57,7 +59,21 @@ func NewServer(rw io.ReadWriter, dial DialContextFunc) *Server {
 			return d.DialContext(ctx, "tcp", target)
 		}
 	}
-	return &Server{rw: rw, dial: dial, streams: make(map[uint32]*serverStream), listeners: make(map[uint32]*serverListener), datagrams: make(map[uint32]*serverDatagram)}
+	packetDial := func(context.Context) (net.PacketConn, error) { return net.ListenUDP("udp", nil) }
+	return NewServerWithPacketDialer(rw, dial, packetDial)
+}
+
+func NewServerWithPacketDialer(rw io.ReadWriter, dial DialContextFunc, packetDial PacketDialContextFunc) *Server {
+	if dial == nil {
+		d := &net.Dialer{}
+		dial = func(ctx context.Context, target string) (net.Conn, error) {
+			return d.DialContext(ctx, "tcp", target)
+		}
+	}
+	if packetDial == nil {
+		packetDial = func(context.Context) (net.PacketConn, error) { return net.ListenUDP("udp", nil) }
+	}
+	return &Server{rw: rw, dial: dial, packetDial: packetDial, streams: make(map[uint32]*serverStream), listeners: make(map[uint32]*serverListener), datagrams: make(map[uint32]*serverDatagram)}
 }
 
 func (s *Server) Serve(ctx context.Context) error {
@@ -130,14 +146,14 @@ func (s *Server) handle(frame protocol.Frame) {
 }
 
 type serverDatagram struct {
-	conn      *net.UDPConn
+	conn      net.PacketConn
 	incoming  chan []byte
 	done      chan struct{}
 	closeOnce sync.Once
 }
 
 func (s *Server) openDatagram(id uint32) {
-	conn, err := net.ListenUDP("udp", nil)
+	conn, err := s.packetDial(s.ctx)
 	if err != nil {
 		_ = s.send(protocol.Frame{Type: protocol.TypeDatagramError, StreamID: id, Payload: []byte(err.Error())})
 		return
@@ -188,7 +204,7 @@ func (s *Server) writeDatagrams(id uint32, datagram *serverDatagram) {
 				s.datagramError(id, err)
 				continue
 			}
-			if _, err := datagram.conn.WriteToUDP(data, address); err != nil {
+			if _, err := datagram.conn.WriteTo(data, address); err != nil {
 				s.datagramError(id, err)
 			}
 		case <-datagram.done:
@@ -197,10 +213,10 @@ func (s *Server) writeDatagrams(id uint32, datagram *serverDatagram) {
 	}
 }
 
-func (s *Server) readDatagrams(id uint32, conn *net.UDPConn) {
+func (s *Server) readDatagrams(id uint32, conn net.PacketConn) {
 	buffer := make([]byte, 65535)
 	for {
-		count, source, err := conn.ReadFromUDP(buffer)
+		count, source, err := conn.ReadFrom(buffer)
 		if err != nil {
 			return
 		}
