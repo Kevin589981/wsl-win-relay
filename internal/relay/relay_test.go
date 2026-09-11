@@ -1,11 +1,13 @@
 package relay
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -556,6 +558,47 @@ func TestServerDatagramReadErrorRemovesAssociation(t *testing.T) {
 	}
 }
 
+func TestDatagramDecodeErrorsUseMatchingFrameType(t *testing.T) {
+	tests := []struct {
+		name string
+		kind protocol.Type
+		run  func(*Server) func()
+	}{
+		{name: "outbound", kind: protocol.TypeDatagramError, run: func(server *Server) func() {
+			datagram := &serverDatagram{incoming: make(chan []byte, 1), done: make(chan struct{})}
+			go server.writeDatagrams(2, datagram)
+			datagram.incoming <- []byte{1}
+			return func() { close(datagram.done) }
+		}},
+		{name: "reverse", kind: protocol.TypeListenDatagramError, run: func(server *Server) func() {
+			datagram := &serverReverseDatagram{incoming: make(chan []byte, 1), done: make(chan struct{})}
+			go server.writeReverseDatagrams(2, datagram)
+			datagram.incoming <- []byte{1}
+			return func() { close(datagram.done) }
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			capture := &frameCapture{done: make(chan struct{})}
+			server := NewServer(capture, nil)
+			stop := test.run(server)
+			defer stop()
+			select {
+			case <-capture.done:
+			case <-time.After(time.Second):
+				t.Fatal("error frame was not written")
+			}
+			frame, err := protocol.Read(bytes.NewReader(capture.Bytes()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if frame.Type != test.kind {
+				t.Fatalf("frame type=%v, want %v", frame.Type, test.kind)
+			}
+		})
+	}
+}
+
 func TestSlowStreamDoesNotBlockOtherStreams(t *testing.T) {
 	clientSide, serverSide := net.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -637,6 +680,30 @@ type discardReadWriter struct{}
 
 func (*discardReadWriter) Read([]byte) (int, error)    { return 0, io.EOF }
 func (*discardReadWriter) Write(p []byte) (int, error) { return len(p), nil }
+
+type frameCapture struct {
+	mu     sync.Mutex
+	data   bytes.Buffer
+	writes int
+	done   chan struct{}
+}
+
+func (w *frameCapture) Read([]byte) (int, error) { return 0, io.EOF }
+func (w *frameCapture) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	_, _ = w.data.Write(p)
+	w.writes++
+	if w.writes == 2 {
+		close(w.done)
+	}
+	return len(p), nil
+}
+func (w *frameCapture) Bytes() []byte {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]byte(nil), w.data.Bytes()...)
+}
 
 type blockingWriteReadWriter struct{ unblock chan struct{} }
 

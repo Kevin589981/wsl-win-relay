@@ -208,7 +208,7 @@ func (s *Server) writeDatagrams(id uint32, datagram *serverDatagram) {
 		case payload := <-datagram.incoming:
 			target, data, err := protocol.DecodeDatagram(payload)
 			if err != nil {
-				s.reverseDatagramError(id, err)
+				s.datagramError(id, err)
 				continue
 			}
 			var writeErr error
@@ -326,7 +326,7 @@ func (s *Server) writeReverseDatagrams(id uint32, datagram *serverReverseDatagra
 		case payload := <-datagram.incoming:
 			target, data, err := protocol.DecodeDatagram(payload)
 			if err != nil {
-				s.datagramError(id, err)
+				s.reverseDatagramError(id, err)
 				continue
 			}
 			address, err := net.ResolveUDPAddr("udp", target)
