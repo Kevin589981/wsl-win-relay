@@ -11,7 +11,12 @@ TCP CONNECT does not cover DNS, QUIC, or other UDP applications. Treating UDP as
 
 Give each UDP association a Windows-side UDP socket. Carry every packet in one bounded frame containing a textual endpoint and the unchanged datagram payload. SOCKS5 UDP ASSOCIATE owns one such relay socket and ends when its TCP control connection closes.
 
-Domain destinations remain textual until Windows resolves them. Response frames contain the source endpoint observed by Windows. The SOCKS adapter accepts packets only from the TCP client's IP and remembers the client's UDP endpoint from valid packets.
+Domain destinations remain textual through the relay protocol. Native Windows
+UDP resolves them before sending; a SOCKS5H upstream can instead receive the
+domain form and resolve it remotely. Response frames contain the source
+endpoint observed by the selected packet path. The SOCKS adapter accepts
+packets only from the TCP client's IP and remembers the client's UDP endpoint
+from valid packets.
 
 Reject SOCKS packets with `FRAG != 0`; common SOCKS clients do not implement the optional fragmentation mechanism and silently inventing reassembly rules would be unsafe.
 
