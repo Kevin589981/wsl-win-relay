@@ -99,6 +99,44 @@ func TestReapsLeaseWhenProcessIdentityDisappears(t *testing.T) {
 	}
 }
 
+func TestAdoptAndReleaseKeepsLeaseUntilLastOwner(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "control.sock")
+	reservation := &fakeReservation{}
+	server := &Server{
+		Path:            path,
+		ProcessIdentity: func(int) (string, error) { return "start", nil },
+		Reserve:         func(context.Context, string, string) (Reservation, error) { return reservation, nil },
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(ctx) }()
+	waitForSocket(t, path)
+	response := request(t, path, "RESERVE 123 tcp4 8001\n")
+	id := strings.TrimSpace(strings.TrimPrefix(response, "OK "))
+	if got := request(t, path, "ADOPT 456 "+id+"\n"); got != "OK\n" {
+		t.Fatalf("adopt: %q", got)
+	}
+	if got := request(t, path, "RELEASE 123 "+id+"\n"); got != "OK\n" {
+		t.Fatalf("release parent: %q", got)
+	}
+	_, closed := reservation.values()
+	if closed {
+		t.Fatal("lease closed while child owner remained")
+	}
+	if got := request(t, path, "RELEASE 456 "+id+"\n"); got != "OK\n" {
+		t.Fatalf("release child: %q", got)
+	}
+	_, closed = reservation.values()
+	if !closed {
+		t.Fatal("lease remained open after final owner release")
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPrepareSocketPathRefusesRegularFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "control.sock")
 	if err := os.WriteFile(path, []byte("keep"), 0o600); err != nil {

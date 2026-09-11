@@ -19,9 +19,11 @@ Provide `libwsl_win_relay_listen.so` and a `wsl-win-relay-run` launcher. The int
 4. Calls the real Linux `listen()` only after Windows succeeds.
 5. Commits Windows accepting after Linux succeeds, or aborts on Linux failure.
 6. Tracks `dup()`, `dup2()`, and `dup3()` aliases and releases the Windows
-   mapping only after the final alias is closed.
-7. Releases abandoned mappings through the control daemon's process-identity
-   lease reaper when the owner exits without callbacks.
+   mapping only after the final alias in a process is closed.
+7. Registers inherited leases for ordinary `fork()` children and releases a
+   mapping only after every process owner has gone away.
+8. Releases abandoned mappings through the control daemon's process-identity
+   lease reaper when an owner exits without callbacks.
 
 ## Consequences
 
@@ -34,9 +36,9 @@ Provide `libwsl_win_relay_listen.so` and a `wsl-win-relay-run` launcher. The int
 ### Negative
 
 - Static binaries, setuid binaries, and programs that bypass libc are not interposed.
-- Descriptor duplication through the standard `dup*()` calls is covered, but
-  complex fork ownership remains a limitation until fork-aware tracking is
-  added.
+- Descriptor duplication through the standard `dup*()` calls and ordinary
+  `fork()` are covered. `clone()` and `vfork()` ownership semantics remain
+  outside the interposer contract.
 - Crash cleanup depends on daemon-side lease reaping rather than a `close()`
   callback.
 

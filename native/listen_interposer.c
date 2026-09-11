@@ -20,6 +20,7 @@ typedef int (*close_fn)(int);
 typedef int (*dup_fn)(int);
 typedef int (*dup2_fn)(int, int);
 typedef int (*dup3_fn)(int, int, int);
+typedef pid_t (*fork_fn)(void);
 
 struct tracked_lease { uint64_t id; unsigned refs; };
 
@@ -34,9 +35,14 @@ static close_fn real_close;
 static dup_fn real_dup;
 static dup2_fn real_dup2;
 static dup3_fn real_dup3;
+static fork_fn real_fork;
 static pthread_once_t init_once = PTHREAD_ONCE_INIT;
 static pthread_mutex_t tracked_mu = PTHREAD_MUTEX_INITIALIZER;
 static struct tracked_fd *tracked;
+
+static void atfork_prepare(void);
+static void atfork_parent(void);
+static void atfork_child(void);
 
 static int debug_enabled(void) {
     const char *value = getenv("WSL_WIN_RELAY_DEBUG");
@@ -49,6 +55,8 @@ static void initialize(void) {
     real_dup = (dup_fn)dlsym(RTLD_NEXT, "dup");
     real_dup2 = (dup2_fn)dlsym(RTLD_NEXT, "dup2");
     real_dup3 = (dup3_fn)dlsym(RTLD_NEXT, "dup3");
+    real_fork = (fork_fn)dlsym(RTLD_NEXT, "fork");
+    (void)pthread_atfork(atfork_prepare, atfork_parent, atfork_child);
 }
 
 static int write_all(int fd, const char *data, size_t length) {
@@ -142,6 +150,51 @@ static int lease_operation(const char *operation, uint64_t lease) {
     char response[256];
     snprintf(request, sizeof(request), "%s %llu\n", operation, (unsigned long long)lease);
     return control_request(request, response, sizeof(response));
+}
+
+static int adopt_lease(pid_t pid, uint64_t lease) {
+    char request[128];
+    char response[256];
+    snprintf(request, sizeof(request), "ADOPT %ld %llu\n", (long)pid, (unsigned long long)lease);
+    return control_request(request, response, sizeof(response));
+}
+
+static int release_lease(pid_t pid, uint64_t lease) {
+    char request[128];
+    char response[256];
+    snprintf(request, sizeof(request), "RELEASE %ld %llu\n", (long)pid, (unsigned long long)lease);
+    return control_request(request, response, sizeof(response));
+}
+
+static void atfork_prepare(void) {
+    pthread_mutex_lock(&tracked_mu);
+}
+
+static void atfork_parent(void) {
+    pthread_mutex_unlock(&tracked_mu);
+}
+
+static void adopt_tracked_for_pid(pid_t pid) {
+    pthread_mutex_lock(&tracked_mu);
+    for (struct tracked_fd *entry = tracked; entry != NULL; entry = entry->next) {
+        int seen = 0;
+        for (struct tracked_fd *prior = tracked; prior != entry; prior = prior->next) {
+            if (prior->lease == entry->lease) {
+                seen = 1;
+                break;
+            }
+        }
+        if (!seen && adopt_lease(pid, entry->lease->id) < 0 && debug_enabled()) {
+            fprintf(stderr, "wsl-win-relay interposer: ADOPT failed for lease %llu: %s\n",
+                    (unsigned long long)entry->lease->id, strerror(errno));
+        }
+    }
+    pthread_mutex_unlock(&tracked_mu);
+}
+
+static void atfork_child(void) {
+    pthread_mutex_unlock(&tracked_mu);
+    adopt_tracked_for_pid(getpid());
 }
 
 static int find_tracked(int fd) {
@@ -312,7 +365,7 @@ int close(int fd) {
     uint64_t lease = remove_tracked(fd);
     if (lease != 0) {
         int saved = errno;
-        (void)lease_operation("CLOSE", lease);
+        (void)release_lease(getpid(), lease);
         errno = saved;
     }
     return real_close == NULL ? (errno = ENOSYS, -1) : real_close(fd);
@@ -359,4 +412,17 @@ int dup3(int oldfd, int newfd, int flags) {
     }
     if (release != 0) (void)lease_operation("CLOSE", release);
     return result;
+}
+
+pid_t fork(void) {
+    pthread_once(&init_once, initialize);
+    if (real_fork == NULL) {
+        errno = ENOSYS;
+        return -1;
+    }
+    pid_t child = real_fork();
+    if (child > 0) {
+        adopt_tracked_for_pid(child);
+    }
+    return child;
 }

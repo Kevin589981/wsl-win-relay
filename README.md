@@ -169,11 +169,12 @@ interposer. `WSL_WIN_RELAY_CONTROL` and `WSL_WIN_RELAY_PRELOAD` override the
 default control socket and shared-library paths.
 
 Strict mode currently covers dynamically linked applications using libc,
-including `dup()`, `dup2()`, and `dup3()` descriptor duplication. Static or
-setuid binaries, programs making raw syscalls, and fork-heavy ownership
-patterns should use automatic polling until a kernel-aware adapter is
-available. The daemon reaps leases from processes that exit without closing
-their descriptors; fork ownership remains an explicit limitation.
+including `dup()`, `dup2()`, `dup3()`, and ordinary `fork()` descriptor
+inheritance. Static or setuid binaries, programs making raw syscalls, and
+`clone()`/`vfork()`-specific ownership patterns should use automatic polling
+until a kernel-aware adapter is available. The daemon tracks multiple process
+owners and reaps leases from processes that exit without closing their
+descriptors.
 
 ## Transparent mode
 

@@ -36,9 +36,14 @@ type Server struct {
 
 type lease struct {
 	reservation Reservation
-	pid         int
-	identity    string
+	owners      map[int]string
 	committed   bool
+}
+
+type leaseOwner struct {
+	id       uint64
+	pid      int
+	identity string
 }
 
 func (s *Server) Serve(ctx context.Context) error {
@@ -114,6 +119,10 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 		s.handleReserve(ctx, conn, parts)
 	case "COMMIT":
 		s.handleCommit(conn, parts)
+	case "ADOPT":
+		s.handleAdopt(conn, parts)
+	case "RELEASE":
+		s.handleRelease(conn, parts)
 	case "ABORT", "CLOSE":
 		s.handleClose(conn, parts)
 	default:
@@ -168,9 +177,69 @@ func (s *Server) handleReserve(ctx context.Context, conn net.Conn, parts []strin
 	id := s.next.Add(1)
 	s.mu.Lock()
 	s.ensureLeases()
-	s.leases[id] = &lease{reservation: reservation, pid: pid, identity: identity}
+	s.leases[id] = &lease{reservation: reservation, owners: map[int]string{pid: identity}}
 	s.mu.Unlock()
 	_, _ = fmt.Fprintf(conn, "OK %d\n", id)
+}
+
+func (s *Server) handleAdopt(conn net.Conn, parts []string) {
+	id, pid, ok := parseOwnerParts(parts)
+	if !ok {
+		writeError(conn, 22, "ADOPT requires pid and lease")
+		return
+	}
+	identity, err := s.ProcessIdentity(pid)
+	if err != nil {
+		writeError(conn, 3, "adopting process no longer exists")
+		return
+	}
+	s.mu.Lock()
+	l := s.leases[id]
+	if l == nil {
+		s.mu.Unlock()
+		writeError(conn, 2, "unknown lease")
+		return
+	}
+	if l.owners == nil {
+		l.owners = make(map[int]string)
+	}
+	l.owners[pid] = identity
+	s.mu.Unlock()
+	_, _ = io.WriteString(conn, "OK\n")
+}
+
+func (s *Server) handleRelease(conn net.Conn, parts []string) {
+	id, pid, ok := parseOwnerParts(parts)
+	if !ok {
+		writeError(conn, 22, "RELEASE requires pid and lease")
+		return
+	}
+	identity, err := s.ProcessIdentity(pid)
+	if err != nil {
+		// A process can close its final descriptor while /proc is already gone;
+		// the reaper will remove the owner, so make this operation idempotent.
+		_, _ = io.WriteString(conn, "OK\n")
+		return
+	}
+	if reservation := s.removeOwner(id, pid, identity); reservation != nil {
+		_ = reservation.Close()
+	}
+	_, _ = io.WriteString(conn, "OK\n")
+}
+
+func parseOwnerParts(parts []string) (uint64, int, bool) {
+	if len(parts) != 3 {
+		return 0, 0, false
+	}
+	pid, err := strconv.Atoi(parts[1])
+	if err != nil || pid <= 0 {
+		return 0, 0, false
+	}
+	id, err := strconv.ParseUint(parts[2], 10, 64)
+	if err != nil || id == 0 {
+		return 0, 0, false
+	}
+	return id, pid, true
 }
 
 func (s *Server) handleCommit(conn net.Conn, parts []string) {
@@ -226,6 +295,23 @@ func (s *Server) remove(id uint64) {
 	}
 }
 
+func (s *Server) removeOwner(id uint64, pid int, identity string) Reservation {
+	s.mu.Lock()
+	l := s.leases[id]
+	if l == nil || l.owners[pid] != identity {
+		s.mu.Unlock()
+		return nil
+	}
+	delete(l.owners, pid)
+	if len(l.owners) != 0 {
+		s.mu.Unlock()
+		return nil
+	}
+	delete(s.leases, id)
+	s.mu.Unlock()
+	return l.reservation
+}
+
 func (s *Server) closeAll() {
 	s.mu.Lock()
 	leases := s.leases
@@ -250,21 +336,20 @@ func (s *Server) reapLoop(ctx context.Context) {
 }
 
 func (s *Server) reapDeadProcesses() {
-	type owner struct {
-		id       uint64
-		pid      int
-		identity string
-	}
 	s.mu.Lock()
-	owners := make([]owner, 0, len(s.leases))
+	owners := make([]leaseOwner, 0, len(s.leases))
 	for id, l := range s.leases {
-		owners = append(owners, owner{id: id, pid: l.pid, identity: l.identity})
+		for pid, identity := range l.owners {
+			owners = append(owners, leaseOwner{id: id, pid: pid, identity: identity})
+		}
 	}
 	s.mu.Unlock()
 	for _, candidate := range owners {
 		identity, err := s.ProcessIdentity(candidate.pid)
 		if err != nil || identity != candidate.identity {
-			s.remove(candidate.id)
+			if reservation := s.removeOwner(candidate.id, candidate.pid, candidate.identity); reservation != nil {
+				_ = reservation.Close()
+			}
 		}
 	}
 }
