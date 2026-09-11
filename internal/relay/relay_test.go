@@ -254,6 +254,34 @@ func TestReverseForwardRejectsOccupiedWindowsPort(t *testing.T) {
 	_ = clientSide.Close()
 }
 
+func TestReverseForwardCloseBeforeCommit(t *testing.T) {
+	clientSide, serverSide := net.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := NewServer(serverSide, nil)
+	go func() { _ = server.Serve(ctx) }()
+	client := NewClient(clientSide)
+	go func() { _ = client.Run(ctx) }()
+
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := probe.Addr().String()
+	_ = probe.Close()
+	reservation, err := client.ReserveReverseForward(ctx, address, "127.0.0.1:1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reservation.Close(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	_ = client.Close()
+	_ = serverSide.Close()
+	_ = clientSide.Close()
+}
+
 func TestReverseUDPForwardRejectsOccupiedWindowsPort(t *testing.T) {
 	clientSide, serverSide := net.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())

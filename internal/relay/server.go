@@ -349,6 +349,7 @@ func (s *Server) readReverseDatagrams(id uint32, datagram *serverReverseDatagram
 		count, source, err := datagram.conn.ReadFromUDP(buffer)
 		if err != nil {
 			s.removeReverseDatagram(id)
+			_ = s.send(protocol.Frame{Type: protocol.TypeListenDatagramClose, StreamID: id})
 			return
 		}
 		payload, err := protocol.EncodeDatagram(source.String(), buffer[:count])
@@ -390,6 +391,7 @@ func (s *Server) openListener(id uint32, addr string) {
 		return
 	}
 	ctx, cancel := context.WithCancel(s.ctx)
+	listener := &serverListener{listener: ln, cancel: cancel, commit: make(chan struct{})}
 	s.mu.Lock()
 	if _, exists := s.listeners[id]; exists {
 		s.mu.Unlock()
@@ -397,7 +399,7 @@ func (s *Server) openListener(id uint32, addr string) {
 		_ = ln.Close()
 		return
 	}
-	s.listeners[id] = &serverListener{listener: ln, cancel: cancel, commit: make(chan struct{})}
+	s.listeners[id] = listener
 	s.mu.Unlock()
 	if err := s.send(protocol.Frame{Type: protocol.TypeListenOK, StreamID: id}); err != nil {
 		s.removeListener(id)
@@ -407,17 +409,16 @@ func (s *Server) openListener(id uint32, addr string) {
 		<-ctx.Done()
 		_ = ln.Close()
 	}()
-	s.mu.Lock()
-	registered := s.listeners[id]
-	s.mu.Unlock()
 	select {
-	case <-registered.commit:
+	case <-listener.commit:
 	case <-ctx.Done():
 		return
 	}
 	for {
 		conn, acceptErr := ln.Accept()
 		if acceptErr != nil {
+			s.removeListener(id)
+			_ = s.send(protocol.Frame{Type: protocol.TypeListenClose, StreamID: id})
 			return
 		}
 		streamID := s.nextStream.Add(2)
