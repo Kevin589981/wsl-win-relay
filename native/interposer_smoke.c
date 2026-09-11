@@ -48,6 +48,18 @@ int main(void) {
         return 9;
     }
     close(udp);
+    int ephemeral = socket(AF_INET, SOCK_DGRAM, 0);
+    if (ephemeral < 0) {
+        close(fd);
+        return 10;
+    }
+    address.sin_port = 0;
+    if (bind(ephemeral, (struct sockaddr *)&address, sizeof(address)) < 0) {
+        close(ephemeral);
+        close(fd);
+        return 11;
+    }
+    close(ephemeral);
     pid_t child = fork();
     if (child < 0) {
         close_range((unsigned int)fd, (unsigned int)fd, 0);
