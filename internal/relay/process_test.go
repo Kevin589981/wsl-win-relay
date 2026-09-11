@@ -15,8 +15,13 @@ import (
 )
 
 func TestWindowsRelayProcess(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("requires a Windows relay executable")
+	if runtime.GOOS != "windows" && runtime.GOOS != "linux" {
+		t.Skip("requires Windows or WSL interop")
+	}
+	if runtime.GOOS == "linux" {
+		if _, err := os.Stat("/proc/sys/fs/binfmt_misc/WSLInterop"); err != nil {
+			t.Skip("requires WSL interop to launch the Windows relay")
+		}
 	}
 	wd, err := os.Getwd()
 	if err != nil {
