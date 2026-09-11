@@ -6,7 +6,8 @@ The first release exposes a loopback SOCKS5 proxy inside WSL. A Windows helper p
 
 ## Status
 
-The repository is under active implementation. The current TCP milestone is usable and tested:
+The repository is under active implementation. The current TCP/UDP relay
+milestone is usable and tested:
 
 - Versioned, bounded multiplexed protocol with explicit stream lifecycle.
 - Stdio transport for WSL-to-Windows process interop.
@@ -19,6 +20,8 @@ The repository is under active implementation. The current TCP milestone is usab
 - Multiplexed Windows-side UDP sockets with endpoint-preserving datagram frames.
 - SOCKS5 UDP ASSOCIATE for DNS, QUIC-capable clients, and other UDP traffic.
 - Optional HTTP CONNECT proxy for tools that only support `HTTP_PROXY`.
+- Optional Windows-side HTTP CONNECT or SOCKS5/SOCKS5H upstream proxy; SOCKS5
+  upstreams also carry relay UDP via UDP ASSOCIATE.
 - Per-stream 256 KiB credit windows that isolate slow TCP consumers.
 - Startup capability negotiation before any proxy or mapped port is advertised.
 - Idempotent systemd user-service installation with private configuration permissions and restart-on-relay-failure.
@@ -32,7 +35,9 @@ Automatic discovery is available as an opt-in polling mode. It mirrors detected 
 
 - The WSL listener binds to `127.0.0.1` by default.
 - The Windows process reads commands only from its parent process pipes.
-- There is no proxy authentication in the first milestone; do not bind the listener to a LAN address.
+- The WSL-facing SOCKS5 and HTTP listeners have no client authentication; do
+  not bind them to a LAN address. Upstream proxy credentials, when configured,
+  are used only for the Windows-side upstream connection.
 - The relay is intended for the same user's WSL and Windows processes, not as a general network service.
 
 ## Layered adapters
