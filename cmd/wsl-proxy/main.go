@@ -37,11 +37,13 @@ type options struct {
 	reverseUDP          forward.Mappings
 	autoForward         bool
 	autoForwardHost     string
+	autoForwardHost6    string
 	autoForwardInterval time.Duration
 	autoInclude         map[uint16]bool
 	autoExclude         map[uint16]bool
 	controlSocket       string
 	strictListenHost    string
+	strictListenHost6   string
 	udpAssociateIdle    time.Duration
 }
 
@@ -115,8 +117,8 @@ func parseOptions(args []string) (options, error) {
 	opts := options{
 		socksListen: fileConfig.SOCKS5Listen, httpListen: fileConfig.HTTPConnectListen,
 		relayExe: fileConfig.RelayExecutable, upstreamProxy: fileConfig.UpstreamProxy, autoForward: fileConfig.AutoForward.Enabled,
-		autoForwardHost: fileConfig.AutoForward.WindowsHost, autoForwardInterval: interval,
-		controlSocket: fileConfig.ControlSocket, strictListenHost: fileConfig.StrictListenHost,
+		autoForwardHost: fileConfig.AutoForward.WindowsHost, autoForwardHost6: fileConfig.AutoForward.WindowsHost6, autoForwardInterval: interval,
+		controlSocket: fileConfig.ControlSocket, strictListenHost: fileConfig.StrictListenHost, strictListenHost6: fileConfig.StrictListenHost6,
 		udpAssociateIdle: udpAssociateIdle,
 	}
 	for _, mapping := range fileConfig.Reverse {
@@ -141,11 +143,13 @@ func parseOptions(args []string) (options, error) {
 	set.Var(&opts.reverseUDP, "reverse-udp", "reverse UDP mapping WINDOWS_ADDR=WSL_TARGET (repeatable)")
 	set.BoolVar(&opts.autoForward, "auto-forward", opts.autoForward, "automatically mirror WSL TCP listeners to Windows")
 	set.StringVar(&opts.autoForwardHost, "auto-forward-host", opts.autoForwardHost, "Windows bind host for automatic mappings")
+	set.StringVar(&opts.autoForwardHost6, "auto-forward-host6", opts.autoForwardHost6, "Windows IPv6 bind host for automatic mappings")
 	set.DurationVar(&opts.autoForwardInterval, "auto-forward-interval", opts.autoForwardInterval, "automatic listener scan interval")
 	set.StringVar(&include, "auto-forward-include", include, "comma-separated allowlist of ports for automatic mapping")
 	set.StringVar(&exclude, "auto-forward-exclude", exclude, "comma-separated ports excluded from automatic mapping")
 	set.StringVar(&opts.controlSocket, "control-socket", opts.controlSocket, "Unix socket for strict listener coordination; empty disables")
 	set.StringVar(&opts.strictListenHost, "strict-listen-host", opts.strictListenHost, "Windows bind host for strict listener coordination")
+	set.StringVar(&opts.strictListenHost6, "strict-listen-host6", opts.strictListenHost6, "Windows IPv6 bind host for strict listener coordination")
 	set.DurationVar(&opts.udpAssociateIdle, "udp-associate-idle-timeout", opts.udpAssociateIdle, "idle timeout for SOCKS5 UDP associations")
 	if err := set.Parse(args); err != nil {
 		return options{}, err
@@ -268,7 +272,7 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 	logger.Printf("Windows relay ready (capabilities 0x%x)", capabilities)
 	var controlDone chan error
 	if opts.controlSocket != "" {
-		control := &listencontrol.Server{Path: opts.controlSocket, WindowsHost: opts.strictListenHost, Reserve: func(reserveCtx context.Context, windows, wsl string) (listencontrol.Reservation, error) {
+		control := &listencontrol.Server{Path: opts.controlSocket, WindowsHost: opts.strictListenHost, WindowsHost6: opts.strictListenHost6, Reserve: func(reserveCtx context.Context, windows, wsl string) (listencontrol.Reservation, error) {
 			return client.ReserveReverseForward(reserveCtx, windows, wsl)
 		}, ReserveDatagram: func(reserveCtx context.Context, windows, wsl string) (listencontrol.Reservation, error) {
 			closer, err := client.ReverseDatagramForward(reserveCtx, windows, wsl)
@@ -323,10 +327,10 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 			addAddressPort(excluded, mapping.Windows)
 			addAddressPort(excluded, mapping.WSL)
 		}
-		watcher := &autoforward.Watcher{Scanner: autoforward.DefaultProcScanner(), Opener: client, WindowsHost: opts.autoForwardHost, Interval: opts.autoForwardInterval, Included: opts.autoInclude, Excluded: excluded, Logger: logger}
+		watcher := &autoforward.Watcher{Scanner: autoforward.DefaultProcScanner(), Opener: client, WindowsHost: opts.autoForwardHost, WindowsHost6: opts.autoForwardHost6, Interval: opts.autoForwardInterval, Included: opts.autoInclude, Excluded: excluded, Logger: logger}
 		autoDone = make(chan error, 1)
 		go func() { autoDone <- watcher.Run(ctx) }()
-		logger.Printf("automatic forwarding enabled on Windows host %s", opts.autoForwardHost)
+		logger.Printf("automatic forwarding enabled on Windows hosts %s (IPv4), %s (IPv6)", opts.autoForwardHost, opts.autoForwardHost6)
 	}
 
 	select {

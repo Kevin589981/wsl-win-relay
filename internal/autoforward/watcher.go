@@ -17,15 +17,16 @@ type Opener interface {
 }
 
 type Watcher struct {
-	Scanner     Scanner
-	Opener      Opener
-	WindowsHost string
-	Interval    time.Duration
-	Included    map[uint16]bool
-	Excluded    map[uint16]bool
-	Logger      *log.Logger
-	mu          sync.Mutex
-	active      map[uint16]activeMapping
+	Scanner      Scanner
+	Opener       Opener
+	WindowsHost  string
+	WindowsHost6 string
+	Interval     time.Duration
+	Included     map[uint16]bool
+	Excluded     map[uint16]bool
+	Logger       *log.Logger
+	mu           sync.Mutex
+	active       map[uint16]activeMapping
 }
 
 type activeMapping struct {
@@ -39,6 +40,9 @@ func (w *Watcher) Run(ctx context.Context) error {
 	}
 	if w.WindowsHost == "" {
 		w.WindowsHost = "127.0.0.1"
+	}
+	if w.WindowsHost6 == "" {
+		w.WindowsHost6 = "::1"
 	}
 	if w.Interval <= 0 {
 		w.Interval = time.Second
@@ -100,14 +104,18 @@ func (w *Watcher) sync(ctx context.Context) error {
 		if exists && active.listener == listener {
 			continue
 		}
-		windowsAddr := net.JoinHostPort(w.WindowsHost, strconv.Itoa(int(port)))
+		windowsHost := w.WindowsHost
 		wslHost := listener.Host
+		if listener.Network == "tcp6" {
+			windowsHost = w.WindowsHost6
+		}
 		if listener.Network == "tcp4" && (wslHost == "" || wslHost == "0.0.0.0") {
 			wslHost = "127.0.0.1"
 		}
 		if listener.Network == "tcp6" && (wslHost == "" || wslHost == "::") {
 			wslHost = "::1"
 		}
+		windowsAddr := net.JoinHostPort(windowsHost, strconv.Itoa(int(port)))
 		wslTarget := net.JoinHostPort(wslHost, strconv.Itoa(int(port)))
 		closer, openErr := w.Opener.ReverseForward(ctx, windowsAddr, wslTarget)
 		if openErr != nil {

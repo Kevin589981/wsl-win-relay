@@ -27,6 +27,7 @@ type ProcessIdentityFunc func(int) (string, error)
 type Server struct {
 	Path            string
 	WindowsHost     string
+	WindowsHost6    string
 	Reserve         ReserveFunc
 	ReserveDatagram ReserveDatagramFunc
 	ProcessIdentity ProcessIdentityFunc
@@ -54,6 +55,9 @@ func (s *Server) Serve(ctx context.Context) error {
 	}
 	if s.WindowsHost == "" {
 		s.WindowsHost = "127.0.0.1"
+	}
+	if s.WindowsHost6 == "" {
+		s.WindowsHost6 = "::1"
 	}
 	if s.ProcessIdentity == nil {
 		s.ProcessIdentity = procProcessIdentity
@@ -164,9 +168,10 @@ func (s *Server) handleReserve(ctx context.Context, conn net.Conn, parts []strin
 		writeError(conn, 22, "invalid port")
 		return
 	}
-	windowsAddr := net.JoinHostPort(s.WindowsHost, strconv.Itoa(int(port)))
+	windowsHost := s.WindowsHost
 	wslHost := "127.0.0.1"
 	if parts[2] == "tcp6" || parts[2] == "udp6" {
+		windowsHost = s.WindowsHost6
 		wslHost = "::1"
 	}
 	if len(parts) == 5 && parts[4] != "" {
@@ -178,6 +183,7 @@ func (s *Server) handleReserve(ctx context.Context, conn net.Conn, parts []strin
 			wslHost = "::1"
 		}
 	}
+	windowsAddr := net.JoinHostPort(windowsHost, strconv.Itoa(int(port)))
 	wslTarget := net.JoinHostPort(wslHost, strconv.Itoa(int(port)))
 	var reserve func(context.Context, string, string) (Reservation, error)
 	if parts[2] == "udp4" || parts[2] == "udp6" {

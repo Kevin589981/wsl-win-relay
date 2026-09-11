@@ -93,6 +93,37 @@ func TestReserveUDP(t *testing.T) {
 	}
 }
 
+func TestReserveIPv6UsesIPv6WindowsHost(t *testing.T) {
+	reservation := &fakeReservation{}
+	server := &Server{WindowsHost: "127.0.0.1", WindowsHost6: "::", ProcessIdentity: func(int) (string, error) { return "start", nil }, Reserve: func(_ context.Context, windows, wsl string) (Reservation, error) {
+		if windows != "[::]:8000" || wsl != "[::1]:8000" {
+			t.Fatalf("mapping %s -> %s", windows, wsl)
+		}
+		return reservation, nil
+	}}
+	serverSide, clientSide := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		server.handleReserve(context.Background(), serverSide, []string{"RESERVE", "123", "tcp6", "8000"})
+		close(done)
+	}()
+	response := make(chan string, 1)
+	go func() {
+		data, _ := io.ReadAll(clientSide)
+		response <- string(data)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("reserve did not finish")
+	}
+	_ = clientSide.Close()
+	if got := <-response; !strings.HasPrefix(got, "OK ") {
+		t.Fatalf("reserve: %q", got)
+	}
+	_ = serverSide.Close()
+}
+
 func TestReserveClosesLeaseWhenRequesterDisconnects(t *testing.T) {
 	reservation := &fakeReservation{}
 	server := &Server{

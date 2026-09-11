@@ -172,12 +172,17 @@ Useful controls:
 
 ```text
 -auto-forward-host 127.0.0.1       Windows bind host; use 0.0.0.0 deliberately for LAN access
+-auto-forward-host6 ::1             Windows IPv6 bind host; use :: deliberately for LAN access
 -auto-forward-include 8000,9000    Optional allowlist; empty means all discovered ports
 -auto-forward-exclude 22,53        Ports that must never be mirrored
 -auto-forward-interval 1s          Discovery interval
 ```
 
 The SOCKS5 listener and explicit reverse-forward destinations are excluded automatically. Automatic mappings are removed when their WSL listener disappears.
+
+IPv4 and IPv6 Windows bind hosts are configured independently. The defaults are
+`127.0.0.1` and `::1`; set `-strict-listen-host6` and/or `-auto-forward-host6`
+when the Windows-facing IPv6 bind should use another address.
 
 ## Strict synchronized listen
 
@@ -197,7 +202,7 @@ The wrapper waits up to two seconds for the strict-listen control socket and
 fails early with a diagnostic if the relay service is not running.
 
 Before the application's libc `listen()` succeeds, the wrapper reserves
-Windows `127.0.0.1:8000`. If Windows reports that the address is already in
+Windows `127.0.0.1:8000` for IPv4 or `[::1]:8000` for IPv6. If Windows reports that the address is already in
 use, the application receives Linux `EADDRINUSE` and its `listen()` fails. If
 Linux itself rejects the listen, the Windows reservation is aborted. Windows
 does not accept clients until both sides have succeeded.

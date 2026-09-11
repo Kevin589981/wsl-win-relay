@@ -20,6 +20,8 @@
 - [x] Opt-in TUN/tun2socks transparent TCP/UDP routing, including real WSL
       verification while HNS had removed the default route.
 - [x] systemd user-service installer and private configuration handling.
+- [x] Independent IPv4/IPv6 Windows bind hosts for automatic and strict
+      listener mappings.
 - [ ] Automatic UDP listener discovery. This remains intentionally deferred:
       `/proc/net/udp` does not safely identify server sockets versus ephemeral
       client sockets; use explicit `-reverse-udp` or strict UDP `bind()` mode.

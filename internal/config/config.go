@@ -16,6 +16,7 @@ type File struct {
 	HTTPConnectListen string            `json:"http_connect_listen"`
 	ControlSocket     string            `json:"control_socket"`
 	StrictListenHost  string            `json:"strict_listen_host"`
+	StrictListenHost6 string            `json:"strict_listen_host6"`
 	UDPAssociateIdle  string            `json:"udp_associate_idle_timeout"`
 	Reverse           []string          `json:"reverse"`
 	ReverseUDP        []string          `json:"reverse_udp"`
@@ -23,21 +24,23 @@ type File struct {
 }
 
 type AutoForwardConfig struct {
-	Enabled     bool     `json:"enabled"`
-	WindowsHost string   `json:"windows_host"`
-	Interval    string   `json:"interval"`
-	Include     []uint16 `json:"include"`
-	Exclude     []uint16 `json:"exclude"`
+	Enabled      bool     `json:"enabled"`
+	WindowsHost  string   `json:"windows_host"`
+	WindowsHost6 string   `json:"windows_host6"`
+	Interval     string   `json:"interval"`
+	Include      []uint16 `json:"include"`
+	Exclude      []uint16 `json:"exclude"`
 }
 
 func Default() File {
 	return File{
-		RelayExecutable:  "wsl-win-relay.exe",
-		SOCKS5Listen:     "127.0.0.1:1080",
-		ControlSocket:    "/tmp/wsl-win-relay-control.sock",
-		StrictListenHost: "127.0.0.1",
-		UDPAssociateIdle: "5m",
-		AutoForward:      AutoForwardConfig{WindowsHost: "127.0.0.1", Interval: "1s"},
+		RelayExecutable:   "wsl-win-relay.exe",
+		SOCKS5Listen:      "127.0.0.1:1080",
+		ControlSocket:     "/tmp/wsl-win-relay-control.sock",
+		StrictListenHost:  "127.0.0.1",
+		StrictListenHost6: "::1",
+		UDPAssociateIdle:  "5m",
+		AutoForward:       AutoForwardConfig{WindowsHost: "127.0.0.1", WindowsHost6: "::1", Interval: "1s"},
 	}
 }
 

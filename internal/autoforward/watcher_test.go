@@ -66,6 +66,20 @@ func TestWatcherReplacesChangedListenerIdentity(t *testing.T) {
 	}
 }
 
+func TestWatcherUsesIPv6WindowsHostForIPv6Listeners(t *testing.T) {
+	scanner := &sequenceScanner{values: [][]Listener{{{Network: "tcp6", Host: "::1", Port: 8000}}, {}}}
+	opener := &recordingOpener{closed: make(chan string, 1)}
+	w := &Watcher{Scanner: scanner, Opener: opener, WindowsHost: "127.0.0.1", WindowsHost6: "::", Interval: time.Millisecond}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := w.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(opener.opened) == 0 || opener.opened[0] != "[::]:8000=[::1]:8000" {
+		t.Fatalf("opened: %v", opener.opened)
+	}
+}
+
 func TestWatcherDoesNotHoldStateLockWhileClosing(t *testing.T) {
 	closeStarted := make(chan struct{})
 	allowClose := make(chan struct{})
