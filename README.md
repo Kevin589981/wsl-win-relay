@@ -6,7 +6,7 @@ The first release exposes a loopback SOCKS5 proxy inside WSL. A Windows helper p
 
 ## Status
 
-The repository is under active implementation. The current milestone is usable and tested:
+The repository is under active implementation. The current TCP milestone is usable and tested:
 
 - Versioned, bounded multiplexed protocol with explicit stream lifecycle.
 - Stdio transport for WSL-to-Windows process interop.
@@ -16,11 +16,12 @@ The repository is under active implementation. The current milestone is usable a
 - Cross-platform builds and WSL interop integration coverage.
 - Dynamic `/proc/net/tcp{,6}` listener discovery with automatic Windows add/remove.
 - Strict opt-in `listen()` coordination for dynamically linked Linux applications.
+- Multiplexed Windows-side UDP sockets with endpoint-preserving datagram frames.
 - Verified in the target failure mode: WSL could not reach the configured Windows proxy port, while this relay still reached the public Internet and cloned a GitHub repository.
 
-Explicit reverse port forwarding is now implemented: Windows listens on chosen ports and forwards accepted connections to WSL destinations through the same relay. Strict synchronization with arbitrary WSL `listen(2)` calls is the next layer because a polling user-space process cannot change the result of an already-completed system call.
+Explicit reverse port forwarding and strict synchronization with dynamically linked application `listen()` calls are implemented. The broader automatic mode remains polling-based so it can support unmodified applications.
 
-Automatic discovery is available as an opt-in polling mode. It mirrors detected TCP listeners after they begin listening. This provides zero-configuration reachability but cannot retroactively make the application's already-successful `listen(2)` fail when Windows rejects the corresponding port; strict synchronized rejection requires the planned launcher/interposition mode.
+Automatic discovery is available as an opt-in polling mode. It mirrors detected TCP listeners after they begin listening. This provides zero-configuration reachability but cannot retroactively make the application's already-successful `listen(2)` fail when Windows rejects the corresponding port; use the strict launcher when rejection propagation is required.
 
 ## Security model
 

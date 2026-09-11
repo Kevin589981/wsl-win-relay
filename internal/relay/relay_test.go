@@ -201,6 +201,52 @@ func TestInitiatorIDsUseSeparateParity(t *testing.T) {
 	}
 }
 
+func TestClientServerUDPDatagram(t *testing.T) {
+	clientSide, serverSide := net.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := NewServer(serverSide, nil)
+	go func() { _ = server.Serve(ctx) }()
+	client := NewClient(clientSide)
+	go func() { _ = client.Run(ctx) }()
+
+	echo, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer echo.Close()
+	go func() {
+		buffer := make([]byte, 128)
+		count, source, readErr := echo.ReadFromUDP(buffer)
+		if readErr == nil {
+			_, _ = echo.WriteToUDP(buffer[:count], source)
+		}
+	}()
+	packet, err := client.OpenPacketContext(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer packet.Close()
+	_ = packet.SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err := packet.WriteTo([]byte("datagram"), echo.LocalAddr()); err != nil {
+		t.Fatal(err)
+	}
+	buffer := make([]byte, 128)
+	count, source, err := packet.ReadFrom(buffer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(buffer[:count]) != "datagram" {
+		t.Fatalf("got %q", buffer[:count])
+	}
+	if source.String() != echo.LocalAddr().String() {
+		t.Fatalf("source %s, want %s", source, echo.LocalAddr())
+	}
+	_ = client.Close()
+	_ = serverSide.Close()
+	_ = clientSide.Close()
+}
+
 type discardReadWriter struct{}
 
 func (*discardReadWriter) Read([]byte) (int, error)    { return 0, io.EOF }

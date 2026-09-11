@@ -32,6 +32,11 @@ const (
 	TypeInboundOpen
 	TypeListenClose
 	TypeListenCommit
+	TypeDatagramOpen
+	TypeDatagramOK
+	TypeDatagramError
+	TypeDatagramData
+	TypeDatagramClose
 )
 
 type Frame struct {
@@ -50,7 +55,7 @@ func (f Frame) Validate() error {
 	if len(f.Payload) > MaxPayloadSize {
 		return fmt.Errorf("payload exceeds %d bytes", MaxPayloadSize)
 	}
-	if (f.Type == TypeOpenOK || f.Type == TypeHalfClose || f.Type == TypeClose || f.Type == TypeListenOK || f.Type == TypeListenClose || f.Type == TypeListenCommit) && len(f.Payload) != 0 {
+	if (f.Type == TypeOpenOK || f.Type == TypeHalfClose || f.Type == TypeClose || f.Type == TypeListenOK || f.Type == TypeListenClose || f.Type == TypeListenCommit || f.Type == TypeDatagramOpen || f.Type == TypeDatagramOK || f.Type == TypeDatagramClose) && len(f.Payload) != 0 {
 		return fmt.Errorf("frame type %d must have an empty payload", f.Type)
 	}
 	if f.Type == TypeOpen && (len(f.Payload) == 0 || len(f.Payload) > MaxTargetSize) {
@@ -61,6 +66,9 @@ func (f Frame) Validate() error {
 	}
 	if f.Type == TypeInboundOpen && len(f.Payload) != 4 {
 		return errors.New("inbound open must contain a listener id")
+	}
+	if f.Type == TypeDatagramData && len(f.Payload) < 3 {
+		return errors.New("datagram data must contain an endpoint and payload")
 	}
 	return nil
 }
@@ -107,7 +115,7 @@ func Read(r io.Reader) (Frame, error) {
 }
 
 func knownType(t Type) bool {
-	return t >= TypeOpen && t <= TypeListenCommit
+	return t >= TypeOpen && t <= TypeDatagramClose
 }
 
 func writeFull(w io.Writer, p []byte) error {

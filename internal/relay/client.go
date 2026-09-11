@@ -22,6 +22,7 @@ type Client struct {
 	mu        sync.Mutex
 	streams   map[uint32]*clientStream
 	listeners map[uint32]*clientListener
+	datagrams map[uint32]*clientPacketConn
 	nextID    atomic.Uint32
 	closed    chan struct{}
 	closeOne  sync.Once
@@ -29,9 +30,34 @@ type Client struct {
 }
 
 func NewClient(rw io.ReadWriter) *Client {
-	c := &Client{rw: rw, streams: make(map[uint32]*clientStream), listeners: make(map[uint32]*clientListener), closed: make(chan struct{})}
+	c := &Client{rw: rw, streams: make(map[uint32]*clientStream), listeners: make(map[uint32]*clientListener), datagrams: make(map[uint32]*clientPacketConn), closed: make(chan struct{})}
 	c.nextID.Store(^uint32(0))
 	return c
+}
+
+func (c *Client) OpenPacketContext(ctx context.Context) (net.PacketConn, error) {
+	id := c.nextID.Add(2)
+	p := &clientPacketConn{client: c, id: id, ready: make(chan error, 1), incoming: make(chan packetEvent, 64)}
+	c.mu.Lock()
+	c.datagrams[id] = p
+	c.mu.Unlock()
+	if err := c.write(protocol.Frame{Type: protocol.TypeDatagramOpen, StreamID: id}); err != nil {
+		c.removeDatagram(id)
+		return nil, err
+	}
+	select {
+	case err := <-p.ready:
+		if err != nil {
+			c.removeDatagram(id)
+			return nil, err
+		}
+		return p, nil
+	case <-ctx.Done():
+		_ = p.Close()
+		return nil, ctx.Err()
+	case <-c.closed:
+		return nil, ErrClientClosed
+	}
 }
 
 // Run reads and dispatches frames until the transport closes or ctx is canceled.
@@ -164,6 +190,15 @@ func (c *Client) write(frame protocol.Frame) error {
 }
 
 func (c *Client) dispatch(frame protocol.Frame) {
+	if frame.Type == protocol.TypeDatagramOK || frame.Type == protocol.TypeDatagramError || frame.Type == protocol.TypeDatagramData || frame.Type == protocol.TypeDatagramClose {
+		c.mu.Lock()
+		packet := c.datagrams[frame.StreamID]
+		c.mu.Unlock()
+		if packet != nil {
+			packet.handle(frame)
+		}
+		return
+	}
 	if frame.Type == protocol.TypeListenOK || frame.Type == protocol.TypeListenError {
 		c.mu.Lock()
 		l := c.listeners[frame.StreamID]
@@ -216,12 +251,153 @@ func (c *Client) fail(err error) {
 		}
 		c.streams = make(map[uint32]*clientStream)
 		c.listeners = make(map[uint32]*clientListener)
+		datagrams := make([]*clientPacketConn, 0, len(c.datagrams))
+		for _, packet := range c.datagrams {
+			datagrams = append(datagrams, packet)
+		}
+		c.datagrams = make(map[uint32]*clientPacketConn)
 		c.mu.Unlock()
 		for _, s := range streams {
 			s.fail(err)
 		}
+		for _, packet := range datagrams {
+			packet.fail(err)
+		}
 	})
 }
+
+func (c *Client) removeDatagram(id uint32) { c.mu.Lock(); delete(c.datagrams, id); c.mu.Unlock() }
+
+type packetEvent struct {
+	endpoint string
+	data     []byte
+	err      error
+}
+type clientPacketConn struct {
+	client        *Client
+	id            uint32
+	ready         chan error
+	readyOnce     sync.Once
+	incoming      chan packetEvent
+	closeOnce     sync.Once
+	deadlineMu    sync.Mutex
+	readDeadline  time.Time
+	writeDeadline time.Time
+}
+
+func (p *clientPacketConn) handle(frame protocol.Frame) {
+	switch frame.Type {
+	case protocol.TypeDatagramOK:
+		p.readyOnce.Do(func() { p.ready <- nil })
+	case protocol.TypeDatagramError:
+		err := errors.New(string(frame.Payload))
+		p.readyOnce.Do(func() { p.ready <- err })
+		p.fail(err)
+	case protocol.TypeDatagramData:
+		endpoint, data, err := protocol.DecodeDatagram(frame.Payload)
+		if err != nil {
+			p.fail(err)
+			return
+		}
+		select {
+		case p.incoming <- packetEvent{endpoint: endpoint, data: append([]byte(nil), data...)}:
+		case <-p.client.closed:
+		}
+	case protocol.TypeDatagramClose:
+		p.fail(io.EOF)
+	}
+}
+
+func (p *clientPacketConn) fail(err error) {
+	p.readyOnce.Do(func() { p.ready <- err })
+	select {
+	case p.incoming <- packetEvent{err: err}:
+	default:
+	}
+}
+
+func (p *clientPacketConn) ReadFrom(buffer []byte) (int, net.Addr, error) {
+	p.deadlineMu.Lock()
+	deadline := p.readDeadline
+	p.deadlineMu.Unlock()
+	var timer *time.Timer
+	var timeout <-chan time.Time
+	if !deadline.IsZero() {
+		duration := time.Until(deadline)
+		if duration <= 0 {
+			return 0, nil, osTimeout{}
+		}
+		timer = time.NewTimer(duration)
+		timeout = timer.C
+		defer timer.Stop()
+	}
+	select {
+	case event := <-p.incoming:
+		if event.err != nil {
+			return 0, nil, event.err
+		}
+		if len(event.data) > len(buffer) {
+			copy(buffer, event.data[:len(buffer)])
+			return len(buffer), relayAddr(event.endpoint), io.ErrShortBuffer
+		}
+		n := copy(buffer, event.data)
+		return n, relayAddr(event.endpoint), nil
+	case <-timeout:
+		return 0, nil, osTimeout{}
+	case <-p.client.closed:
+		return 0, nil, ErrClientClosed
+	}
+}
+
+func (p *clientPacketConn) WriteTo(data []byte, address net.Addr) (int, error) {
+	if address == nil {
+		return 0, errors.New("datagram destination is required")
+	}
+	p.deadlineMu.Lock()
+	deadline := p.writeDeadline
+	p.deadlineMu.Unlock()
+	if !deadline.IsZero() && time.Now().After(deadline) {
+		return 0, osTimeout{}
+	}
+	payload, err := protocol.EncodeDatagram(address.String(), data)
+	if err != nil {
+		return 0, err
+	}
+	if err := p.client.write(protocol.Frame{Type: protocol.TypeDatagramData, StreamID: p.id, Payload: payload}); err != nil {
+		return 0, err
+	}
+	return len(data), nil
+}
+
+func (p *clientPacketConn) Close() error {
+	p.closeOnce.Do(func() {
+		_ = p.client.write(protocol.Frame{Type: protocol.TypeDatagramClose, StreamID: p.id})
+		p.client.removeDatagram(p.id)
+		p.fail(io.EOF)
+	})
+	return nil
+}
+func (p *clientPacketConn) LocalAddr() net.Addr { return relayAddr("wsl-udp") }
+func (p *clientPacketConn) SetDeadline(t time.Time) error {
+	p.deadlineMu.Lock()
+	p.readDeadline, p.writeDeadline = t, t
+	p.deadlineMu.Unlock()
+	return nil
+}
+func (p *clientPacketConn) SetReadDeadline(t time.Time) error {
+	p.deadlineMu.Lock()
+	p.readDeadline = t
+	p.deadlineMu.Unlock()
+	return nil
+}
+func (p *clientPacketConn) SetWriteDeadline(t time.Time) error {
+	p.deadlineMu.Lock()
+	p.writeDeadline = t
+	p.deadlineMu.Unlock()
+	return nil
+}
+
+var _ net.PacketConn = (*clientPacketConn)(nil)
 
 func (c *Client) removeListener(id uint32) { c.mu.Lock(); delete(c.listeners, id); c.mu.Unlock() }
 

@@ -71,3 +71,7 @@ Poll `/proc/net/tcp` and `/proc/net/tcp6`, normalize dual-stack listeners, and d
 ### Task 10: Strict synchronized listen mode
 
 Design an opt-in launcher/interposition path that registers the Windows listener before the application observes `listen(2)` success. Return the Windows bind error to the application when registration fails. Document unsupported static/setuid binaries and keep polling discovery as the compatibility fallback.
+
+### Task 11: UDP relay and SOCKS5 UDP ASSOCIATE
+
+Add endpoint-preserving datagram frames and Windows UDP socket lifecycle management. Then implement SOCKS5 UDP ASSOCIATE, including domain destinations, source endpoint responses, association ownership, timeouts, and malformed or fragmented packet rejection.

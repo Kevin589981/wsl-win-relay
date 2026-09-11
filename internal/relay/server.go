@@ -20,6 +20,7 @@ type Server struct {
 	mu         sync.Mutex
 	streams    map[uint32]*serverStream
 	listeners  map[uint32]*serverListener
+	datagrams  map[uint32]*serverDatagram
 	nextStream atomic.Uint32
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -37,7 +38,7 @@ func NewServer(rw io.ReadWriter, dial DialContextFunc) *Server {
 			return d.DialContext(ctx, "tcp", target)
 		}
 	}
-	return &Server{rw: rw, dial: dial, streams: make(map[uint32]*serverStream), listeners: make(map[uint32]*serverListener)}
+	return &Server{rw: rw, dial: dial, streams: make(map[uint32]*serverStream), listeners: make(map[uint32]*serverListener), datagrams: make(map[uint32]*serverDatagram)}
 }
 
 func (s *Server) Serve(ctx context.Context) error {
@@ -62,6 +63,12 @@ func (s *Server) handle(frame protocol.Frame) {
 		s.removeListener(frame.StreamID)
 	case protocol.TypeListenCommit:
 		s.commitListener(frame.StreamID)
+	case protocol.TypeDatagramOpen:
+		go s.openDatagram(frame.StreamID)
+	case protocol.TypeDatagramData:
+		s.writeDatagram(frame.StreamID, frame.Payload)
+	case protocol.TypeDatagramClose:
+		s.removeDatagram(frame.StreamID)
 	case protocol.TypeData:
 		s.mu.Lock()
 		stream := s.streams[frame.StreamID]
@@ -84,6 +91,82 @@ func (s *Server) handle(frame protocol.Frame) {
 		}
 	case protocol.TypeClose, protocol.TypeReset:
 		s.remove(frame.StreamID)
+	}
+}
+
+type serverDatagram struct{ conn *net.UDPConn }
+
+func (s *Server) openDatagram(id uint32) {
+	conn, err := net.ListenUDP("udp", nil)
+	if err != nil {
+		_ = s.send(protocol.Frame{Type: protocol.TypeDatagramError, StreamID: id, Payload: []byte(err.Error())})
+		return
+	}
+	s.mu.Lock()
+	if _, exists := s.datagrams[id]; exists {
+		s.mu.Unlock()
+		_ = conn.Close()
+		return
+	}
+	s.datagrams[id] = &serverDatagram{conn: conn}
+	s.mu.Unlock()
+	if err := s.send(protocol.Frame{Type: protocol.TypeDatagramOK, StreamID: id}); err != nil {
+		s.removeDatagram(id)
+		return
+	}
+	go s.readDatagrams(id, conn)
+}
+
+func (s *Server) writeDatagram(id uint32, payload []byte) {
+	target, data, err := protocol.DecodeDatagram(payload)
+	if err != nil {
+		s.datagramError(id, err)
+		return
+	}
+	address, err := net.ResolveUDPAddr("udp", target)
+	if err != nil {
+		s.datagramError(id, err)
+		return
+	}
+	s.mu.Lock()
+	datagram := s.datagrams[id]
+	s.mu.Unlock()
+	if datagram == nil {
+		return
+	}
+	if _, err := datagram.conn.WriteToUDP(data, address); err != nil {
+		s.datagramError(id, err)
+	}
+}
+
+func (s *Server) readDatagrams(id uint32, conn *net.UDPConn) {
+	buffer := make([]byte, 65535)
+	for {
+		count, source, err := conn.ReadFromUDP(buffer)
+		if err != nil {
+			return
+		}
+		payload, err := protocol.EncodeDatagram(source.String(), buffer[:count])
+		if err != nil {
+			continue
+		}
+		if err := s.send(protocol.Frame{Type: protocol.TypeDatagramData, StreamID: id, Payload: payload}); err != nil {
+			s.removeDatagram(id)
+			return
+		}
+	}
+}
+
+func (s *Server) datagramError(id uint32, err error) {
+	_ = s.send(protocol.Frame{Type: protocol.TypeDatagramError, StreamID: id, Payload: []byte(err.Error())})
+}
+func (s *Server) removeDatagram(id uint32) {
+	s.mu.Lock()
+	datagram := s.datagrams[id]
+	delete(s.datagrams, id)
+	s.mu.Unlock()
+	if datagram != nil {
+		_ = datagram.conn.Close()
 	}
 }
 
@@ -260,6 +343,15 @@ func (s *Server) shutdown() {
 	s.mu.Unlock()
 	for _, id := range listenerIDs {
 		s.removeListener(id)
+	}
+	s.mu.Lock()
+	datagramIDs := make([]uint32, 0, len(s.datagrams))
+	for id := range s.datagrams {
+		datagramIDs = append(datagramIDs, id)
+	}
+	s.mu.Unlock()
+	for _, id := range datagramIDs {
+		s.removeDatagram(id)
 	}
 	s.mu.Lock()
 	ids := make([]uint32, 0, len(s.streams))
