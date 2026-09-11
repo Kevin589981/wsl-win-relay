@@ -164,6 +164,11 @@ use, the application receives Linux `EADDRINUSE` and its `listen()` fails. If
 Linux itself rejects the listen, the Windows reservation is aborted. Windows
 does not accept clients until both sides have succeeded.
 
+This propagates bind/listen errors, not later firewall policy. A Windows
+firewall rule that drops or rejects clients after the socket is bound does not
+make the Windows `bind()` fail, so it cannot be reflected in the original WSL
+`listen()` call.
+
 Set `WSL_WIN_RELAY_DEBUG=1` to print control requests and responses from the
 interposer. `WSL_WIN_RELAY_CONTROL` and `WSL_WIN_RELAY_PRELOAD` override the
 default control socket and shared-library paths.
