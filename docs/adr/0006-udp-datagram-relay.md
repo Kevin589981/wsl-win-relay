@@ -32,4 +32,7 @@ Reject SOCKS packets with `FRAG != 0`; common SOCKS clients do not implement the
 
 - Datagram loss can occur under transport failure; UDP has no retransmission contract.
 - SOCKS5 clients must support UDP ASSOCIATE.
-- Transparent UDP still requires a future TUN or interception adapter.
+- Transparent UDP is available through the opt-in TUN adapter, which requires
+  root, `/dev/net/tun`, `iproute2`, and the pinned tun2socks binary. Automatic
+  UDP listener discovery remains intentionally separate because procfs does
+  not safely distinguish server sockets from ephemeral client sockets.
