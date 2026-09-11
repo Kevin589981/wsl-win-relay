@@ -125,14 +125,19 @@ func TestStreamCloseUnblocksRead(t *testing.T) {
 }
 
 func TestPacketCloseUnblocksRead(t *testing.T) {
-	packet := &clientPacketConn{client: NewClient(&discardReadWriter{}), id: 1, ready: make(chan error, 1), incoming: make(chan packetEvent, 1), done: make(chan struct{})}
+	writer := &blockingWriteReadWriter{unblock: make(chan struct{})}
+	packet := &clientPacketConn{client: NewClient(writer), id: 1, ready: make(chan error, 1), incoming: make(chan packetEvent, 1), done: make(chan struct{})}
 	result := make(chan error, 1)
 	go func() {
 		_, _, err := packet.ReadFrom(make([]byte, 1))
 		result <- err
 	}()
 	time.Sleep(10 * time.Millisecond)
-	_ = packet.Close()
+	closeDone := make(chan struct{})
+	go func() {
+		_ = packet.Close()
+		close(closeDone)
+	}()
 	select {
 	case err := <-result:
 		if !errors.Is(err, io.EOF) {
@@ -140,6 +145,12 @@ func TestPacketCloseUnblocksRead(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("packet read remained blocked after close")
+	}
+	close(writer.unblock)
+	select {
+	case <-closeDone:
+	case <-time.After(time.Second):
+		t.Fatal("packet close remained blocked after writer release")
 	}
 }
 
