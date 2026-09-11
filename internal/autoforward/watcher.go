@@ -80,15 +80,19 @@ func (w *Watcher) sync(ctx context.Context) error {
 		desired[listener.Port] = listener
 	}
 	w.mu.Lock()
+	var removed []activeMapping
 	for port, mapping := range w.active {
 		desiredListener, ok := desired[port]
 		if !ok || desiredListener != mapping.listener {
-			_ = mapping.closer.Close()
+			removed = append(removed, mapping)
 			delete(w.active, port)
 			w.Logger.Printf("auto-forward removed Windows port %d", port)
 		}
 	}
 	w.mu.Unlock()
+	for _, mapping := range removed {
+		w.closeMapping(mapping.closer)
+	}
 	for port, listener := range desired {
 		w.mu.Lock()
 		active, exists := w.active[port]
@@ -110,13 +114,17 @@ func (w *Watcher) sync(ctx context.Context) error {
 			w.Logger.Printf("auto-forward rejected %s -> %s: %v", windowsAddr, wslTarget, openErr)
 			continue
 		}
+		var closeAfterUnlock io.Closer
 		w.mu.Lock()
 		if _, stillDesired := desired[port]; stillDesired {
 			w.active[port] = activeMapping{listener: listener, closer: closer}
 		} else {
-			_ = closer.Close()
+			closeAfterUnlock = closer
 		}
 		w.mu.Unlock()
+		if closeAfterUnlock != nil {
+			w.closeMapping(closeAfterUnlock)
+		}
 		w.Logger.Printf("auto-forward added %s -> %s", windowsAddr, wslTarget)
 	}
 	return nil
@@ -128,6 +136,12 @@ func (w *Watcher) closeAll() {
 	w.active = make(map[uint16]activeMapping)
 	w.mu.Unlock()
 	for _, mapping := range active {
-		_ = mapping.closer.Close()
+		w.closeMapping(mapping.closer)
+	}
+}
+
+func (w *Watcher) closeMapping(closer io.Closer) {
+	if err := closer.Close(); err != nil {
+		w.Logger.Printf("auto-forward close: %v", err)
 	}
 }

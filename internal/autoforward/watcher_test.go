@@ -3,6 +3,7 @@ package autoforward
 import (
 	"context"
 	"io"
+	"log"
 	"sync"
 	"testing"
 	"time"
@@ -65,6 +66,33 @@ func TestWatcherReplacesChangedListenerIdentity(t *testing.T) {
 	}
 }
 
+func TestWatcherDoesNotHoldStateLockWhileClosing(t *testing.T) {
+	closeStarted := make(chan struct{})
+	allowClose := make(chan struct{})
+	opener := &blockingCloseOpener{started: closeStarted, allow: allowClose}
+	w := &Watcher{Scanner: opener, Opener: opener, Logger: log.New(io.Discard, "", 0), active: map[uint16]activeMapping{
+		8000: {listener: Listener{Network: "tcp4", Port: 8000}, closer: opener},
+	}}
+
+	done := make(chan error, 1)
+	go func() { done <- w.sync(context.Background()) }()
+	select {
+	case <-closeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("close was not started")
+	}
+	w.mu.Lock()
+	_, stillActive := w.active[8000]
+	w.mu.Unlock()
+	if stillActive {
+		t.Fatal("removed mapping remained active while close was blocked")
+	}
+	close(allowClose)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 type sequenceScanner struct {
 	mu     sync.Mutex
 	values [][]Listener
@@ -99,6 +127,25 @@ func (o *recordingOpener) ReverseForward(_ context.Context, windows, wsl string)
 type closeRecorder struct {
 	value string
 	out   chan string
+}
+
+type blockingCloseOpener struct {
+	started chan struct{}
+	allow   chan struct{}
+}
+
+func (o *blockingCloseOpener) Scan() ([]Listener, error) { return nil, nil }
+func (o *blockingCloseOpener) ReverseForward(context.Context, string, string) (io.Closer, error) {
+	return o, nil
+}
+func (o *blockingCloseOpener) Close() error {
+	select {
+	case <-o.started:
+	default:
+		close(o.started)
+	}
+	<-o.allow
+	return nil
 }
 
 func (c closeRecorder) Close() error {
