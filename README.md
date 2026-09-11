@@ -292,10 +292,10 @@ Re-running the installer updates the installed binaries and unit, then
 restarts the user service so the new configuration is active immediately.
 
 The service restarts the proxy after a Windows relay crash or broken stdio
-transport; startup handshake,
-reverse registrations, and control sockets are recreated on each restart. The
-proxy also retries a relay-only EOF on its own with a two-second backoff when
-run directly, while configuration and listener errors remain fatal. The
+transport; startup handshake, reverse registrations, and control sockets are
+recreated on each restart. The proxy also retries a relay-only EOF on its own
+with an exponential backoff from two seconds up to thirty seconds when run
+directly, while configuration and listener errors remain fatal. The
 installer copies the built Linux proxy to `~/bin/wsl-proxy-linux`, the service
 wrapper to `~/bin/wsl-win-relay-service`, and the strict-listen launcher to
 `~/bin/wsl-win-relay-run`; when the native library is present it also installs

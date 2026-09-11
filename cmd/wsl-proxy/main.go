@@ -50,6 +50,7 @@ type options struct {
 var errRelayExited = errors.New("Windows relay exited")
 
 const relayRestartDelay = 2 * time.Second
+const relayRestartMaxDelay = 30 * time.Second
 
 func main() {
 	logger := log.New(os.Stderr, "wsl-proxy: ", log.LstdFlags)
@@ -67,6 +68,7 @@ func main() {
 }
 
 func supervise(ctx context.Context, opts options, logger *log.Logger, execute func(context.Context, options, *log.Logger) error, restartDelay time.Duration) error {
+	currentDelay := restartDelay
 	for {
 		err := execute(ctx, opts, logger)
 		if err == nil || errors.Is(err, context.Canceled) {
@@ -78,8 +80,8 @@ func supervise(ctx context.Context, opts options, logger *log.Logger, execute fu
 		if !errors.Is(err, errRelayExited) {
 			return err
 		}
-		logger.Printf("%v; restarting in %s", err, restartDelay)
-		timer := time.NewTimer(restartDelay)
+		logger.Printf("%v; restarting in %s", err, currentDelay)
+		timer := time.NewTimer(currentDelay)
 		select {
 		case <-timer.C:
 		case <-ctx.Done():
@@ -91,7 +93,18 @@ func supervise(ctx context.Context, opts options, logger *log.Logger, execute fu
 			}
 			return ctx.Err()
 		}
+		currentDelay = nextRestartDelay(currentDelay, relayRestartMaxDelay)
 	}
+}
+
+func nextRestartDelay(current, maximum time.Duration) time.Duration {
+	if current <= 0 || maximum <= 0 {
+		return current
+	}
+	if current >= maximum || current > maximum/2 {
+		return maximum
+	}
+	return current * 2
 }
 
 func parseOptions(args []string) (options, error) {

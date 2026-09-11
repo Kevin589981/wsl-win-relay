@@ -54,6 +54,18 @@ func TestSupervisePrefersContextCancellation(t *testing.T) {
 	}
 }
 
+func TestNextRestartDelayCapsExponentialBackoff(t *testing.T) {
+	if got := nextRestartDelay(2*time.Second, 30*time.Second); got != 4*time.Second {
+		t.Fatalf("first backoff=%s", got)
+	}
+	if got := nextRestartDelay(20*time.Second, 30*time.Second); got != 30*time.Second {
+		t.Fatalf("capped backoff=%s", got)
+	}
+	if got := nextRestartDelay(30*time.Second, 30*time.Second); got != 30*time.Second {
+		t.Fatalf("stable cap=%s", got)
+	}
+}
+
 func TestHandshakeFailureClassification(t *testing.T) {
 	if !errors.Is(classifyHandshakeError(io.EOF), errRelayExited) {
 		t.Fatal("EOF should trigger relay restart")
