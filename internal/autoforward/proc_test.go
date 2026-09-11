@@ -1,9 +1,26 @@
 package autoforward
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestProcScannerAllowsMissingIPv6Table(t *testing.T) {
+	dir := t.TempDir()
+	tcpPath := filepath.Join(dir, "tcp")
+	if err := os.WriteFile(tcpPath, []byte("  sl  local_address rem_address   st tx_queue rx_queue\n   0: 0100007F:1F40 00000000:0000 0A 00000000:00000000\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	listeners, err := (ProcScanner{TCPPath: tcpPath, TCP6Path: filepath.Join(dir, "missing-tcp6")}).Scan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listeners) != 1 || listeners[0].Port != 8000 {
+		t.Fatalf("listeners=%#v", listeners)
+	}
+}
 
 func TestParseProcNetFindsListeningPorts(t *testing.T) {
 	fixture := `  sl  local_address rem_address   st tx_queue rx_queue

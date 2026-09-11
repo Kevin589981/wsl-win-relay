@@ -3,6 +3,7 @@ package autoforward
 import (
 	"bufio"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -32,6 +33,9 @@ func (s ProcScanner) Scan() ([]Listener, error) {
 	for _, source := range []struct{ path, network string }{{s.TCPPath, "tcp4"}, {s.TCP6Path, "tcp6"}} {
 		file, err := os.Open(source.path)
 		if err != nil {
+			if source.network == "tcp6" && errors.Is(err, os.ErrNotExist) {
+				continue
+			}
 			return nil, fmt.Errorf("open %s: %w", source.path, err)
 		}
 		got, parseErr := parseProcNet(file, source.network)
