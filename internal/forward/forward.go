@@ -2,8 +2,11 @@ package forward
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -18,7 +21,26 @@ func ParseMapping(value string) (Mapping, error) {
 	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
 		return Mapping{}, fmt.Errorf("invalid reverse mapping %q; expected WINDOWS_ADDR=WSL_TARGET", value)
 	}
-	return Mapping{Windows: strings.TrimSpace(parts[0]), WSL: strings.TrimSpace(parts[1])}, nil
+	windows, wsl := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+	if err := validateEndpoint(windows); err != nil {
+		return Mapping{}, fmt.Errorf("invalid Windows address %q: %w", windows, err)
+	}
+	if err := validateEndpoint(wsl); err != nil {
+		return Mapping{}, fmt.Errorf("invalid WSL target %q: %w", wsl, err)
+	}
+	return Mapping{Windows: windows, WSL: wsl}, nil
+}
+
+func validateEndpoint(value string) error {
+	_, rawPort, err := net.SplitHostPort(value)
+	if err != nil {
+		return errors.New("expected host:port")
+	}
+	port, err := strconv.ParseUint(rawPort, 10, 16)
+	if err != nil || port == 0 {
+		return errors.New("port must be an integer between 1 and 65535")
+	}
+	return nil
 }
 
 type Mappings []Mapping

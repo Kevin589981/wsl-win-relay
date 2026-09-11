@@ -22,6 +22,14 @@ func TestMappingsAcceptRepeatedValues(t *testing.T) {
 	}
 }
 
+func TestParseMappingRejectsMalformedEndpoints(t *testing.T) {
+	for _, value := range []string{"a=b", "127.0.0.1:0=127.0.0.1:80", "127.0.0.1:80=127.0.0.1", "127.0.0.1:80=[::1]:0"} {
+		if _, err := ParseMapping(value); err == nil {
+			t.Fatalf("expected %q to be rejected", value)
+		}
+	}
+}
+
 func TestOpenAllRollsBackOnFailure(t *testing.T) {
 	opener := &fakeOpener{failAt: 2}
 	_, err := OpenAll(context.Background(), opener, []Mapping{{Windows: "a", WSL: "x"}, {Windows: "b", WSL: "y"}, {Windows: "c", WSL: "z"}})
