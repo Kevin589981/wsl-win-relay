@@ -263,6 +263,15 @@ func TestSOCKS5PacketDialer(t *testing.T) {
 	if string(buffer[:count]) != "pong" || source.String() != "8.8.8.8:53" {
 		t.Fatalf("response %q from %s", buffer[:count], source)
 	}
+	packetImpl := packet.(*socks5PacketConn)
+	if err := packet.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-packetImpl.done:
+	case <-time.After(time.Second):
+		t.Fatal("packet close did not signal cancellation watcher")
+	}
 	for i := 0; i < 2; i++ {
 		if err := <-serverErr; err != nil && !strings.Contains(err.Error(), "closed") {
 			t.Fatal(err)

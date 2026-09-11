@@ -163,11 +163,14 @@ func (d *Dialer) OpenPacketContext(ctx context.Context) (net.PacketConn, error) 
 		_ = control.Close()
 		return nil, err
 	}
-	packet := &socks5PacketConn{control: control, udp: udp, relay: relayAddr}
+	packet := &socks5PacketConn{control: control, udp: udp, relay: relayAddr, done: make(chan struct{})}
 	close(finished)
 	go func() {
-		<-ctx.Done()
-		_ = packet.Close()
+		select {
+		case <-ctx.Done():
+			_ = packet.Close()
+		case <-packet.done:
+		}
 	}()
 	if err := ctx.Err(); err != nil {
 		_ = packet.Close()
@@ -362,6 +365,7 @@ type socks5PacketConn struct {
 	control net.Conn
 	udp     *net.UDPConn
 	relay   *net.UDPAddr
+	done    chan struct{}
 	closed  bool
 }
 
@@ -419,6 +423,7 @@ func (p *socks5PacketConn) Close() error {
 	}
 	p.closed = true
 	control, udp := p.control, p.udp
+	close(p.done)
 	p.mu.Unlock()
 	_ = control.Close()
 	return udp.Close()
