@@ -15,6 +15,15 @@ if [ ! -r "$library" ]; then
     exit 1
 fi
 
+for _ in $(seq 1 20); do
+    [ -S "$control" ] && break
+    sleep 0.1
+done
+if [ ! -S "$control" ]; then
+    echo "strict listener control socket is unavailable: $control (start wsl-proxy-linux first)" >&2
+    exit 1
+fi
+
 export WSL_WIN_RELAY_CONTROL=$control
 if [ -n "${LD_PRELOAD:-}" ]; then
     export LD_PRELOAD="$library:$LD_PRELOAD"

@@ -191,6 +191,9 @@ Keep `wsl-proxy-linux` running, then launch an application through the wrapper:
 ./scripts/wsl-win-relay-run python3 -m http.server 8000
 ```
 
+The wrapper waits up to two seconds for the strict-listen control socket and
+fails early with a diagnostic if the relay service is not running.
+
 Before the application's libc `listen()` succeeds, the wrapper reserves
 Windows `127.0.0.1:8000`. If Windows reports that the address is already in
 use, the application receives Linux `EADDRINUSE` and its `listen()` fails. If
