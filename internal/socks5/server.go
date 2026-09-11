@@ -11,7 +11,10 @@ import (
 	"strconv"
 	"sync"
 	"syscall"
+	"time"
 )
+
+const defaultUDPAssociateIdleTimeout = 5 * time.Minute
 
 type Dialer interface {
 	DialContext(context.Context, string) (net.Conn, error)
@@ -37,6 +40,38 @@ func (s *Server) serveUDPAssociate(ctx context.Context, control net.Conn, packet
 	associationCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	errCh := make(chan error, 3)
+	idleTimeout := s.UDPAssociateIdleTimeout
+	if idleTimeout <= 0 {
+		idleTimeout = defaultUDPAssociateIdleTimeout
+	}
+	activity := make(chan struct{}, 1)
+	go func() {
+		timer := time.NewTimer(idleTimeout)
+		defer timer.Stop()
+		for {
+			select {
+			case <-activity:
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(idleTimeout)
+			case <-timer.C:
+				cancel()
+				return
+			case <-associationCtx.Done():
+				return
+			}
+		}
+	}()
+	touch := func() {
+		select {
+		case activity <- struct{}{}:
+		default:
+		}
+	}
 	var clientMu sync.RWMutex
 	var udpClient *net.UDPAddr
 	go func() { _, copyErr := io.Copy(io.Discard, control); errCh <- copyErr }()
@@ -51,6 +86,7 @@ func (s *Server) serveUDPAssociate(ctx context.Context, control net.Conn, packet
 			if !sameClientIP(control.RemoteAddr(), source) {
 				continue
 			}
+			touch()
 			target, data, parseErr := parseUDPRequest(buffer[:count])
 			if parseErr != nil {
 				s.Logger.Printf("UDP packet: %v", parseErr)
@@ -73,6 +109,7 @@ func (s *Server) serveUDPAssociate(ctx context.Context, control net.Conn, packet
 				errCh <- readErr
 				return
 			}
+			touch()
 			packet, encodeErr := encodeUDPResponse(source.String(), buffer[:count])
 			if encodeErr != nil {
 				continue
@@ -175,9 +212,10 @@ type PacketDialer interface {
 }
 
 type Server struct {
-	Listener net.Listener
-	Dialer   Dialer
-	Logger   *log.Logger
+	Listener                net.Listener
+	Dialer                  Dialer
+	Logger                  *log.Logger
+	UDPAssociateIdleTimeout time.Duration
 }
 
 func (s *Server) Serve(ctx context.Context) error {

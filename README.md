@@ -84,7 +84,9 @@ For long-running use, start from [`wsl-win-relay.example.json`](wsl-win-relay.ex
 The JSON decoder rejects unknown fields so misspelled safety or bind settings do
 not silently disappear. Command-line options override scalar configuration
 values; repeated command-line `-reverse` mappings are added to configured
-mappings.
+mappings. SOCKS5 UDP associations are reclaimed after
+`udp_associate_idle_timeout` (default `5m`) without traffic; override it with
+`-udp-associate-idle-timeout` when needed.
 
 Place `wsl-win-relay.exe` somewhere visible to WSL interop (or pass its absolute path with `-relay-exe`) and start:
 

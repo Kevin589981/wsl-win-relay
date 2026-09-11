@@ -182,3 +182,39 @@ func TestParseUDPRequestRejectsFragments(t *testing.T) {
 		t.Fatal("expected fragment rejection")
 	}
 }
+
+func TestUDPAssociateClosesAfterIdleTimeout(t *testing.T) {
+	tcpListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tcpListener.Close()
+	server := &Server{Listener: tcpListener, Dialer: &echoDialer{}, UDPAssociateIdleTimeout: 20 * time.Millisecond}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = server.Serve(ctx) }()
+	control, err := net.Dial("tcp", tcpListener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer control.Close()
+	if _, err := control.Write([]byte{5, 1, 0, 5, commandUDPAssociate, 0, 1, 0, 0, 0, 0, 0, 0}); err != nil {
+		t.Fatal(err)
+	}
+	method := make([]byte, 2)
+	if _, err := io.ReadFull(control, method); err != nil {
+		t.Fatal(err)
+	}
+	reply := make([]byte, 10)
+	if _, err := io.ReadFull(control, reply); err != nil {
+		t.Fatal(err)
+	}
+	if reply[1] != replySucceeded {
+		t.Fatalf("reply: %v", reply)
+	}
+	_ = control.SetReadDeadline(time.Now().Add(time.Second))
+	buffer := make([]byte, 1)
+	if count, err := control.Read(buffer); err == nil {
+		t.Fatalf("expected idle association to close (read %d bytes: %v)", count, buffer[:count])
+	}
+}

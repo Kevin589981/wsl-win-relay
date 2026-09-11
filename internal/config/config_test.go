@@ -23,6 +23,9 @@ func TestLoadMergesDefaultsAndRejectsUnknownFields(t *testing.T) {
 	if duration, _ := got.AutoForwardDuration(); duration != 250*time.Millisecond {
 		t.Fatalf("duration %s", duration)
 	}
+	if duration, _ := got.UDPAssociateIdleDuration(); duration != 5*time.Minute {
+		t.Fatalf("UDP idle duration %s", duration)
+	}
 	if err := os.WriteFile(path, []byte(`{"unknown":true}`), 0o600); err != nil {
 		t.Fatal(err)
 	}

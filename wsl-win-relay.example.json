@@ -4,6 +4,7 @@
   "http_connect_listen": "127.0.0.1:8080",
   "control_socket": "/tmp/wsl-win-relay-control.sock",
   "strict_listen_host": "127.0.0.1",
+  "udp_associate_idle_timeout": "5m",
   "reverse": [
     "127.0.0.1:8000=127.0.0.1:8000"
   ],

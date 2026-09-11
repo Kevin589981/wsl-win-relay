@@ -40,6 +40,7 @@ type options struct {
 	autoExclude         map[uint16]bool
 	controlSocket       string
 	strictListenHost    string
+	udpAssociateIdle    time.Duration
 }
 
 func main() {
@@ -73,11 +74,16 @@ func parseOptions(args []string) (options, error) {
 	if err != nil {
 		return options{}, err
 	}
+	udpAssociateIdle, err := fileConfig.UDPAssociateIdleDuration()
+	if err != nil {
+		return options{}, err
+	}
 	opts := options{
 		socksListen: fileConfig.SOCKS5Listen, httpListen: fileConfig.HTTPConnectListen,
 		relayExe: fileConfig.RelayExecutable, autoForward: fileConfig.AutoForward.Enabled,
 		autoForwardHost: fileConfig.AutoForward.WindowsHost, autoForwardInterval: interval,
 		controlSocket: fileConfig.ControlSocket, strictListenHost: fileConfig.StrictListenHost,
+		udpAssociateIdle: udpAssociateIdle,
 	}
 	for _, mapping := range fileConfig.Reverse {
 		if err := opts.reverse.Set(mapping); err != nil {
@@ -99,6 +105,7 @@ func parseOptions(args []string) (options, error) {
 	set.StringVar(&exclude, "auto-forward-exclude", exclude, "comma-separated ports excluded from automatic mapping")
 	set.StringVar(&opts.controlSocket, "control-socket", opts.controlSocket, "Unix socket for strict listener coordination; empty disables")
 	set.StringVar(&opts.strictListenHost, "strict-listen-host", opts.strictListenHost, "Windows bind host for strict listener coordination")
+	set.DurationVar(&opts.udpAssociateIdle, "udp-associate-idle-timeout", opts.udpAssociateIdle, "idle timeout for SOCKS5 UDP associations")
 	if err := set.Parse(args); err != nil {
 		return options{}, err
 	}
@@ -232,7 +239,7 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 	}
 
 	logger.Printf("SOCKS5 listening on %s", socksListener.Addr())
-	proxy := &socks5.Server{Listener: socksListener, Dialer: client, Logger: logger}
+	proxy := &socks5.Server{Listener: socksListener, Dialer: client, Logger: logger, UDPAssociateIdleTimeout: opts.udpAssociateIdle}
 	socksDone := make(chan error, 1)
 	go func() { socksDone <- proxy.Serve(ctx) }()
 	var httpDone chan error
