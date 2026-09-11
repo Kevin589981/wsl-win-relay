@@ -154,6 +154,29 @@ func TestPacketCloseUnblocksRead(t *testing.T) {
 	}
 }
 
+func TestClientRunCancellationClosesTransport(t *testing.T) {
+	transport := &blockingReadCloser{unblock: make(chan struct{}), closed: make(chan struct{})}
+	client := NewClient(transport)
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() { result <- client.Run(ctx) }()
+	time.Sleep(10 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("run: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("client run did not stop after cancellation")
+	}
+	select {
+	case <-transport.closed:
+	case <-time.After(time.Second):
+		t.Fatal("transport was not closed")
+	}
+}
+
 func TestReverseForward(t *testing.T) {
 	clientSide, serverSide := net.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -440,4 +463,24 @@ func (*blockingWriteReadWriter) Read([]byte) (int, error) { return 0, io.EOF }
 func (w *blockingWriteReadWriter) Write(p []byte) (int, error) {
 	<-w.unblock
 	return len(p), nil
+}
+
+type blockingReadCloser struct {
+	unblock chan struct{}
+	closed  chan struct{}
+}
+
+func (r *blockingReadCloser) Read([]byte) (int, error) {
+	<-r.unblock
+	return 0, io.EOF
+}
+func (*blockingReadCloser) Write(p []byte) (int, error) { return len(p), nil }
+func (r *blockingReadCloser) Close() error {
+	select {
+	case <-r.closed:
+	default:
+		close(r.closed)
+	}
+	close(r.unblock)
+	return nil
 }

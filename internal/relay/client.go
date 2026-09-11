@@ -28,6 +28,7 @@ type Client struct {
 	nextID            atomic.Uint32
 	closed            chan struct{}
 	closeOne          sync.Once
+	transportCloseOne sync.Once
 	closeErr          error
 	runOnce           sync.Once
 	helloDone         chan helloResult
@@ -125,9 +126,11 @@ func (c *Client) Run(ctx context.Context) error {
 		c.fail(err)
 		return err
 	case <-ctx.Done():
+		c.closeTransport()
 		c.fail(ctx.Err())
 		return ctx.Err()
 	case <-c.closed:
+		c.closeTransport()
 		return c.closeErr
 	}
 }
@@ -227,7 +230,16 @@ func (r *ReverseReservation) Close() error { return r.listener.Close() }
 
 func (c *Client) Close() error {
 	c.fail(ErrClientClosed)
+	c.closeTransport()
 	return c.closeErr
+}
+
+func (c *Client) closeTransport() {
+	c.transportCloseOne.Do(func() {
+		if closer, ok := c.rw.(io.Closer); ok {
+			_ = closer.Close()
+		}
+	})
 }
 
 func (c *Client) write(frame protocol.Frame) error {
