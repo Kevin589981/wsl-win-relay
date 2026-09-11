@@ -15,6 +15,7 @@
 #include <sys/time.h>
 #include <sys/un.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 typedef int (*listen_fn)(int, int);
@@ -167,16 +168,23 @@ static int reserve_listener(const char *network, uint16_t port, const char *host
     char request[128];
     char response[256];
     snprintf(request, sizeof(request), "RESERVE %ld %s %u %s\n", (long)getpid(), network, (unsigned)port, host);
-    if (control_request(request, response, sizeof(response)) < 0) {
-        return -1;
+    for (int attempt = 0; attempt < 20; attempt++) {
+        if (control_request(request, response, sizeof(response)) == 0) {
+            unsigned long long value;
+            if (sscanf(response, "OK %llu", &value) != 1) {
+                errno = EPROTO;
+                return -1;
+            }
+            *lease = (uint64_t)value;
+            return 0;
+        }
+        if (errno != ENOENT && errno != ECONNREFUSED && errno != ECONNRESET) {
+            return -1;
+        }
+        struct timespec delay = {.tv_sec = 0, .tv_nsec = 100000000L};
+        (void)nanosleep(&delay, NULL);
     }
-    unsigned long long value;
-    if (sscanf(response, "OK %llu", &value) != 1) {
-        errno = EPROTO;
-        return -1;
-    }
-    *lease = (uint64_t)value;
-    return 0;
+    return -1;
 }
 
 static int lease_operation(const char *operation, uint64_t lease) {

@@ -181,6 +181,10 @@ use, the application receives Linux `EADDRINUSE` and its `listen()` fails. If
 Linux itself rejects the listen, the Windows reservation is aborted. Windows
 does not accept clients until both sides have succeeded.
 
+If the control socket is briefly unavailable while the relay is starting or
+recovering, the interposer retries the reservation for up to two seconds.
+Definitive Windows bind errors are returned immediately.
+
 This propagates bind/listen errors, not later firewall policy. A Windows
 firewall rule that drops or rejects clients after the socket is bound does not
 make the Windows `bind()` fail, so it cannot be reflected in the original WSL
