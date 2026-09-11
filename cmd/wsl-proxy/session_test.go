@@ -53,6 +53,25 @@ func TestSessionDialerRetriesAfterSessionReplacement(t *testing.T) {
 	}
 }
 
+func TestSessionDialerIgnoresStaleSessionClear(t *testing.T) {
+	dialer := newSessionDialer()
+	oldClient := &fakeSessionClient{}
+	newClient := &fakeSessionClient{}
+	dialer.set(oldClient)
+	dialer.set(newClient)
+	dialer.clear(oldClient)
+	current, _ := dialer.current()
+	if current != newClient {
+		t.Fatalf("current client=%p, want %p", current, newClient)
+	}
+}
+
+func TestSessionRetryErrorIncludesClosedNetwork(t *testing.T) {
+	if !isSessionRetryError(net.ErrClosed) {
+		t.Fatal("net.ErrClosed should trigger session retry")
+	}
+}
+
 type fakeSessionClient struct {
 	dialErr error
 	conn    net.Conn

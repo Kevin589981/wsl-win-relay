@@ -97,5 +97,5 @@ func (d *sessionDialer) current() (sessionClient, <-chan struct{}) {
 }
 
 func isSessionRetryError(err error) bool {
-	return errors.Is(err, relay.ErrClientClosed) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.ErrClosedPipe)
+	return errors.Is(err, relay.ErrClientClosed) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.ErrClosedPipe) || errors.Is(err, net.ErrClosed)
 }
