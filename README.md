@@ -220,3 +220,8 @@ present it also installs it under `~/lib`. It then creates a private
 already exist. It rejects symlinked/non-regular config paths and enforces mode
 `0600` on every run. Build with `scripts/build-wsl.sh` first and set the
 Windows `relay_exe` path in the config.
+
+Relay-session recovery intentionally starts a fresh child and loses existing
+connections; it does not try to reuse protocol state from a broken stdio
+transport. See [ADR-0010](docs/adr/0010-relay-failure-supervision.md) for the
+failure contract and the requirements for a future in-process hot reconnect.
