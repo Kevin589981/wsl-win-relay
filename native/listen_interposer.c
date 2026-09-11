@@ -21,6 +21,7 @@ typedef int (*dup_fn)(int);
 typedef int (*dup2_fn)(int, int);
 typedef int (*dup3_fn)(int, int, int);
 typedef pid_t (*fork_fn)(void);
+typedef int (*close_range_fn)(unsigned int, unsigned int, int);
 
 struct tracked_lease { uint64_t id; unsigned refs; };
 
@@ -36,6 +37,7 @@ static dup_fn real_dup;
 static dup2_fn real_dup2;
 static dup3_fn real_dup3;
 static fork_fn real_fork;
+static close_range_fn real_close_range;
 static pthread_once_t init_once = PTHREAD_ONCE_INIT;
 static pthread_mutex_t tracked_mu = PTHREAD_MUTEX_INITIALIZER;
 static struct tracked_fd *tracked;
@@ -43,6 +45,7 @@ static struct tracked_fd *tracked;
 static void atfork_prepare(void);
 static void atfork_parent(void);
 static void atfork_child(void);
+static int release_lease(pid_t pid, uint64_t lease);
 
 static int debug_enabled(void) {
     const char *value = getenv("WSL_WIN_RELAY_DEBUG");
@@ -56,6 +59,7 @@ static void initialize(void) {
     real_dup2 = (dup2_fn)dlsym(RTLD_NEXT, "dup2");
     real_dup3 = (dup3_fn)dlsym(RTLD_NEXT, "dup3");
     real_fork = (fork_fn)dlsym(RTLD_NEXT, "fork");
+    real_close_range = (close_range_fn)dlsym(RTLD_NEXT, "close_range");
     (void)pthread_atfork(atfork_prepare, atfork_parent, atfork_child);
 }
 
@@ -245,6 +249,40 @@ static uint64_t remove_tracked(int fd) {
     return lease;
 }
 
+static void release_tracked_range(unsigned int first, unsigned int last) {
+    if (first > last) {
+        return;
+    }
+    for (;;) {
+        uint64_t lease = 0;
+        int found = 0;
+        pthread_mutex_lock(&tracked_mu);
+        struct tracked_fd **cursor = &tracked;
+        while (*cursor != NULL) {
+            unsigned int fd = (unsigned int)(*cursor)->fd;
+            if (fd >= first && fd <= last) {
+                struct tracked_fd *removed = *cursor;
+                *cursor = removed->next;
+                if (--removed->lease->refs == 0) {
+                    lease = removed->lease->id;
+                    free(removed->lease);
+                }
+                free(removed);
+                found = 1;
+                break;
+            }
+            cursor = &(*cursor)->next;
+        }
+        pthread_mutex_unlock(&tracked_mu);
+        if (!found) {
+            return;
+        }
+        if (lease != 0) {
+            (void)release_lease(getpid(), lease);
+        }
+    }
+}
+
 static int duplicate_tracking(int oldfd, int newfd) {
     int result = 0;
     pthread_mutex_lock(&tracked_mu);
@@ -425,4 +463,21 @@ pid_t fork(void) {
         adopt_tracked_for_pid(child);
     }
     return child;
+}
+
+#ifndef CLOSE_RANGE_CLOEXEC
+#define CLOSE_RANGE_CLOEXEC (1U << 2)
+#endif
+
+int close_range(unsigned int first, unsigned int last, int flags) {
+    pthread_once(&init_once, initialize);
+    if (real_close_range == NULL) {
+        errno = ENOSYS;
+        return -1;
+    }
+    int result = real_close_range(first, last, flags);
+    if (result == 0 && (flags & CLOSE_RANGE_CLOEXEC) == 0) {
+        release_tracked_range(first, last);
+    }
+    return result;
 }

@@ -18,8 +18,9 @@ Provide `libwsl_win_relay_listen.so` and a `wsl-win-relay-run` launcher. The int
 3. Returns the Windows error to the application if reservation fails.
 4. Calls the real Linux `listen()` only after Windows succeeds.
 5. Commits Windows accepting after Linux succeeds, or aborts on Linux failure.
-6. Tracks `dup()`, `dup2()`, and `dup3()` aliases and releases the Windows
-   mapping only after the final alias in a process is closed.
+6. Tracks `dup()`, `dup2()`, and `dup3()` aliases, and intercepts
+   `close_range()` when it actually closes descriptors; the Windows mapping is
+   released only after the final alias in a process is closed.
 7. Registers inherited leases for ordinary `fork()` children and releases a
    mapping only after every process owner has gone away.
 8. Releases abandoned mappings through the control daemon's process-identity

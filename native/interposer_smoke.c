@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -12,19 +13,19 @@ int main(void) {
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     address.sin_port = htons(47123);
     if (bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 16) < 0) {
-        close(fd);
+        close_range((unsigned int)fd, (unsigned int)fd, 0);
         return 2;
     }
     pid_t child = fork();
     if (child < 0) {
-        close(fd);
+        close_range((unsigned int)fd, (unsigned int)fd, 0);
         return 3;
     }
     if (child > 0) {
-        close(fd);
+        close_range((unsigned int)fd, (unsigned int)fd, 0);
         return waitpid(child, NULL, 0) == child ? 0 : 4;
     }
     usleep(100000);
-    close(fd);
+    close_range((unsigned int)fd, (unsigned int)fd, 0);
     _exit(0);
 }
