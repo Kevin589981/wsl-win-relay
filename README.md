@@ -176,6 +176,10 @@ until a kernel-aware adapter is available. The daemon tracks multiple process
 owners and reaps leases from processes that exit without closing their
 descriptors.
 
+The native lifecycle regression test can be run offline with
+`./scripts/test-interposer.sh`; it uses a local fake control socket and does
+not open a Windows port.
+
 ## Transparent mode
 
 For applications without proxy support, install the pinned TUN adapter and keep

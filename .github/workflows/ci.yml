@@ -49,3 +49,4 @@ jobs:
           cache: false
       - run: ./scripts/build-wsl.sh
       - run: sh -n scripts/*.sh scripts/wsl-win-relay-run
+      - run: ./scripts/test-interposer.sh
