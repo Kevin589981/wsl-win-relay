@@ -34,6 +34,7 @@ type options struct {
 	relayExe            string
 	upstreamProxy       string
 	reverse             forward.Mappings
+	reverseUDP          forward.Mappings
 	autoForward         bool
 	autoForwardHost     string
 	autoForwardInterval time.Duration
@@ -123,6 +124,11 @@ func parseOptions(args []string) (options, error) {
 			return options{}, fmt.Errorf("config reverse: %w", err)
 		}
 	}
+	for _, mapping := range fileConfig.ReverseUDP {
+		if err := opts.reverseUDP.Set(mapping); err != nil {
+			return options{}, fmt.Errorf("config reverse_udp: %w", err)
+		}
+	}
 	include, exclude := formatPorts(fileConfig.AutoForward.Include), formatPorts(fileConfig.AutoForward.Exclude)
 	set := flag.NewFlagSet("wsl-proxy", flag.ContinueOnError)
 	set.SetOutput(io.Discard)
@@ -132,6 +138,7 @@ func parseOptions(args []string) (options, error) {
 	set.StringVar(&opts.relayExe, "relay-exe", opts.relayExe, "Windows relay executable")
 	set.StringVar(&opts.upstreamProxy, "upstream-proxy", opts.upstreamProxy, "optional Windows-side HTTP CONNECT or SOCKS5 proxy URL")
 	set.Var(&opts.reverse, "reverse", "reverse mapping WINDOWS_ADDR=WSL_TARGET (repeatable)")
+	set.Var(&opts.reverseUDP, "reverse-udp", "reverse UDP mapping WINDOWS_ADDR=WSL_TARGET (repeatable)")
 	set.BoolVar(&opts.autoForward, "auto-forward", opts.autoForward, "automatically mirror WSL TCP listeners to Windows")
 	set.StringVar(&opts.autoForwardHost, "auto-forward-host", opts.autoForwardHost, "Windows bind host for automatic mappings")
 	set.DurationVar(&opts.autoForwardInterval, "auto-forward-interval", opts.autoForwardInterval, "automatic listener scan interval")
@@ -227,9 +234,13 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 	endpoint := stdio.New(stdout, stdin, func() error { _ = stdin.Close(); _ = stdout.Close(); return nil })
 	client := relay.NewClient(endpoint)
 	var reverseForwards *forward.Set
+	var reverseDatagramForwards *forward.Set
 	defer func() {
 		if reverseForwards != nil {
 			_ = reverseForwards.Close()
+		}
+		if reverseDatagramForwards != nil {
+			_ = reverseDatagramForwards.Close()
 		}
 		_ = client.Close()
 		_ = endpoint.Close()
@@ -268,8 +279,15 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 	if err != nil {
 		return fmt.Errorf("register reverse forwards: %w", err)
 	}
+	reverseDatagramForwards, err = forward.OpenDatagramAll(ctx, client, opts.reverseUDP)
+	if err != nil {
+		return fmt.Errorf("register reverse UDP forwards: %w", err)
+	}
 	for _, mapping := range opts.reverse {
 		logger.Printf("reverse forwarding %s -> %s", mapping.Windows, mapping.WSL)
+	}
+	for _, mapping := range opts.reverseUDP {
+		logger.Printf("reverse UDP forwarding %s -> %s", mapping.Windows, mapping.WSL)
 	}
 
 	logger.Printf("SOCKS5 listening on %s", socksListener.Addr())
@@ -292,6 +310,9 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 			addAddressPort(excluded, httpListener.Addr().String())
 		}
 		for _, mapping := range opts.reverse {
+			addAddressPort(excluded, mapping.WSL)
+		}
+		for _, mapping := range opts.reverseUDP {
 			addAddressPort(excluded, mapping.WSL)
 		}
 		watcher := &autoforward.Watcher{Scanner: autoforward.DefaultProcScanner(), Opener: client, WindowsHost: opts.autoForwardHost, Interval: opts.autoForwardInterval, Included: opts.autoInclude, Excluded: excluded, Logger: logger}

@@ -9,6 +9,7 @@
   "reverse": [
     "127.0.0.1:8000=127.0.0.1:8000"
   ],
+  "reverse_udp": [],
   "auto_forward": {
     "enabled": false,
     "windows_host": "127.0.0.1",

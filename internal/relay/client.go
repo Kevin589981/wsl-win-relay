@@ -25,6 +25,7 @@ type Client struct {
 	streams           map[uint32]*clientStream
 	listeners         map[uint32]*clientListener
 	datagrams         map[uint32]*clientPacketConn
+	reverseDatagrams  map[uint32]*clientReverseDatagram
 	nextID            atomic.Uint32
 	closed            chan struct{}
 	closeOne          sync.Once
@@ -44,7 +45,7 @@ type helloResult struct {
 }
 
 func NewClient(rw io.ReadWriter) *Client {
-	c := &Client{rw: rw, streams: make(map[uint32]*clientStream), listeners: make(map[uint32]*clientListener), datagrams: make(map[uint32]*clientPacketConn), closed: make(chan struct{}), helloDone: make(chan helloResult, 1)}
+	c := &Client{rw: rw, streams: make(map[uint32]*clientStream), listeners: make(map[uint32]*clientListener), datagrams: make(map[uint32]*clientPacketConn), reverseDatagrams: make(map[uint32]*clientReverseDatagram), closed: make(chan struct{}), helloDone: make(chan helloResult, 1)}
 	c.nextID.Store(^uint32(0))
 	return c
 }
@@ -183,6 +184,40 @@ func (c *Client) ReverseForward(ctx context.Context, windowsAddr, target string)
 	return reservation, nil
 }
 
+// ReverseDatagramForward asks the Windows side to bind windowsAddr and
+// forward received datagrams to the WSL-local UDP target.
+func (c *Client) ReverseDatagramForward(ctx context.Context, windowsAddr, target string) (io.Closer, error) {
+	if windowsAddr == "" || target == "" || len(windowsAddr) > protocol.MaxTargetSize || len(target) > protocol.MaxTargetSize {
+		return nil, fmt.Errorf("invalid reverse datagram address")
+	}
+	targetAddr, err := net.ResolveUDPAddr("udp", target)
+	if err != nil {
+		return nil, fmt.Errorf("resolve reverse datagram target: %w", err)
+	}
+	id := c.nextID.Add(2)
+	l := newClientReverseDatagram(c, id, targetAddr, ctx)
+	c.mu.Lock()
+	c.reverseDatagrams[id] = l
+	c.mu.Unlock()
+	if err := c.write(protocol.Frame{Type: protocol.TypeListenDatagramOpen, StreamID: id, Payload: []byte(windowsAddr)}); err != nil {
+		c.removeReverseDatagram(id)
+		return nil, err
+	}
+	select {
+	case err := <-l.ready:
+		if err != nil {
+			c.removeReverseDatagram(id)
+			return nil, err
+		}
+		return l, nil
+	case <-ctx.Done():
+		_ = l.Close()
+		return nil, ctx.Err()
+	case <-c.closed:
+		return nil, ErrClientClosed
+	}
+}
+
 // ReserveReverseForward binds the Windows listener without accepting clients.
 // Commit must be called after the corresponding WSL listener is ready.
 func (c *Client) ReserveReverseForward(ctx context.Context, windowsAddr, target string) (*ReverseReservation, error) {
@@ -251,6 +286,15 @@ func (c *Client) write(frame protocol.Frame) error {
 func (c *Client) dispatch(frame protocol.Frame) {
 	if frame.Type == protocol.TypeHelloOK {
 		c.helloOnce.Do(func() { c.helloDone <- helloResult{capabilities: protocol.DecodeCapabilities(frame.Payload)} })
+		return
+	}
+	if frame.Type == protocol.TypeListenDatagramOK || frame.Type == protocol.TypeListenDatagramError || frame.Type == protocol.TypeListenDatagramData || frame.Type == protocol.TypeListenDatagramClose {
+		c.mu.Lock()
+		datagram := c.reverseDatagrams[frame.StreamID]
+		c.mu.Unlock()
+		if datagram != nil {
+			datagram.handle(frame)
+		}
 		return
 	}
 	if frame.Type == protocol.TypeDatagramOK || frame.Type == protocol.TypeDatagramError || frame.Type == protocol.TypeDatagramData || frame.Type == protocol.TypeDatagramClose {
@@ -330,6 +374,11 @@ func (c *Client) fail(err error) {
 			datagrams = append(datagrams, packet)
 		}
 		c.datagrams = make(map[uint32]*clientPacketConn)
+		reverseDatagrams := make([]*clientReverseDatagram, 0, len(c.reverseDatagrams))
+		for _, datagram := range c.reverseDatagrams {
+			reverseDatagrams = append(reverseDatagrams, datagram)
+		}
+		c.reverseDatagrams = make(map[uint32]*clientReverseDatagram)
 		c.mu.Unlock()
 		for _, s := range streams {
 			s.fail(err)
@@ -337,10 +386,18 @@ func (c *Client) fail(err error) {
 		for _, packet := range datagrams {
 			packet.fail(err)
 		}
+		for _, datagram := range reverseDatagrams {
+			datagram.fail(err)
+		}
 	})
 }
 
 func (c *Client) removeDatagram(id uint32) { c.mu.Lock(); delete(c.datagrams, id); c.mu.Unlock() }
+func (c *Client) removeReverseDatagram(id uint32) {
+	c.mu.Lock()
+	delete(c.reverseDatagrams, id)
+	c.mu.Unlock()
+}
 
 type packetEvent struct {
 	endpoint string
@@ -512,6 +569,152 @@ func (c *Client) acceptInbound(l *clientListener, s *clientStream) {
 	}
 	bridge(local, s)
 	c.removeStream(s.id)
+}
+
+const reverseDatagramIdleTimeout = 5 * time.Minute
+
+type clientReverseDatagram struct {
+	client    *Client
+	id        uint32
+	target    *net.UDPAddr
+	ctx       context.Context
+	ready     chan error
+	readyOnce sync.Once
+	done      chan struct{}
+	closeOnce sync.Once
+	mu        sync.Mutex
+	flows     map[string]*reverseDatagramFlow
+}
+
+type reverseDatagramFlow struct {
+	listener  *clientReverseDatagram
+	key       string
+	remote    string
+	conn      *net.UDPConn
+	closeOnce sync.Once
+}
+
+func newClientReverseDatagram(client *Client, id uint32, target *net.UDPAddr, ctx context.Context) *clientReverseDatagram {
+	return &clientReverseDatagram{client: client, id: id, target: target, ctx: ctx, ready: make(chan error, 1), done: make(chan struct{}), flows: make(map[string]*reverseDatagramFlow)}
+}
+
+func (l *clientReverseDatagram) handle(frame protocol.Frame) {
+	switch frame.Type {
+	case protocol.TypeListenDatagramOK:
+		l.readyOnce.Do(func() { l.ready <- nil })
+	case protocol.TypeListenDatagramError:
+		err := errors.New(string(frame.Payload))
+		l.readyOnce.Do(func() { l.ready <- err })
+		l.fail(err)
+	case protocol.TypeListenDatagramClose:
+		l.fail(io.EOF)
+	case protocol.TypeListenDatagramData:
+		endpoint, data, err := protocol.DecodeDatagram(frame.Payload)
+		if err != nil {
+			l.fail(err)
+			return
+		}
+		remote, err := net.ResolveUDPAddr("udp", endpoint)
+		if err != nil {
+			l.fail(err)
+			return
+		}
+		key := remote.String()
+		l.mu.Lock()
+		select {
+		case <-l.done:
+			l.mu.Unlock()
+			return
+		default:
+		}
+		flow := l.flows[key]
+		if flow == nil {
+			conn, listenErr := net.ListenUDP("udp", nil)
+			if listenErr != nil {
+				l.mu.Unlock()
+				l.fail(listenErr)
+				return
+			}
+			flow = &reverseDatagramFlow{listener: l, key: key, remote: endpoint, conn: conn}
+			l.flows[key] = flow
+			go flow.readLoop()
+		}
+		l.mu.Unlock()
+		_ = flow.conn.SetReadDeadline(time.Now().Add(reverseDatagramIdleTimeout))
+		if _, err := flow.conn.WriteToUDP(data, l.target); err != nil {
+			l.removeFlow(flow)
+		}
+	}
+}
+
+func (l *clientReverseDatagram) fail(err error) {
+	l.readyOnce.Do(func() { l.ready <- err })
+	l.closeOnce.Do(func() {
+		close(l.done)
+		l.client.removeReverseDatagram(l.id)
+		l.mu.Lock()
+		flows := make([]*reverseDatagramFlow, 0, len(l.flows))
+		for _, flow := range l.flows {
+			flows = append(flows, flow)
+		}
+		l.flows = make(map[string]*reverseDatagramFlow)
+		l.mu.Unlock()
+		for _, flow := range flows {
+			flow.close()
+		}
+	})
+}
+
+func (l *clientReverseDatagram) removeFlow(flow *reverseDatagramFlow) {
+	l.mu.Lock()
+	if current := l.flows[flow.key]; current == flow {
+		delete(l.flows, flow.key)
+	}
+	l.mu.Unlock()
+	flow.close()
+}
+
+func (l *clientReverseDatagram) Close() error {
+	l.closeOnce.Do(func() {
+		close(l.done)
+		l.client.removeReverseDatagram(l.id)
+		l.mu.Lock()
+		flows := make([]*reverseDatagramFlow, 0, len(l.flows))
+		for _, flow := range l.flows {
+			flows = append(flows, flow)
+		}
+		l.flows = make(map[string]*reverseDatagramFlow)
+		l.mu.Unlock()
+		for _, flow := range flows {
+			flow.close()
+		}
+		_ = l.client.write(protocol.Frame{Type: protocol.TypeListenDatagramClose, StreamID: l.id})
+	})
+	return nil
+}
+
+func (f *reverseDatagramFlow) readLoop() {
+	buffer := make([]byte, 65535)
+	for {
+		count, _, err := f.conn.ReadFromUDP(buffer)
+		if err != nil {
+			f.listener.removeFlow(f)
+			return
+		}
+		payload, err := protocol.EncodeDatagram(f.remote, buffer[:count])
+		if err != nil {
+			f.listener.removeFlow(f)
+			return
+		}
+		if err := f.listener.client.write(protocol.Frame{Type: protocol.TypeListenDatagramData, StreamID: f.listener.id, Payload: payload}); err != nil {
+			f.listener.removeFlow(f)
+			return
+		}
+	}
+}
+
+func (f *reverseDatagramFlow) close() {
+	f.closeOnce.Do(func() { _ = f.conn.Close() })
 }
 
 type clientListener struct {

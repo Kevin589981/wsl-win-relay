@@ -17,6 +17,7 @@ milestone is usable and tested:
 - Cross-platform builds and WSL interop integration coverage.
 - Dynamic `/proc/net/tcp{,6}` listener discovery with automatic Windows add/remove.
 - Strict opt-in `listen()` coordination for dynamically linked Linux applications.
+- Explicit reverse UDP forwarding with per-source flow isolation.
 - Multiplexed Windows-side UDP sockets with endpoint-preserving datagram frames.
 - SOCKS5 UDP ASSOCIATE for DNS, QUIC-capable clients, and other UDP traffic.
 - Optional HTTP CONNECT proxy for tools that only support `HTTP_PROXY`.
@@ -141,6 +142,21 @@ owns `0.0.0.0:8000` and forwards each accepted connection. A Windows bind
 conflict is reported during startup. All repeated `-reverse` registrations are
 transactional: if one fails, earlier registrations are removed. Firewall policy
 can still reject later connections, so it must be checked separately.
+
+For a WSL UDP service, use a separate explicit UDP mapping:
+
+```bash
+./bin/wsl-proxy-linux \
+  -relay-exe /mnt/c/Users/<user>/bin/wsl-win-relay.exe \
+  -reverse-udp 127.0.0.1:5353=127.0.0.1:5353
+```
+
+The Windows relay binds the UDP port and forwards each source endpoint to the
+WSL target through an isolated local flow. Responses return to the original
+Windows source. A bind conflict is reported while the mapping starts.
+Automatic listener discovery currently remains TCP-only because
+`/proc/net/udp` cannot safely distinguish a UDP server socket from an
+ephemeral client socket.
 
 To discover WSL listeners dynamically and bind matching Windows loopback ports:
 

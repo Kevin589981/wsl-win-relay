@@ -92,6 +92,16 @@ func TestParseOptionsSupportsRepeatedMappings(t *testing.T) {
 	}
 }
 
+func TestParseOptionsSupportsRepeatedUDPMappings(t *testing.T) {
+	opts, err := parseOptions([]string{"-reverse-udp", "127.0.0.1:5353=127.0.0.1:5353", "-reverse-udp", "127.0.0.1:5354=127.0.0.1:5354"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(opts.reverseUDP) != 2 {
+		t.Fatalf("UDP options: %#v", opts.reverseUDP)
+	}
+}
+
 func TestParseOptionsRejectsUnexpectedArguments(t *testing.T) {
 	if _, err := parseOptions([]string{"unexpected"}); err == nil {
 		t.Fatal("expected argument error")

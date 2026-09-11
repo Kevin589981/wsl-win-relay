@@ -44,6 +44,10 @@ type Opener interface {
 	ReverseForward(context.Context, string, string) (io.Closer, error)
 }
 
+type DatagramOpener interface {
+	ReverseDatagramForward(context.Context, string, string) (io.Closer, error)
+}
+
 type Set struct {
 	mu      sync.Mutex
 	closers []io.Closer
@@ -51,9 +55,21 @@ type Set struct {
 }
 
 func OpenAll(ctx context.Context, opener Opener, mappings []Mapping) (*Set, error) {
+	return openAll(ctx, mappings, func(mapping Mapping) (io.Closer, error) {
+		return opener.ReverseForward(ctx, mapping.Windows, mapping.WSL)
+	})
+}
+
+func OpenDatagramAll(ctx context.Context, opener DatagramOpener, mappings []Mapping) (*Set, error) {
+	return openAll(ctx, mappings, func(mapping Mapping) (io.Closer, error) {
+		return opener.ReverseDatagramForward(ctx, mapping.Windows, mapping.WSL)
+	})
+}
+
+func openAll(ctx context.Context, mappings []Mapping, open func(Mapping) (io.Closer, error)) (*Set, error) {
 	set := &Set{}
 	for _, mapping := range mappings {
-		closer, err := opener.ReverseForward(ctx, mapping.Windows, mapping.WSL)
+		closer, err := open(mapping)
 		if err != nil {
 			_ = set.Close()
 			return nil, fmt.Errorf("%s=%s: %w", mapping.Windows, mapping.WSL, err)

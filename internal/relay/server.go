@@ -20,18 +20,19 @@ type targetPacketWriter interface {
 }
 
 type Server struct {
-	rw         io.ReadWriter
-	dial       DialContextFunc
-	packetDial PacketDialContextFunc
-	writeMu    sync.Mutex
-	mu         sync.Mutex
-	streams    map[uint32]*serverStream
-	listeners  map[uint32]*serverListener
-	datagrams  map[uint32]*serverDatagram
-	nextStream atomic.Uint32
-	ctx        context.Context
-	cancel     context.CancelFunc
-	serveOnce  sync.Once
+	rw               io.ReadWriter
+	dial             DialContextFunc
+	packetDial       PacketDialContextFunc
+	writeMu          sync.Mutex
+	mu               sync.Mutex
+	streams          map[uint32]*serverStream
+	listeners        map[uint32]*serverListener
+	datagrams        map[uint32]*serverDatagram
+	reverseDatagrams map[uint32]*serverReverseDatagram
+	nextStream       atomic.Uint32
+	ctx              context.Context
+	cancel           context.CancelFunc
+	serveOnce        sync.Once
 }
 
 var ErrServerAlreadyRunning = errors.New("relay server is already running")
@@ -76,7 +77,7 @@ func NewServerWithPacketDialer(rw io.ReadWriter, dial DialContextFunc, packetDia
 	if packetDial == nil {
 		packetDial = func(context.Context) (net.PacketConn, error) { return net.ListenUDP("udp", nil) }
 	}
-	return &Server{rw: rw, dial: dial, packetDial: packetDial, streams: make(map[uint32]*serverStream), listeners: make(map[uint32]*serverListener), datagrams: make(map[uint32]*serverDatagram)}
+	return &Server{rw: rw, dial: dial, packetDial: packetDial, streams: make(map[uint32]*serverStream), listeners: make(map[uint32]*serverListener), datagrams: make(map[uint32]*serverDatagram), reverseDatagrams: make(map[uint32]*serverReverseDatagram)}
 }
 
 func (s *Server) Serve(ctx context.Context) error {
@@ -108,6 +109,12 @@ func (s *Server) handle(frame protocol.Frame) {
 		s.removeListener(frame.StreamID)
 	case protocol.TypeListenCommit:
 		s.commitListener(frame.StreamID)
+	case protocol.TypeListenDatagramOpen:
+		go s.openReverseDatagram(frame.StreamID, string(frame.Payload))
+	case protocol.TypeListenDatagramData:
+		s.writeReverseDatagram(frame.StreamID, frame.Payload)
+	case protocol.TypeListenDatagramClose:
+		s.removeReverseDatagram(frame.StreamID)
 	case protocol.TypeDatagramOpen:
 		go s.openDatagram(frame.StreamID)
 	case protocol.TypeDatagramData:
@@ -199,7 +206,7 @@ func (s *Server) writeDatagrams(id uint32, datagram *serverDatagram) {
 		case payload := <-datagram.incoming:
 			target, data, err := protocol.DecodeDatagram(payload)
 			if err != nil {
-				s.datagramError(id, err)
+				s.reverseDatagramError(id, err)
 				continue
 			}
 			var writeErr error
@@ -244,10 +251,119 @@ func (s *Server) readDatagrams(id uint32, conn net.PacketConn) {
 func (s *Server) datagramError(id uint32, err error) {
 	_ = s.send(protocol.Frame{Type: protocol.TypeDatagramError, StreamID: id, Payload: []byte(err.Error())})
 }
+
+func (s *Server) reverseDatagramError(id uint32, err error) {
+	_ = s.send(protocol.Frame{Type: protocol.TypeListenDatagramError, StreamID: id, Payload: []byte(err.Error())})
+}
 func (s *Server) removeDatagram(id uint32) {
 	s.mu.Lock()
 	datagram := s.datagrams[id]
 	delete(s.datagrams, id)
+	s.mu.Unlock()
+	if datagram != nil {
+		datagram.closeOnce.Do(func() { close(datagram.done); _ = datagram.conn.Close() })
+	}
+}
+
+type serverReverseDatagram struct {
+	conn      *net.UDPConn
+	incoming  chan []byte
+	done      chan struct{}
+	closeOnce sync.Once
+}
+
+func (s *Server) openReverseDatagram(id uint32, addr string) {
+	if id == 0 || addr == "" {
+		_ = s.send(protocol.Frame{Type: protocol.TypeListenDatagramError, StreamID: id, Payload: []byte("invalid datagram listen request")})
+		return
+	}
+	address, err := net.ResolveUDPAddr("udp", addr)
+	if err != nil {
+		_ = s.send(protocol.Frame{Type: protocol.TypeListenDatagramError, StreamID: id, Payload: []byte(err.Error())})
+		return
+	}
+	conn, err := net.ListenUDP("udp", address)
+	if err != nil {
+		_ = s.send(protocol.Frame{Type: protocol.TypeListenDatagramError, StreamID: id, Payload: []byte(err.Error())})
+		return
+	}
+	s.mu.Lock()
+	if _, exists := s.reverseDatagrams[id]; exists {
+		s.mu.Unlock()
+		_ = conn.Close()
+		return
+	}
+	datagram := &serverReverseDatagram{conn: conn, incoming: make(chan []byte, 64), done: make(chan struct{})}
+	s.reverseDatagrams[id] = datagram
+	s.mu.Unlock()
+	if err := s.send(protocol.Frame{Type: protocol.TypeListenDatagramOK, StreamID: id}); err != nil {
+		s.removeReverseDatagram(id)
+		return
+	}
+	go s.writeReverseDatagrams(id, datagram)
+	go s.readReverseDatagrams(id, datagram)
+}
+
+func (s *Server) writeReverseDatagram(id uint32, payload []byte) {
+	s.mu.Lock()
+	datagram := s.reverseDatagrams[id]
+	s.mu.Unlock()
+	if datagram == nil {
+		return
+	}
+	select {
+	case datagram.incoming <- append([]byte(nil), payload...):
+	case <-datagram.done:
+	default:
+	}
+}
+
+func (s *Server) writeReverseDatagrams(id uint32, datagram *serverReverseDatagram) {
+	for {
+		select {
+		case payload := <-datagram.incoming:
+			target, data, err := protocol.DecodeDatagram(payload)
+			if err != nil {
+				s.datagramError(id, err)
+				continue
+			}
+			address, err := net.ResolveUDPAddr("udp", target)
+			if err != nil {
+				s.reverseDatagramError(id, err)
+				continue
+			}
+			if _, err := datagram.conn.WriteToUDP(data, address); err != nil {
+				s.reverseDatagramError(id, err)
+			}
+		case <-datagram.done:
+			return
+		}
+	}
+}
+
+func (s *Server) readReverseDatagrams(id uint32, datagram *serverReverseDatagram) {
+	buffer := make([]byte, 65535)
+	for {
+		count, source, err := datagram.conn.ReadFromUDP(buffer)
+		if err != nil {
+			s.removeReverseDatagram(id)
+			return
+		}
+		payload, err := protocol.EncodeDatagram(source.String(), buffer[:count])
+		if err != nil {
+			continue
+		}
+		if err := s.send(protocol.Frame{Type: protocol.TypeListenDatagramData, StreamID: id, Payload: payload}); err != nil {
+			s.removeReverseDatagram(id)
+			return
+		}
+	}
+}
+
+func (s *Server) removeReverseDatagram(id uint32) {
+	s.mu.Lock()
+	datagram := s.reverseDatagrams[id]
+	delete(s.reverseDatagrams, id)
 	s.mu.Unlock()
 	if datagram != nil {
 		datagram.closeOnce.Do(func() { close(datagram.done); _ = datagram.conn.Close() })
@@ -488,6 +604,15 @@ func (s *Server) shutdown() {
 	s.mu.Unlock()
 	for _, id := range datagramIDs {
 		s.removeDatagram(id)
+	}
+	s.mu.Lock()
+	reverseDatagramIDs := make([]uint32, 0, len(s.reverseDatagrams))
+	for id := range s.reverseDatagrams {
+		reverseDatagramIDs = append(reverseDatagramIDs, id)
+	}
+	s.mu.Unlock()
+	for _, id := range reverseDatagramIDs {
+		s.removeReverseDatagram(id)
 	}
 	s.mu.Lock()
 	ids := make([]uint32, 0, len(s.streams))

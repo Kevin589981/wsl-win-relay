@@ -33,10 +33,35 @@ func TestOpenAllRollsBackOnFailure(t *testing.T) {
 	}
 }
 
+func TestOpenDatagramAllRollsBackOnFailure(t *testing.T) {
+	opener := &fakeDatagramOpener{failAt: 2}
+	_, err := OpenDatagramAll(context.Background(), opener, []Mapping{{Windows: "a", WSL: "x"}, {Windows: "b", WSL: "y"}, {Windows: "c", WSL: "z"}})
+	if err == nil {
+		t.Fatal("expected registration failure")
+	}
+	if !reflect.DeepEqual(opener.closed, []string{"b", "a"}) {
+		t.Fatalf("rollback order: %v", opener.closed)
+	}
+}
+
 type fakeOpener struct {
 	calls  int
 	failAt int
 	closed []string
+}
+
+type fakeDatagramOpener struct {
+	calls  int
+	failAt int
+	closed []string
+}
+
+func (f *fakeDatagramOpener) ReverseDatagramForward(_ context.Context, windows, _ string) (io.Closer, error) {
+	f.calls++
+	if f.calls > f.failAt {
+		return nil, errors.New("rejected")
+	}
+	return closerFunc(func() error { f.closed = append(f.closed, windows); return nil }), nil
 }
 
 func (f *fakeOpener) ReverseForward(_ context.Context, windows, _ string) (io.Closer, error) {

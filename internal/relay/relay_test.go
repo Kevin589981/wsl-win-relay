@@ -375,6 +375,70 @@ func TestClientServerUDPDatagram(t *testing.T) {
 	_ = clientSide.Close()
 }
 
+func TestReverseUDPForward(t *testing.T) {
+	clientSide, serverSide := net.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := NewServer(serverSide, nil)
+	go func() { _ = server.Serve(ctx) }()
+	client := NewClient(clientSide)
+	go func() { _ = client.Run(ctx) }()
+
+	target, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	go func() {
+		buffer := make([]byte, 128)
+		count, source, readErr := target.ReadFromUDP(buffer)
+		if readErr == nil {
+			_, _ = target.WriteToUDP(buffer[:count], source)
+		}
+	}()
+	probe, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	windowsAddr := probe.LocalAddr().String()
+	_ = probe.Close()
+	forward, err := client.ReverseDatagramForward(ctx, windowsAddr, target.LocalAddr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer forward.Close()
+
+	external, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer external.Close()
+	_ = external.SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err := external.WriteToUDP([]byte("reverse-udp"), mustUDPAddr(t, windowsAddr)); err != nil {
+		t.Fatal(err)
+	}
+	buffer := make([]byte, 128)
+	count, _, err := external.ReadFromUDP(buffer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(buffer[:count]) != "reverse-udp" {
+		t.Fatalf("got %q", buffer[:count])
+	}
+	_ = client.Close()
+	_ = serverSide.Close()
+	_ = clientSide.Close()
+}
+
+func mustUDPAddr(t *testing.T, value string) *net.UDPAddr {
+	t.Helper()
+	address, err := net.ResolveUDPAddr("udp", value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return address
+}
+
 func TestServerDatagramReadErrorRemovesAssociation(t *testing.T) {
 	packet := &errorPacketConn{closed: make(chan struct{})}
 	server := NewServer(&discardReadWriter{}, nil)

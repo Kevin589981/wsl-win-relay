@@ -18,6 +18,7 @@ type File struct {
 	StrictListenHost  string            `json:"strict_listen_host"`
 	UDPAssociateIdle  string            `json:"udp_associate_idle_timeout"`
 	Reverse           []string          `json:"reverse"`
+	ReverseUDP        []string          `json:"reverse_udp"`
 	AutoForward       AutoForwardConfig `json:"auto_forward"`
 }
 
