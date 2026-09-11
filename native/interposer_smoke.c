@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include <arpa/inet.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -21,6 +22,20 @@ int main(void) {
         close_range((unsigned int)fd, (unsigned int)fd, 0);
         return 2;
     }
+    int rejected = socket(AF_INET, SOCK_STREAM, 0);
+    if (rejected < 0) {
+        close(fd);
+        return 12;
+    }
+    address.sin_port = htons(47125);
+    if (bind(rejected, (struct sockaddr *)&address, sizeof(address)) < 0 ||
+        listen(rejected, 16) == 0 || errno != EADDRINUSE) {
+        close(rejected);
+        close(fd);
+        return 13;
+    }
+    close(rejected);
+    address.sin_port = htons(47123);
     int duplicate = fcntl(fd, F_DUPFD, 0);
     if (duplicate < 0) {
         close(fd);

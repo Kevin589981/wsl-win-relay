@@ -21,7 +21,7 @@ gcc -O2 -Wall -Wextra -Werror \
 # relay control socket that is still coming up.
 (
     sleep 0.2
-    exec python3 "$repo_dir/scripts/interposer-control.py" "$control_socket" "$request_log"
+    exec python3 "$repo_dir/scripts/interposer-control.py" "$control_socket" "$request_log" 47125
 ) &
 control_pid=$!
 WSL_WIN_RELAY_CONTROL=$control_socket \
@@ -32,7 +32,7 @@ reserve_count=$(awk '$1 == "RESERVE" { count++ } END { print count + 0 }' "$requ
 commit_count=$(awk '$1 == "COMMIT" { count++ } END { print count + 0 }' "$request_log")
 adopt_count=$(awk '$1 == "ADOPT" { count++ } END { print count + 0 }' "$request_log")
 release_count=$(awk '$1 == "RELEASE" { count++ } END { print count + 0 }' "$request_log")
-[ "$reserve_count" -eq 2 ] || { echo "expected two RESERVE requests, got $reserve_count" >&2; exit 1; }
+[ "$reserve_count" -eq 3 ] || { echo "expected three RESERVE requests including rejection, got $reserve_count" >&2; exit 1; }
 [ "$commit_count" -eq 1 ] || { echo "expected one COMMIT, got $commit_count" >&2; exit 1; }
 [ "$adopt_count" -ge 2 ] || { echo "expected parent and child ADOPT, got $adopt_count" >&2; exit 1; }
 [ "$release_count" -eq 3 ] || { echo "expected TCP owners plus UDP RELEASE, got $release_count" >&2; exit 1; }

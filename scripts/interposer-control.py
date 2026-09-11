@@ -5,6 +5,7 @@ import sys
 
 path = pathlib.Path(sys.argv[1])
 log_path = pathlib.Path(sys.argv[2])
+reject_port = sys.argv[3] if len(sys.argv) > 3 else None
 path.unlink(missing_ok=True)
 server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 server.bind(str(path))
@@ -25,6 +26,10 @@ with server:
             with log_path.open("a", encoding="ascii") as log:
                 log.write(text)
             if text.startswith("RESERVE "):
-                connection.sendall(b"OK 1\n")
+                fields = text.split()
+                if reject_port is not None and len(fields) > 3 and fields[3] == reject_port:
+                    connection.sendall(b"ERR 98 address already in use\n")
+                else:
+                    connection.sendall(b"OK 1\n")
             else:
                 connection.sendall(b"OK\n")

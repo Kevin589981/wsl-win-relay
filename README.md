@@ -237,7 +237,8 @@ exit without closing their descriptors.
 
 The native lifecycle regression test can be run offline with
 `./scripts/test-interposer.sh`; it uses a local fake control socket and does
-not open a Windows port.
+not open a Windows port. It covers both the successful TCP/UDP lifecycle and a
+simulated Windows `EADDRINUSE` response that must make the WSL `listen()` fail.
 
 ## Transparent mode
 
