@@ -119,7 +119,12 @@ func (s *Server) handle(frame protocol.Frame) {
 	}
 }
 
-type serverDatagram struct{ conn *net.UDPConn }
+type serverDatagram struct {
+	conn      *net.UDPConn
+	incoming  chan []byte
+	done      chan struct{}
+	closeOnce sync.Once
+}
 
 func (s *Server) openDatagram(id uint32) {
 	conn, err := net.ListenUDP("udp", nil)
@@ -133,34 +138,52 @@ func (s *Server) openDatagram(id uint32) {
 		_ = conn.Close()
 		return
 	}
-	s.datagrams[id] = &serverDatagram{conn: conn}
+	datagram := &serverDatagram{conn: conn, incoming: make(chan []byte, 64), done: make(chan struct{})}
+	s.datagrams[id] = datagram
 	s.mu.Unlock()
 	if err := s.send(protocol.Frame{Type: protocol.TypeDatagramOK, StreamID: id}); err != nil {
 		s.removeDatagram(id)
 		return
 	}
+	go s.writeDatagrams(id, datagram)
 	go s.readDatagrams(id, conn)
 }
 
 func (s *Server) writeDatagram(id uint32, payload []byte) {
-	target, data, err := protocol.DecodeDatagram(payload)
-	if err != nil {
-		s.datagramError(id, err)
-		return
-	}
-	address, err := net.ResolveUDPAddr("udp", target)
-	if err != nil {
-		s.datagramError(id, err)
-		return
-	}
 	s.mu.Lock()
 	datagram := s.datagrams[id]
 	s.mu.Unlock()
 	if datagram == nil {
 		return
 	}
-	if _, err := datagram.conn.WriteToUDP(data, address); err != nil {
-		s.datagramError(id, err)
+	select {
+	case datagram.incoming <- append([]byte(nil), payload...):
+	case <-datagram.done:
+	default:
+		// Datagram loss is preferable to blocking unrelated multiplexed flows.
+	}
+}
+
+func (s *Server) writeDatagrams(id uint32, datagram *serverDatagram) {
+	for {
+		select {
+		case payload := <-datagram.incoming:
+			target, data, err := protocol.DecodeDatagram(payload)
+			if err != nil {
+				s.datagramError(id, err)
+				continue
+			}
+			address, err := net.ResolveUDPAddr("udp", target)
+			if err != nil {
+				s.datagramError(id, err)
+				continue
+			}
+			if _, err := datagram.conn.WriteToUDP(data, address); err != nil {
+				s.datagramError(id, err)
+			}
+		case <-datagram.done:
+			return
+		}
 	}
 }
 
@@ -191,7 +214,7 @@ func (s *Server) removeDatagram(id uint32) {
 	delete(s.datagrams, id)
 	s.mu.Unlock()
 	if datagram != nil {
-		_ = datagram.conn.Close()
+		datagram.closeOnce.Do(func() { close(datagram.done); _ = datagram.conn.Close() })
 	}
 }
 

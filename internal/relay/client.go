@@ -312,6 +312,8 @@ func (p *clientPacketConn) handle(frame protocol.Frame) {
 		select {
 		case p.incoming <- packetEvent{endpoint: endpoint, data: append([]byte(nil), data...)}:
 		case <-p.client.closed:
+		default:
+			// UDP permits loss; never block every multiplexed flow for one slow association.
 		}
 	case protocol.TypeDatagramClose:
 		p.fail(io.EOF)

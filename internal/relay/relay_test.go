@@ -294,6 +294,26 @@ func TestSlowStreamDoesNotBlockOtherStreams(t *testing.T) {
 	_ = clientSide.Close()
 }
 
+func TestSlowDatagramConsumerDropsInsteadOfBlocking(t *testing.T) {
+	client := NewClient(&discardReadWriter{})
+	packet := &clientPacketConn{client: client, id: 1, ready: make(chan error, 1), incoming: make(chan packetEvent, 1)}
+	payload, err := protocol.EncodeDatagram("127.0.0.1:53", []byte("x"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet.handle(protocol.Frame{Type: protocol.TypeDatagramData, StreamID: 1, Payload: payload})
+	done := make(chan struct{})
+	go func() {
+		packet.handle(protocol.Frame{Type: protocol.TypeDatagramData, StreamID: 1, Payload: payload})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("full datagram queue blocked dispatch")
+	}
+}
+
 type discardReadWriter struct{}
 
 func (*discardReadWriter) Read([]byte) (int, error)    { return 0, io.EOF }
