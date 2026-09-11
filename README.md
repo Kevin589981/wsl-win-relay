@@ -290,13 +290,14 @@ transport; startup handshake,
 reverse registrations, and control sockets are recreated on each restart. The
 proxy also retries a relay-only EOF on its own with a two-second backoff when
 run directly, while configuration and listener errors remain fatal. The
-installer copies the built Linux proxy to `~/bin/wsl-proxy-linux` and the
-strict-listen launcher to `~/bin/wsl-win-relay-run`; when the native library is
-present it also installs it under `~/lib`. It then creates a private
-`~/.config/wsl-win-relay/config.json` from the example only when one does not
-already exist. It rejects symlinked/non-regular config paths and enforces mode
-`0600` on every run. Build with `scripts/build-wsl.sh` first and set the
-Windows `relay_exe` path in the config.
+installer copies the built Linux proxy to `~/bin/wsl-proxy-linux`, the service
+wrapper to `~/bin/wsl-win-relay-service`, and the strict-listen launcher to
+`~/bin/wsl-win-relay-run`; when the native library is present it also installs
+it under `~/lib`. It creates a private
+`${XDG_CONFIG_HOME:-~/.config}/wsl-win-relay/config.json` from the example only
+when one does not already exist. It rejects symlinked/non-regular config paths
+and enforces mode `0600` on every run. Build with `scripts/build-wsl.sh` first
+and set the Windows `relay_exe` path in the config.
 
 Relay-session recovery intentionally starts a fresh child and loses existing
 connections; it does not try to reuse protocol state from a broken stdio

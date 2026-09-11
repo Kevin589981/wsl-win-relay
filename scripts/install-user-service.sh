@@ -13,6 +13,7 @@ fi
 mkdir -p "$bin_dir"
 install -m 0755 "$repo_dir/bin/wsl-proxy-linux" "$bin_dir/wsl-proxy-linux"
 install -m 0755 "$repo_dir/scripts/wsl-win-relay-run" "$bin_dir/wsl-win-relay-run"
+install -m 0755 "$repo_dir/scripts/run-user-service.sh" "$bin_dir/wsl-win-relay-service"
 if [ -r "$repo_dir/lib/libwsl_win_relay_listen.so" ]; then
     mkdir -p "$lib_dir"
     install -m 0755 "$repo_dir/lib/libwsl_win_relay_listen.so" "$lib_dir/libwsl_win_relay_listen.so"
@@ -29,6 +30,11 @@ if [ -L "$config_dir/config.json" ] || [ ! -f "$config_dir/config.json" ]; then
 fi
 chmod 600 "$config_dir/config.json"
 systemctl --user daemon-reload
+if [ -n "${XDG_CONFIG_HOME:-}" ]; then
+    systemctl --user import-environment XDG_CONFIG_HOME
+else
+    systemctl --user unset-environment XDG_CONFIG_HOME
+fi
 systemctl --user enable wsl-win-relay.service
 systemctl --user restart wsl-win-relay.service
 echo "enabled and restarted wsl-win-relay.service"
