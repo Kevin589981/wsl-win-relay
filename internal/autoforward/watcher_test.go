@@ -30,6 +30,41 @@ func TestWatcherAddsAndRemovesListeners(t *testing.T) {
 	}
 }
 
+func TestWatcherReplacesChangedListenerIdentity(t *testing.T) {
+	scanner := &sequenceScanner{values: [][]Listener{
+		{{Network: "tcp4", Host: "127.0.0.1", Port: 8000}},
+		{{Network: "tcp6", Host: "::1", Port: 8000}},
+		{},
+	}}
+	opener := &recordingOpener{closed: make(chan string, 2)}
+	w := &Watcher{Scanner: scanner, Opener: opener, Interval: time.Millisecond}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := w.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(opener.opened) != 2 {
+		t.Fatalf("opened: %v", opener.opened)
+	}
+	if opener.opened[0] == opener.opened[1] {
+		t.Fatalf("listener identity change did not replace mapping: %v", opener.opened)
+	}
+	closed := make(map[string]bool)
+	for len(closed) < 2 {
+		select {
+		case value := <-opener.closed:
+			closed[value] = true
+		default:
+			t.Fatalf("closed mappings: %v", closed)
+		}
+	}
+	for _, value := range opener.opened {
+		if !closed[value] {
+			t.Fatalf("mapping %q was not closed", value)
+		}
+	}
+}
+
 type sequenceScanner struct {
 	mu     sync.Mutex
 	values [][]Listener

@@ -25,7 +25,12 @@ type Watcher struct {
 	Excluded    map[uint16]bool
 	Logger      *log.Logger
 	mu          sync.Mutex
-	active      map[uint16]io.Closer
+	active      map[uint16]activeMapping
+}
+
+type activeMapping struct {
+	listener Listener
+	closer   io.Closer
 }
 
 func (w *Watcher) Run(ctx context.Context) error {
@@ -42,7 +47,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 		w.Logger = log.New(io.Discard, "", 0)
 	}
 	w.mu.Lock()
-	w.active = make(map[uint16]io.Closer)
+	w.active = make(map[uint16]activeMapping)
 	w.mu.Unlock()
 	defer w.closeAll()
 	ticker := time.NewTicker(w.Interval)
@@ -75,9 +80,10 @@ func (w *Watcher) sync(ctx context.Context) error {
 		desired[listener.Port] = listener
 	}
 	w.mu.Lock()
-	for port, closer := range w.active {
-		if _, ok := desired[port]; !ok {
-			_ = closer.Close()
+	for port, mapping := range w.active {
+		desiredListener, ok := desired[port]
+		if !ok || desiredListener != mapping.listener {
+			_ = mapping.closer.Close()
 			delete(w.active, port)
 			w.Logger.Printf("auto-forward removed Windows port %d", port)
 		}
@@ -85,9 +91,9 @@ func (w *Watcher) sync(ctx context.Context) error {
 	w.mu.Unlock()
 	for port, listener := range desired {
 		w.mu.Lock()
-		_, exists := w.active[port]
+		active, exists := w.active[port]
 		w.mu.Unlock()
-		if exists {
+		if exists && active.listener == listener {
 			continue
 		}
 		windowsAddr := net.JoinHostPort(w.WindowsHost, strconv.Itoa(int(port)))
@@ -106,7 +112,7 @@ func (w *Watcher) sync(ctx context.Context) error {
 		}
 		w.mu.Lock()
 		if _, stillDesired := desired[port]; stillDesired {
-			w.active[port] = closer
+			w.active[port] = activeMapping{listener: listener, closer: closer}
 		} else {
 			_ = closer.Close()
 		}
@@ -119,9 +125,9 @@ func (w *Watcher) sync(ctx context.Context) error {
 func (w *Watcher) closeAll() {
 	w.mu.Lock()
 	active := w.active
-	w.active = make(map[uint16]io.Closer)
+	w.active = make(map[uint16]activeMapping)
 	w.mu.Unlock()
-	for _, closer := range active {
-		_ = closer.Close()
+	for _, mapping := range active {
+		_ = mapping.closer.Close()
 	}
 }
