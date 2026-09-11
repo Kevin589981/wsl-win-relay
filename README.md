@@ -254,8 +254,15 @@ different tool path.
 
 The TUN setup and rollback path has been smoke-tested under WSL as root,
 including IPv4 split routes, optional IPv6 routes, process shutdown, and device
-cleanup. A full transparent traffic test additionally requires the pinned
-`tun2socks` binary and a running local SOCKS5 endpoint.
+cleanup. DNS restoration also preserves the original `/etc/resolv.conf` shape,
+including a dangling symlink when that is what WSL provided.
+
+A real transparent TCP/UDP smoke test has passed with the pinned `tun2socks`
+v2.7.0 binary: in a WSL instance with no `eth0` or default route, setting
+`WWR_UPLINK_INTERFACE=lo` and `WWR_DNS=1.1.1.1` sent an environment-clean
+`curl https://example.com` through TUN, the local SOCKS5 relay, and the Windows
+relay. The test also verified that the TUN device, split routes, relay process,
+and DNS state were cleaned up afterward.
 
 ## Long-running service
 
