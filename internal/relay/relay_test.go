@@ -253,6 +253,33 @@ func TestReverseForwardRejectsOccupiedWindowsPort(t *testing.T) {
 	_ = clientSide.Close()
 }
 
+func TestReverseUDPForwardRejectsOccupiedWindowsPort(t *testing.T) {
+	clientSide, serverSide := net.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := NewServer(serverSide, nil)
+	go func() { _ = server.Serve(ctx) }()
+	client := NewClient(clientSide)
+	go func() { _ = client.Run(ctx) }()
+
+	occupied, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer occupied.Close()
+	target, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	if _, err := client.ReverseDatagramForward(ctx, occupied.LocalAddr().String(), target.LocalAddr().String()); err == nil {
+		t.Fatal("expected Windows UDP bind rejection")
+	}
+	_ = client.Close()
+	_ = serverSide.Close()
+	_ = clientSide.Close()
+}
+
 func TestReverseForwardReservationWaitsForCommit(t *testing.T) {
 	clientSide, serverSide := net.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())
