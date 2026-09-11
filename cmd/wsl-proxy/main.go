@@ -211,14 +211,7 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 		defer httpListener.Close()
 	}
 
-	// exec.Command already supplies the executable path as argv[0]. The
-	// Windows relay has no positional subcommand, so do not pass a synthetic
-	// "win-relay" argument here.
-	var relayArgs []string
-	if opts.upstreamProxy != "" {
-		relayArgs = append(relayArgs, "-upstream-proxy", opts.upstreamProxy)
-	}
-	cmd := exec.CommandContext(ctx, opts.relayExe, relayArgs...)
+	cmd := exec.CommandContext(ctx, opts.relayExe, relayArguments(opts)...)
 	cmd.Stderr = os.Stderr
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -324,6 +317,15 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func relayArguments(opts options) []string {
+	// exec.Command supplies the executable path as argv[0]. The Windows relay
+	// has no positional subcommand, so only pass actual flags here.
+	if opts.upstreamProxy == "" {
+		return nil
+	}
+	return []string{"-upstream-proxy", opts.upstreamProxy}
 }
 
 func classifyHandshakeError(err error) error {

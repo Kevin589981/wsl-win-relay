@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -94,6 +95,17 @@ func TestParseOptionsSupportsRepeatedMappings(t *testing.T) {
 func TestParseOptionsRejectsUnexpectedArguments(t *testing.T) {
 	if _, err := parseOptions([]string{"unexpected"}); err == nil {
 		t.Fatal("expected argument error")
+	}
+}
+
+func TestRelayArgumentsHasNoSyntheticSubcommand(t *testing.T) {
+	if got := relayArguments(options{}); len(got) != 0 {
+		t.Fatalf("unexpected arguments: %v", got)
+	}
+	got := relayArguments(options{upstreamProxy: "socks5h://127.0.0.1:7890"})
+	want := []string{"-upstream-proxy", "socks5h://127.0.0.1:7890"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("arguments %v, want %v", got, want)
 	}
 }
 
