@@ -31,6 +31,7 @@ const (
 	TypeListenError
 	TypeInboundOpen
 	TypeListenClose
+	TypeListenCommit
 )
 
 type Frame struct {
@@ -49,7 +50,7 @@ func (f Frame) Validate() error {
 	if len(f.Payload) > MaxPayloadSize {
 		return fmt.Errorf("payload exceeds %d bytes", MaxPayloadSize)
 	}
-	if (f.Type == TypeOpenOK || f.Type == TypeHalfClose || f.Type == TypeClose || f.Type == TypeListenOK || f.Type == TypeListenClose) && len(f.Payload) != 0 {
+	if (f.Type == TypeOpenOK || f.Type == TypeHalfClose || f.Type == TypeClose || f.Type == TypeListenOK || f.Type == TypeListenClose || f.Type == TypeListenCommit) && len(f.Payload) != 0 {
 		return fmt.Errorf("frame type %d must have an empty payload", f.Type)
 	}
 	if f.Type == TypeOpen && (len(f.Payload) == 0 || len(f.Payload) > MaxTargetSize) {
@@ -106,7 +107,7 @@ func Read(r io.Reader) (Frame, error) {
 }
 
 func knownType(t Type) bool {
-	return t >= TypeOpen && t <= TypeListenClose
+	return t >= TypeOpen && t <= TypeListenCommit
 }
 
 func writeFull(w io.Writer, p []byte) error {

@@ -125,6 +125,71 @@ func TestReverseForwardRejectsOccupiedWindowsPort(t *testing.T) {
 	_ = clientSide.Close()
 }
 
+func TestReverseForwardReservationWaitsForCommit(t *testing.T) {
+	clientSide, serverSide := net.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := NewServer(serverSide, nil)
+	go func() { _ = server.Serve(ctx) }()
+	client := NewClient(clientSide)
+	go func() { _ = client.Run(ctx) }()
+
+	local, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer local.Close()
+	go func() {
+		conn, acceptErr := local.Accept()
+		if acceptErr == nil {
+			_, _ = io.Copy(conn, conn)
+			_ = conn.Close()
+		}
+	}()
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	windowsAddr := probe.Addr().String()
+	_ = probe.Close()
+
+	reservation, err := client.ReserveReverseForward(ctx, windowsAddr, local.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reservation.Close()
+	if duplicate, bindErr := net.Listen("tcp", windowsAddr); bindErr == nil {
+		_ = duplicate.Close()
+		t.Fatal("reserved Windows address was not bound")
+	}
+	conn, err := net.Dial("tcp", windowsAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte("commit")); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+	buf := make([]byte, 6)
+	if _, err := conn.Read(buf); err == nil {
+		t.Fatal("connection was accepted before commit")
+	}
+	if err := reservation.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		t.Fatal(err)
+	}
+	if string(buf) != "commit" {
+		t.Fatalf("got %q", buf)
+	}
+	_ = client.Close()
+	_ = serverSide.Close()
+	_ = clientSide.Close()
+}
+
 func TestInitiatorIDsUseSeparateParity(t *testing.T) {
 	client := NewClient(&discardReadWriter{})
 	if id := client.nextID.Add(2); id%2 != 1 {

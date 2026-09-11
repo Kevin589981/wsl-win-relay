@@ -60,6 +60,8 @@ func (s *Server) handle(frame protocol.Frame) {
 		go s.openListener(frame.StreamID, string(frame.Payload))
 	case protocol.TypeListenClose:
 		s.removeListener(frame.StreamID)
+	case protocol.TypeListenCommit:
+		s.commitListener(frame.StreamID)
 	case protocol.TypeData:
 		s.mu.Lock()
 		stream := s.streams[frame.StreamID]
@@ -86,8 +88,10 @@ func (s *Server) handle(frame protocol.Frame) {
 }
 
 type serverListener struct {
-	listener net.Listener
-	cancel   context.CancelFunc
+	listener   net.Listener
+	cancel     context.CancelFunc
+	commit     chan struct{}
+	commitOnce sync.Once
 }
 
 func (s *Server) openListener(id uint32, addr string) {
@@ -108,7 +112,7 @@ func (s *Server) openListener(id uint32, addr string) {
 		_ = ln.Close()
 		return
 	}
-	s.listeners[id] = &serverListener{listener: ln, cancel: cancel}
+	s.listeners[id] = &serverListener{listener: ln, cancel: cancel, commit: make(chan struct{})}
 	s.mu.Unlock()
 	if err := s.send(protocol.Frame{Type: protocol.TypeListenOK, StreamID: id}); err != nil {
 		s.removeListener(id)
@@ -118,6 +122,14 @@ func (s *Server) openListener(id uint32, addr string) {
 		<-ctx.Done()
 		_ = ln.Close()
 	}()
+	s.mu.Lock()
+	registered := s.listeners[id]
+	s.mu.Unlock()
+	select {
+	case <-registered.commit:
+	case <-ctx.Done():
+		return
+	}
 	for {
 		conn, acceptErr := ln.Accept()
 		if acceptErr != nil {
@@ -135,6 +147,15 @@ func (s *Server) openListener(id uint32, addr string) {
 			return
 		}
 		go s.copyToClient(streamID, conn)
+	}
+}
+
+func (s *Server) commitListener(id uint32) {
+	s.mu.Lock()
+	l := s.listeners[id]
+	s.mu.Unlock()
+	if l != nil {
+		l.commitOnce.Do(func() { close(l.commit) })
 	}
 }
 

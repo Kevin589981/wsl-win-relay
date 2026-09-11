@@ -96,6 +96,20 @@ func (c *Client) DialContext(ctx context.Context, target string) (net.Conn, erro
 // ReverseForward asks the Windows side to listen on windowsAddr and forward
 // accepted connections to the WSL-local target.
 func (c *Client) ReverseForward(ctx context.Context, windowsAddr, target string) (io.Closer, error) {
+	reservation, err := c.ReserveReverseForward(ctx, windowsAddr, target)
+	if err != nil {
+		return nil, err
+	}
+	if err := reservation.Commit(); err != nil {
+		_ = reservation.Close()
+		return nil, err
+	}
+	return reservation, nil
+}
+
+// ReserveReverseForward binds the Windows listener without accepting clients.
+// Commit must be called after the corresponding WSL listener is ready.
+func (c *Client) ReserveReverseForward(ctx context.Context, windowsAddr, target string) (*ReverseReservation, error) {
 	if windowsAddr == "" || target == "" || len(windowsAddr) > protocol.MaxTargetSize || len(target) > protocol.MaxTargetSize {
 		return nil, fmt.Errorf("invalid reverse-forward address")
 	}
@@ -114,7 +128,7 @@ func (c *Client) ReverseForward(ctx context.Context, windowsAddr, target string)
 			c.removeListener(id)
 			return nil, err
 		}
-		return l, nil
+		return &ReverseReservation{listener: l}, nil
 	case <-ctx.Done():
 		_ = l.Close()
 		return nil, ctx.Err()
@@ -122,6 +136,21 @@ func (c *Client) ReverseForward(ctx context.Context, windowsAddr, target string)
 		return nil, ErrClientClosed
 	}
 }
+
+type ReverseReservation struct {
+	listener   *clientListener
+	commitOnce sync.Once
+	commitErr  error
+}
+
+func (r *ReverseReservation) Commit() error {
+	r.commitOnce.Do(func() {
+		r.commitErr = r.listener.client.write(protocol.Frame{Type: protocol.TypeListenCommit, StreamID: r.listener.id})
+	})
+	return r.commitErr
+}
+
+func (r *ReverseReservation) Close() error { return r.listener.Close() }
 
 func (c *Client) Close() error {
 	c.fail(ErrClientClosed)
