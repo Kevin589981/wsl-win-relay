@@ -100,6 +100,7 @@ func TestWindowsRelayProcess(t *testing.T) {
 		if len(buf) == 0 {
 			t.Fatal("empty HTTP response")
 		}
+		testWindowsUDP(t, ctx, client)
 	}
 	_ = conn.Close()
 	_ = client.Close()
@@ -110,5 +111,32 @@ func TestWindowsRelayProcess(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("client did not stop")
+	}
+}
+
+func testWindowsUDP(t *testing.T, ctx context.Context, client *Client) {
+	t.Helper()
+	packet, err := client.OpenPacketContext(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer packet.Close()
+	_ = packet.SetDeadline(time.Now().Add(5 * time.Second))
+	query := []byte{
+		0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x07, 'e', 'x', 'a',
+		'm', 'p', 'l', 'e', 0x03, 'c', 'o', 'm', 0x00,
+		0x00, 0x01, 0x00, 0x01,
+	}
+	if _, err := packet.WriteTo(query, relayAddr("1.1.1.1:53")); err != nil {
+		t.Fatal(err)
+	}
+	response := make([]byte, 1500)
+	count, _, err := packet.ReadFrom(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count < 12 || response[0] != 0x12 || response[1] != 0x34 || response[2]&0x80 == 0 {
+		t.Fatalf("invalid DNS response: %x", response[:count])
 	}
 }

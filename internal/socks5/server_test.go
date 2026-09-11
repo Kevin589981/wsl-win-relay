@@ -2,6 +2,7 @@ package socks5
 
 import (
 	"context"
+	"encoding/binary"
 	"io"
 	"net"
 	"testing"
@@ -14,6 +15,24 @@ func (d *echoDialer) DialContext(context.Context, string) (net.Conn, error) {
 	local, remote := net.Pipe()
 	go func() { _, _ = io.Copy(remote, remote); _ = remote.Close() }()
 	return local, nil
+}
+
+func (d *echoDialer) OpenPacketContext(context.Context) (net.PacketConn, error) {
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero})
+	if err != nil {
+		return nil, err
+	}
+	return &resolvingPacketConn{UDPConn: conn}, nil
+}
+
+type resolvingPacketConn struct{ *net.UDPConn }
+
+func (c *resolvingPacketConn) WriteTo(data []byte, address net.Addr) (int, error) {
+	target, err := net.ResolveUDPAddr("udp", address.String())
+	if err != nil {
+		return 0, err
+	}
+	return c.WriteToUDP(data, target)
 }
 
 func TestServeConnConnectsDomainAndProxies(t *testing.T) {
@@ -80,4 +99,86 @@ func TestNegotiationRejectsAuthentication(t *testing.T) {
 	}
 	client.Close()
 	<-done
+}
+
+func TestUDPAssociateProxiesDatagram(t *testing.T) {
+	echo, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer echo.Close()
+	go func() {
+		buffer := make([]byte, 128)
+		count, source, readErr := echo.ReadFromUDP(buffer)
+		if readErr == nil {
+			_, _ = echo.WriteToUDP(buffer[:count], source)
+		}
+	}()
+
+	tcpListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tcpListener.Close()
+	server := &Server{Listener: tcpListener, Dialer: &echoDialer{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = server.Serve(ctx) }()
+	control, err := net.Dial("tcp", tcpListener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer control.Close()
+	_ = control.SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err := control.Write([]byte{5, 1, 0}); err != nil {
+		t.Fatal(err)
+	}
+	method := make([]byte, 2)
+	if _, err := io.ReadFull(control, method); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := control.Write([]byte{5, commandUDPAssociate, 0, 1, 0, 0, 0, 0, 0, 0}); err != nil {
+		t.Fatal(err)
+	}
+	reply := make([]byte, 10)
+	if _, err := io.ReadFull(control, reply); err != nil {
+		t.Fatal(err)
+	}
+	if reply[1] != replySucceeded || reply[3] != 1 {
+		t.Fatalf("reply: %v", reply)
+	}
+	proxyAddr := &net.UDPAddr{IP: net.IP(reply[4:8]), Port: int(binary.BigEndian.Uint16(reply[8:10]))}
+	udpClient, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer udpClient.Close()
+	_ = udpClient.SetDeadline(time.Now().Add(2 * time.Second))
+	encodedTarget, err := encodeAddress(echo.LocalAddr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet := append([]byte{0, 0, 0}, encodedTarget...)
+	packet = append(packet, []byte("udp-ping")...)
+	if _, err := udpClient.WriteToUDP(packet, proxyAddr); err != nil {
+		t.Fatal(err)
+	}
+	buffer := make([]byte, 256)
+	count, _, err := udpClient.ReadFromUDP(buffer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, data, err := parseUDPRequest(buffer[:count])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source != echo.LocalAddr().String() || string(data) != "udp-ping" {
+		t.Fatalf("source=%s data=%q", source, data)
+	}
+}
+
+func TestParseUDPRequestRejectsFragments(t *testing.T) {
+	if _, _, err := parseUDPRequest([]byte{0, 0, 1, 1, 127, 0, 0, 1, 0, 53}); err == nil {
+		t.Fatal("expected fragment rejection")
+	}
 }

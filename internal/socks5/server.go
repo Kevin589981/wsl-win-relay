@@ -1,6 +1,7 @@
 package socks5
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -8,11 +9,169 @@ import (
 	"log"
 	"net"
 	"strconv"
+	"sync"
 	"syscall"
 )
 
 type Dialer interface {
 	DialContext(context.Context, string) (net.Conn, error)
+}
+
+func (s *Server) serveUDPAssociate(ctx context.Context, control net.Conn, packetDialer PacketDialer) error {
+	relayPacket, err := packetDialer.OpenPacketContext(ctx)
+	if err != nil {
+		_ = writeReply(control, mapDialError(err), nil)
+		return err
+	}
+	defer relayPacket.Close()
+	local, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		_ = writeReply(control, replyGeneralFailure, nil)
+		return err
+	}
+	defer local.Close()
+	if err := writeReply(control, replySucceeded, local.LocalAddr()); err != nil {
+		return err
+	}
+
+	associationCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	errCh := make(chan error, 3)
+	var clientMu sync.RWMutex
+	var udpClient *net.UDPAddr
+	go func() { _, copyErr := io.Copy(io.Discard, control); errCh <- copyErr }()
+	go func() {
+		buffer := make([]byte, 65535)
+		for {
+			count, source, readErr := local.ReadFromUDP(buffer)
+			if readErr != nil {
+				errCh <- readErr
+				return
+			}
+			if !sameClientIP(control.RemoteAddr(), source) {
+				continue
+			}
+			target, data, parseErr := parseUDPRequest(buffer[:count])
+			if parseErr != nil {
+				s.Logger.Printf("UDP packet: %v", parseErr)
+				continue
+			}
+			clientMu.Lock()
+			udpClient = source
+			clientMu.Unlock()
+			if _, writeErr := relayPacket.WriteTo(data, stringAddr(target)); writeErr != nil {
+				errCh <- writeErr
+				return
+			}
+		}
+	}()
+	go func() {
+		buffer := make([]byte, 65535)
+		for {
+			count, source, readErr := relayPacket.ReadFrom(buffer)
+			if readErr != nil {
+				errCh <- readErr
+				return
+			}
+			packet, encodeErr := encodeUDPResponse(source.String(), buffer[:count])
+			if encodeErr != nil {
+				continue
+			}
+			clientMu.RLock()
+			destination := udpClient
+			clientMu.RUnlock()
+			if destination == nil {
+				continue
+			}
+			if _, writeErr := local.WriteToUDP(packet, destination); writeErr != nil {
+				errCh <- writeErr
+				return
+			}
+		}
+	}()
+
+	select {
+	case err := <-errCh:
+		cancel()
+		_ = local.Close()
+		_ = relayPacket.Close()
+		if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+			return nil
+		}
+		return err
+	case <-associationCtx.Done():
+		return associationCtx.Err()
+	}
+}
+
+func sameClientIP(control net.Addr, udp *net.UDPAddr) bool {
+	host, _, err := net.SplitHostPort(control.String())
+	if err != nil {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip == nil || ip.Equal(udp.IP)
+}
+
+func parseUDPRequest(packet []byte) (string, []byte, error) {
+	if len(packet) < 4 || packet[0] != 0 || packet[1] != 0 {
+		return "", nil, errors.New("invalid UDP reserved field")
+	}
+	if packet[2] != 0 {
+		return "", nil, errors.New("fragmented UDP packets are unsupported")
+	}
+	reader := bytes.NewReader(packet[4:])
+	target, err := readAddress(reader, packet[3])
+	if err != nil {
+		return "", nil, err
+	}
+	consumed := len(packet[4:]) - reader.Len()
+	return target, packet[4+consumed:], nil
+}
+
+func encodeUDPResponse(source string, data []byte) ([]byte, error) {
+	address, err := encodeAddress(source)
+	if err != nil {
+		return nil, err
+	}
+	packet := make([]byte, 0, 3+len(address)+len(data))
+	packet = append(packet, 0, 0, 0)
+	packet = append(packet, address...)
+	packet = append(packet, data...)
+	return packet, nil
+}
+
+func encodeAddress(address string) ([]byte, error) {
+	host, rawPort, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, err
+	}
+	port, err := strconv.ParseUint(rawPort, 10, 16)
+	if err != nil {
+		return nil, err
+	}
+	var encoded []byte
+	ip := net.ParseIP(host)
+	if ip4 := ip.To4(); ip4 != nil {
+		encoded = append([]byte{1}, ip4...)
+	} else if ip6 := ip.To16(); ip6 != nil {
+		encoded = append([]byte{4}, ip6...)
+	} else {
+		if len(host) == 0 || len(host) > 255 {
+			return nil, errors.New("invalid domain length")
+		}
+		encoded = append([]byte{3, byte(len(host))}, host...)
+	}
+	return append(encoded, byte(port>>8), byte(port)), nil
+}
+
+type stringAddr string
+
+func (a stringAddr) Network() string { return "udp" }
+func (a stringAddr) String() string  { return string(a) }
+
+type PacketDialer interface {
+	OpenPacketContext(context.Context) (net.PacketConn, error)
 }
 
 type Server struct {
@@ -55,12 +214,24 @@ func (s *Server) ServeConn(ctx context.Context, client net.Conn) error {
 	if err := negotiate(client); err != nil {
 		return err
 	}
-	target, err := readRequest(client)
+	request, err := readRequest(client)
 	if err != nil {
 		_ = writeReply(client, replyGeneralFailure, nil)
 		return err
 	}
-	remote, err := s.Dialer.DialContext(ctx, target)
+	if request.command == commandUDPAssociate {
+		packetDialer, ok := s.Dialer.(PacketDialer)
+		if !ok {
+			_ = writeReply(client, replyCommandNotSupported, nil)
+			return errors.New("UDP relay is unavailable")
+		}
+		return s.serveUDPAssociate(ctx, client, packetDialer)
+	}
+	if request.command != commandConnect {
+		_ = writeReply(client, replyCommandNotSupported, nil)
+		return errors.New("unsupported SOCKS command")
+	}
+	remote, err := s.Dialer.DialContext(ctx, request.target)
 	if err != nil {
 		_ = writeReply(client, mapDialError(err), nil)
 		return err
@@ -97,41 +268,56 @@ func negotiate(conn net.Conn) error {
 	return err
 }
 
-func readRequest(conn net.Conn) (string, error) {
+const (
+	commandConnect      = 1
+	commandUDPAssociate = 3
+)
+
+type request struct {
+	command byte
+	target  string
+}
+
+func readRequest(conn net.Conn) (request, error) {
 	header := make([]byte, 4)
 	if _, err := io.ReadFull(conn, header); err != nil {
-		return "", err
+		return request{}, err
 	}
 	if header[0] != 5 {
-		return "", errors.New("unsupported SOCKS version")
+		return request{}, errors.New("unsupported SOCKS version")
 	}
-	if header[1] != 1 {
-		return "", errors.New("only CONNECT is supported")
+	target, err := readAddress(conn, header[3])
+	if err != nil {
+		return request{}, err
 	}
+	return request{command: header[1], target: target}, nil
+}
+
+func readAddress(reader io.Reader, addressType byte) (string, error) {
 	var host string
-	switch header[3] {
+	switch addressType {
 	case 1:
 		b := make([]byte, 4)
-		if _, err := io.ReadFull(conn, b); err != nil {
+		if _, err := io.ReadFull(reader, b); err != nil {
 			return "", err
 		}
 		host = net.IP(b).String()
 	case 3:
 		b := make([]byte, 1)
-		if _, err := io.ReadFull(conn, b); err != nil {
+		if _, err := io.ReadFull(reader, b); err != nil {
 			return "", err
 		}
 		if b[0] == 0 {
 			return "", errors.New("empty domain")
 		}
 		name := make([]byte, int(b[0]))
-		if _, err := io.ReadFull(conn, name); err != nil {
+		if _, err := io.ReadFull(reader, name); err != nil {
 			return "", err
 		}
 		host = string(name)
 	case 4:
 		b := make([]byte, 16)
-		if _, err := io.ReadFull(conn, b); err != nil {
+		if _, err := io.ReadFull(reader, b); err != nil {
 			return "", err
 		}
 		host = net.IP(b).String()
@@ -139,7 +325,7 @@ func readRequest(conn net.Conn) (string, error) {
 		return "", errors.New("unsupported address type")
 	}
 	portBytes := make([]byte, 2)
-	if _, err := io.ReadFull(conn, portBytes); err != nil {
+	if _, err := io.ReadFull(reader, portBytes); err != nil {
 		return "", err
 	}
 	return net.JoinHostPort(host, strconv.Itoa(int(binary.BigEndian.Uint16(portBytes)))), nil

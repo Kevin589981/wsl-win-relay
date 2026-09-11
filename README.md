@@ -17,6 +17,7 @@ The repository is under active implementation. The current TCP milestone is usab
 - Dynamic `/proc/net/tcp{,6}` listener discovery with automatic Windows add/remove.
 - Strict opt-in `listen()` coordination for dynamically linked Linux applications.
 - Multiplexed Windows-side UDP sockets with endpoint-preserving datagram frames.
+- SOCKS5 UDP ASSOCIATE for DNS, QUIC-capable clients, and other UDP traffic.
 - Verified in the target failure mode: WSL could not reach the configured Windows proxy port, while this relay still reached the public Internet and cloned a GitHub repository.
 
 Explicit reverse port forwarding and strict synchronization with dynamically linked application `listen()` calls are implemented. The broader automatic mode remains polling-based so it can support unmodified applications.
@@ -69,7 +70,7 @@ Place `wsl-win-relay.exe` somewhere visible to WSL interop (or pass its absolute
 curl --proxy socks5h://127.0.0.1:1080 https://example.com
 ```
 
-The `socks5h` form is intentional: the hostname is sent through the relay and resolved by Windows rather than by WSL.
+The `socks5h` form is intentional: the hostname is sent through the relay and resolved by Windows rather than by WSL. SOCKS5 UDP ASSOCIATE is also supported; UDP destination names are resolved by Windows. SOCKS fragmentation (`FRAG != 0`) is rejected because there is no interoperable fragmentation standard in common clients.
 
 To expose a WSL service on a Windows port, add an explicit reverse mapping:
 
