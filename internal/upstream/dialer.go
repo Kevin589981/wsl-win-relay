@@ -343,6 +343,9 @@ func readSocksAddress(reader io.Reader, addressType byte) (string, error) {
 		if _, err := io.ReadFull(reader, nameLength); err != nil {
 			return "", err
 		}
+		if nameLength[0] == 0 {
+			return "", errors.New("empty SOCKS5 domain address")
+		}
 		length = int(nameLength[0])
 	default:
 		return "", fmt.Errorf("unsupported address type %d", addressType)

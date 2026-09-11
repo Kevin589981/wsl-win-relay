@@ -288,6 +288,12 @@ func TestNewRejectsUnsupportedProxy(t *testing.T) {
 	}
 }
 
+func TestReadSocksAddressRejectsEmptyDomain(t *testing.T) {
+	if _, err := readSocksAddress(strings.NewReader("\x00\x00\x01"), 3); err == nil {
+		t.Fatal("expected empty SOCKS5 domain rejection")
+	}
+}
+
 func readRawHeaders(conn net.Conn) (string, error) {
 	reader := bufio.NewReader(conn)
 	var builder strings.Builder
