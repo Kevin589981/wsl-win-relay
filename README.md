@@ -76,6 +76,7 @@ To expose a WSL service on a Windows port, add an explicit reverse mapping:
 
 The WSL application continues to bind `127.0.0.1:8000`; the Windows relay
 owns `0.0.0.0:8000` and forwards each accepted connection. A Windows bind
-conflict or firewall denial is reported during startup. Multiple mappings will
-get a dedicated configuration format in a later milestone; the core protocol
-already uses independent listener IDs and supports multiple listeners.
+conflict is reported during startup. Firewall policy can still reject later
+connections, so it must be checked separately. Multiple mappings will get a
+dedicated configuration format in a later milestone; the core protocol already
+uses independent listener IDs and supports multiple listeners.
