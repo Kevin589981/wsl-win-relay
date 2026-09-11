@@ -17,6 +17,7 @@ import (
 
 	"github.com/Kevin589981/wsl-win-relay/internal/autoforward"
 	"github.com/Kevin589981/wsl-win-relay/internal/forward"
+	"github.com/Kevin589981/wsl-win-relay/internal/listencontrol"
 	"github.com/Kevin589981/wsl-win-relay/internal/relay"
 	"github.com/Kevin589981/wsl-win-relay/internal/socks5"
 	"github.com/Kevin589981/wsl-win-relay/internal/transport/stdio"
@@ -32,6 +33,7 @@ func main() {
 	autoForwardInterval := flag.Duration("auto-forward-interval", time.Second, "automatic listener scan interval")
 	autoForwardInclude := flag.String("auto-forward-include", "", "comma-separated allowlist of ports for automatic mapping")
 	autoForwardExclude := flag.String("auto-forward-exclude", "", "comma-separated ports excluded from automatic mapping")
+	controlSocket := flag.String("control-socket", "/tmp/wsl-win-relay-control.sock", "Unix socket for strict listener coordination; empty disables")
 	flag.Parse()
 
 	logger := log.New(os.Stderr, "wsl-proxy: ", log.LstdFlags)
@@ -60,6 +62,15 @@ func main() {
 	client := relay.NewClient(endpoint)
 	relayDone := make(chan error, 1)
 	go func() { relayDone <- client.Run(ctx) }()
+	var controlDone chan error
+	if *controlSocket != "" {
+		control := &listencontrol.Server{Path: *controlSocket, Reserve: func(reserveCtx context.Context, windows, wsl string) (listencontrol.Reservation, error) {
+			return client.ReserveReverseForward(reserveCtx, windows, wsl)
+		}}
+		controlDone = make(chan error, 1)
+		go func() { controlDone <- control.Serve(ctx) }()
+		logger.Printf("strict-listen control socket %s", *controlSocket)
+	}
 	reverseForwards, err := forward.OpenAll(ctx, client, reverseMappings)
 	if err != nil {
 		logger.Fatalf("register reverse forwards: %v", err)
@@ -111,6 +122,10 @@ func main() {
 	case err := <-autoDone:
 		if err != nil {
 			logger.Printf("automatic forwarding stopped: %v", err)
+		}
+	case err := <-controlDone:
+		if err != nil {
+			logger.Printf("strict-listen control stopped: %v", err)
 		}
 	}
 
