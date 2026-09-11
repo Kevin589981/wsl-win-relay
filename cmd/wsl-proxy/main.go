@@ -43,6 +43,10 @@ type options struct {
 	udpAssociateIdle    time.Duration
 }
 
+var errRelayExited = errors.New("Windows relay exited")
+
+const relayRestartDelay = 2 * time.Second
+
 func main() {
 	logger := log.New(os.Stderr, "wsl-proxy: ", log.LstdFlags)
 	opts, err := parseOptions(os.Args[1:])
@@ -52,9 +56,28 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, opts, logger); err != nil && !errors.Is(err, context.Canceled) {
-		logger.Printf("stopped: %v", err)
-		os.Exit(1)
+	for {
+		err := run(ctx, opts, logger)
+		if err == nil || errors.Is(err, context.Canceled) || ctx.Err() != nil {
+			return
+		}
+		if !errors.Is(err, errRelayExited) {
+			logger.Printf("stopped: %v", err)
+			os.Exit(1)
+		}
+		logger.Printf("%v; restarting in %s", err, relayRestartDelay)
+		timer := time.NewTimer(relayRestartDelay)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return
+		}
 	}
 }
 
@@ -269,7 +292,7 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 	select {
 	case err := <-relayDone:
 		if errors.Is(err, io.EOF) {
-			return errors.New("Windows relay exited")
+			return errRelayExited
 		}
 		return err
 	case err := <-socksDone:

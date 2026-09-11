@@ -211,6 +211,8 @@ systemctl --user status wsl-win-relay.service
 
 The service restarts the proxy after a Windows relay crash; startup handshake,
 reverse registrations, and control sockets are recreated on each restart. The
+proxy also retries a relay-only EOF on its own with a two-second backoff when
+run directly, while configuration and listener errors remain fatal. The
 installer copies the built Linux proxy to `~/bin/wsl-proxy-linux` and the
 strict-listen launcher to `~/bin/wsl-win-relay-run`; when the native library is
 present it also installs it under `~/lib`. It then creates a private
