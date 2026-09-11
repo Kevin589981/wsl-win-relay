@@ -216,7 +216,8 @@ If the control socket is briefly unavailable while the relay is starting or
 recovering, the interposer retries the reservation for up to two seconds.
 Definitive Windows bind errors are returned immediately. Set
 `WSL_WIN_RELAY_CONTROL_RETRY_SECONDS` to extend this window (up to 60 seconds)
-when the relay supervisor uses a longer restart backoff.
+when the relay supervisor uses a longer restart backoff; the strict launcher
+uses the same value while waiting for the control socket.
 
 This propagates bind/listen errors, not later firewall policy. A Windows
 firewall rule that drops or rejects clients after the socket is bound does not

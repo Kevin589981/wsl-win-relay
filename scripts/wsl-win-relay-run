@@ -9,13 +9,21 @@ fi
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 library=${WSL_WIN_RELAY_PRELOAD:-"$repo_dir/lib/libwsl_win_relay_listen.so"}
 control=${WSL_WIN_RELAY_CONTROL:-/tmp/wsl-win-relay-control.sock}
+retry_seconds=${WSL_WIN_RELAY_CONTROL_RETRY_SECONDS:-2}
+case "$retry_seconds" in
+    ''|*[!0-9]*) retry_seconds=2 ;;
+esac
+if [ "$retry_seconds" -gt 60 ]; then
+    retry_seconds=60
+fi
+retry_attempts=$((retry_seconds * 10 + 1))
 
 if [ ! -r "$library" ]; then
     echo "listen interposer not found: $library (run scripts/build-wsl.sh)" >&2
     exit 1
 fi
 
-for _ in $(seq 1 20); do
+for _ in $(seq 1 "$retry_attempts"); do
     [ -S "$control" ] && break
     sleep 0.1
 done
