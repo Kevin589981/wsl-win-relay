@@ -137,6 +137,55 @@ func TestAdoptAndReleaseKeepsLeaseUntilLastOwner(t *testing.T) {
 	}
 }
 
+func TestReaperKeepsLeaseWhileAnotherOwnerLives(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "control.sock")
+	reservation := &fakeReservation{}
+	var aliveMu sync.Mutex
+	alive := map[int]bool{123: true, 456: true}
+	server := &Server{
+		Path: path,
+		ProcessIdentity: func(pid int) (string, error) {
+			aliveMu.Lock()
+			defer aliveMu.Unlock()
+			if !alive[pid] {
+				return "", os.ErrNotExist
+			}
+			return "start", nil
+		},
+		Reserve: func(context.Context, string, string) (Reservation, error) { return reservation, nil },
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(ctx) }()
+	waitForSocket(t, path)
+	response := request(t, path, "RESERVE 123 tcp4 8002\n")
+	id := strings.TrimSpace(strings.TrimPrefix(response, "OK "))
+	if got := request(t, path, "ADOPT 456 "+id+"\n"); got != "OK\n" {
+		t.Fatalf("adopt: %q", got)
+	}
+	aliveMu.Lock()
+	alive[123] = false
+	aliveMu.Unlock()
+	server.reapDeadProcesses()
+	_, closed := reservation.values()
+	if closed {
+		t.Fatal("reaper closed lease while child owner remained")
+	}
+	aliveMu.Lock()
+	alive[456] = false
+	aliveMu.Unlock()
+	server.reapDeadProcesses()
+	_, closed = reservation.values()
+	if !closed {
+		t.Fatal("reaper did not close lease after final owner disappeared")
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPrepareSocketPathRefusesRegularFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "control.sock")
 	if err := os.WriteFile(path, []byte("keep"), 0o600); err != nil {
