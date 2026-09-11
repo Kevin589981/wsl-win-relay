@@ -17,6 +17,7 @@ import (
 
 	"github.com/Kevin589981/wsl-win-relay/internal/autoforward"
 	"github.com/Kevin589981/wsl-win-relay/internal/forward"
+	"github.com/Kevin589981/wsl-win-relay/internal/httpproxy"
 	"github.com/Kevin589981/wsl-win-relay/internal/listencontrol"
 	"github.com/Kevin589981/wsl-win-relay/internal/relay"
 	"github.com/Kevin589981/wsl-win-relay/internal/socks5"
@@ -25,6 +26,7 @@ import (
 
 func main() {
 	listenAddr := flag.String("listen", "127.0.0.1:1080", "SOCKS5 listen address")
+	httpListenAddr := flag.String("http-listen", "", "optional HTTP CONNECT proxy listen address")
 	relayExe := flag.String("relay-exe", "wsl-win-relay.exe", "Windows relay executable")
 	var reverseMappings forward.Mappings
 	flag.Var(&reverseMappings, "reverse", "reverse mapping WINDOWS_ADDR=WSL_TARGET (repeatable)")
@@ -86,6 +88,13 @@ func main() {
 		logger.Fatalf("listen on %s: %v", *listenAddr, err)
 	}
 	logger.Printf("SOCKS5 listening on %s", listener.Addr())
+	var httpListener net.Listener
+	if *httpListenAddr != "" {
+		httpListener, err = net.Listen("tcp", *httpListenAddr)
+		if err != nil {
+			logger.Fatalf("HTTP proxy listen on %s: %v", *httpListenAddr, err)
+		}
+	}
 	var autoDone chan error
 	if *autoForward {
 		included, parseErr := parsePortSet(*autoForwardInclude)
@@ -97,6 +106,9 @@ func main() {
 			logger.Fatalf("parse -auto-forward-exclude: %v", parseErr)
 		}
 		addAddressPort(excluded, listener.Addr().String())
+		if httpListener != nil {
+			addAddressPort(excluded, httpListener.Addr().String())
+		}
 		for _, mapping := range reverseMappings {
 			addAddressPort(excluded, mapping.WSL)
 		}
@@ -108,6 +120,13 @@ func main() {
 	proxy := &socks5.Server{Listener: listener, Dialer: client, Logger: logger}
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- proxy.Serve(ctx) }()
+	var httpDone chan error
+	if httpListener != nil {
+		httpProxy := &httpproxy.Server{Listener: httpListener, Dialer: client, Logger: logger}
+		httpDone = make(chan error, 1)
+		go func() { httpDone <- httpProxy.Serve(ctx) }()
+		logger.Printf("HTTP CONNECT proxy listening on %s", httpListener.Addr())
+	}
 
 	select {
 	case err := <-relayDone:
@@ -127,10 +146,17 @@ func main() {
 		if err != nil {
 			logger.Printf("strict-listen control stopped: %v", err)
 		}
+	case err := <-httpDone:
+		if err != nil {
+			logger.Printf("HTTP CONNECT proxy stopped: %v", err)
+		}
 	}
 
 	stop()
 	_ = listener.Close()
+	if httpListener != nil {
+		_ = httpListener.Close()
+	}
 	_ = client.Close()
 	_ = reverseForwards.Close()
 	_ = endpoint.Close()

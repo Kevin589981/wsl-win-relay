@@ -18,6 +18,7 @@ The repository is under active implementation. The current TCP milestone is usab
 - Strict opt-in `listen()` coordination for dynamically linked Linux applications.
 - Multiplexed Windows-side UDP sockets with endpoint-preserving datagram frames.
 - SOCKS5 UDP ASSOCIATE for DNS, QUIC-capable clients, and other UDP traffic.
+- Optional HTTP CONNECT proxy for tools that only support `HTTP_PROXY`.
 - Verified in the target failure mode: WSL could not reach the configured Windows proxy port, while this relay still reached the public Internet and cloned a GitHub repository.
 
 Explicit reverse port forwarding and strict synchronization with dynamically linked application `listen()` calls are implemented. The broader automatic mode remains polling-based so it can support unmodified applications.
@@ -71,6 +72,19 @@ curl --proxy socks5h://127.0.0.1:1080 https://example.com
 ```
 
 The `socks5h` form is intentional: the hostname is sent through the relay and resolved by Windows rather than by WSL. SOCKS5 UDP ASSOCIATE is also supported; UDP destination names are resolved by Windows. SOCKS fragmentation (`FRAG != 0`) is rejected because there is no interoperable fragmentation standard in common clients.
+
+For clients that only support an HTTP proxy, enable the optional CONNECT listener:
+
+```bash
+./bin/wsl-proxy-linux \
+  -relay-exe /mnt/d/Code/net/wsl-win-relay/bin/wsl-win-relay.exe \
+  -http-listen 127.0.0.1:8080
+
+HTTPS_PROXY=http://127.0.0.1:8080 curl https://example.com
+```
+
+Only CONNECT is accepted. Plain HTTP forwarding is deliberately not implemented;
+clients using `HTTP_PROXY` for cleartext URLs should use SOCKS or request CONNECT.
 
 To expose a WSL service on a Windows port, add an explicit reverse mapping:
 
