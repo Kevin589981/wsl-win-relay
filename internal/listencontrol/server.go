@@ -199,7 +199,11 @@ func (s *Server) handleReserve(ctx context.Context, conn net.Conn, parts []strin
 	s.ensureLeases()
 	s.leases[id] = &lease{reservation: reservation, owners: map[int]string{pid: identity}}
 	s.mu.Unlock()
-	_, _ = fmt.Fprintf(conn, "OK %d\n", id)
+	if _, err := fmt.Fprintf(conn, "OK %d\n", id); err != nil {
+		// The requester may disappear after Windows has bound the port but before
+		// it receives the lease id. Do not retain an unmanageable owner lease.
+		s.remove(id)
+	}
 }
 
 func (s *Server) handleAdopt(conn net.Conn, parts []string) {

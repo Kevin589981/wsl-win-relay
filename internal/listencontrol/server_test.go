@@ -93,6 +93,31 @@ func TestReserveUDP(t *testing.T) {
 	}
 }
 
+func TestReserveClosesLeaseWhenRequesterDisconnects(t *testing.T) {
+	reservation := &fakeReservation{}
+	server := &Server{
+		ProcessIdentity: func(int) (string, error) { return "start", nil },
+		Reserve:         func(context.Context, string, string) (Reservation, error) { return reservation, nil },
+	}
+	serverSide, clientSide := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		server.handleReserve(context.Background(), serverSide, []string{"RESERVE", "123", "tcp4", "8000"})
+		close(done)
+	}()
+	_ = clientSide.Close()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("reserve did not finish after requester disconnect")
+	}
+	_ = serverSide.Close()
+	_, closed := reservation.values()
+	if !closed {
+		t.Fatal("lease remained open after requester disconnect")
+	}
+}
+
 func TestReapsLeaseWhenProcessIdentityDisappears(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "control.sock")
 	reservation := &fakeReservation{}
