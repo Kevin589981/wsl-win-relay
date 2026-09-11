@@ -52,7 +52,7 @@ See [the implementation plan](docs/plans/2026-09-12-wsl-win-relay.md) and [archi
 
 Outbound proxy connections do **not** need matching ports. For a request such as `curl -> example.com:443`, WSL only sends the destination; Windows creates an ordinary outbound socket and chooses an ephemeral source port. Source-port correspondence would add no useful information and would create avoidable collisions.
 
-Inbound exposure is different. A Windows port must be bound before Windows clients can connect. The planned reverse-forward command will therefore look like `windows-port:WSL-address`, for example `8000:127.0.0.1:8000`; the WSL application keeps owning its local `8000`, while the relay owns Windows `8000` and connects to the WSL application for each accepted connection.
+Inbound exposure is different. A Windows port must be bound before Windows clients can connect. The reverse-forward mapping looks like `windows-port:WSL-address`, for example `8000:127.0.0.1:8000`; the WSL application keeps owning its local `8000`, while the relay owns Windows `8000` and connects to the WSL application for each accepted connection.
 
 ## Build
 
