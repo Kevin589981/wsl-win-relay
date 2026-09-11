@@ -94,6 +94,44 @@ func TestServerServeRejectsSecondReader(t *testing.T) {
 	}
 }
 
+func TestStreamCloseUnblocksRead(t *testing.T) {
+	stream := newClientStream(NewClient(&discardReadWriter{}), 1, "example:1")
+	result := make(chan error, 1)
+	go func() {
+		_, err := stream.Read(make([]byte, 1))
+		result <- err
+	}()
+	time.Sleep(10 * time.Millisecond)
+	_ = stream.Close()
+	select {
+	case err := <-result:
+		if !errors.Is(err, io.EOF) {
+			t.Fatalf("read after close: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stream read remained blocked after close")
+	}
+}
+
+func TestPacketCloseUnblocksRead(t *testing.T) {
+	packet := &clientPacketConn{client: NewClient(&discardReadWriter{}), id: 1, ready: make(chan error, 1), incoming: make(chan packetEvent, 1), done: make(chan struct{})}
+	result := make(chan error, 1)
+	go func() {
+		_, _, err := packet.ReadFrom(make([]byte, 1))
+		result <- err
+	}()
+	time.Sleep(10 * time.Millisecond)
+	_ = packet.Close()
+	select {
+	case err := <-result:
+		if !errors.Is(err, io.EOF) {
+			t.Fatalf("read after close: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("packet read remained blocked after close")
+	}
+}
+
 func TestReverseForward(t *testing.T) {
 	clientSide, serverSide := net.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -339,7 +377,7 @@ func TestSlowStreamDoesNotBlockOtherStreams(t *testing.T) {
 
 func TestSlowDatagramConsumerDropsInsteadOfBlocking(t *testing.T) {
 	client := NewClient(&discardReadWriter{})
-	packet := &clientPacketConn{client: client, id: 1, ready: make(chan error, 1), incoming: make(chan packetEvent, 1)}
+	packet := &clientPacketConn{client: client, id: 1, ready: make(chan error, 1), incoming: make(chan packetEvent, 1), done: make(chan struct{})}
 	payload, err := protocol.EncodeDatagram("127.0.0.1:53", []byte("x"))
 	if err != nil {
 		t.Fatal(err)

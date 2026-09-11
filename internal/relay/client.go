@@ -79,7 +79,7 @@ func (c *Client) Handshake(ctx context.Context, required uint64) (uint64, error)
 
 func (c *Client) OpenPacketContext(ctx context.Context) (net.PacketConn, error) {
 	id := c.nextID.Add(2)
-	p := &clientPacketConn{client: c, id: id, ready: make(chan error, 1), incoming: make(chan packetEvent, 64)}
+	p := &clientPacketConn{client: c, id: id, ready: make(chan error, 1), incoming: make(chan packetEvent, 64), done: make(chan struct{})}
 	c.mu.Lock()
 	c.datagrams[id] = p
 	c.mu.Unlock()
@@ -342,6 +342,10 @@ type clientPacketConn struct {
 	readyOnce     sync.Once
 	incoming      chan packetEvent
 	closeOnce     sync.Once
+	done          chan struct{}
+	doneOnce      sync.Once
+	errorMu       sync.Mutex
+	terminalErr   error
 	deadlineMu    sync.Mutex
 	readDeadline  time.Time
 	writeDeadline time.Time
@@ -374,10 +378,25 @@ func (p *clientPacketConn) handle(frame protocol.Frame) {
 
 func (p *clientPacketConn) fail(err error) {
 	p.readyOnce.Do(func() { p.ready <- err })
+	p.errorMu.Lock()
+	if p.terminalErr == nil {
+		p.terminalErr = err
+	}
+	p.errorMu.Unlock()
+	p.doneOnce.Do(func() { close(p.done) })
 	select {
 	case p.incoming <- packetEvent{err: err}:
 	default:
 	}
+}
+
+func (p *clientPacketConn) terminalError() error {
+	p.errorMu.Lock()
+	defer p.errorMu.Unlock()
+	if p.terminalErr == nil {
+		return io.EOF
+	}
+	return p.terminalErr
 }
 
 func (p *clientPacketConn) ReadFrom(buffer []byte) (int, net.Addr, error) {
@@ -408,6 +427,8 @@ func (p *clientPacketConn) ReadFrom(buffer []byte) (int, net.Addr, error) {
 		return n, relayAddr(event.endpoint), nil
 	case <-timeout:
 		return 0, nil, osTimeout{}
+	case <-p.done:
+		return 0, nil, p.terminalError()
 	case <-p.client.closed:
 		return 0, nil, ErrClientClosed
 	}
@@ -427,6 +448,11 @@ func (p *clientPacketConn) WriteTo(data []byte, address net.Addr) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	select {
+	case <-p.done:
+		return 0, p.terminalError()
+	default:
+	}
 	if err := p.client.write(protocol.Frame{Type: protocol.TypeDatagramData, StreamID: p.id, Payload: payload}); err != nil {
 		return 0, err
 	}
@@ -435,9 +461,9 @@ func (p *clientPacketConn) WriteTo(data []byte, address net.Addr) (int, error) {
 
 func (p *clientPacketConn) Close() error {
 	p.closeOnce.Do(func() {
-		_ = p.client.write(protocol.Frame{Type: protocol.TypeDatagramClose, StreamID: p.id})
 		p.client.removeDatagram(p.id)
 		p.fail(io.EOF)
+		_ = p.client.write(protocol.Frame{Type: protocol.TypeDatagramClose, StreamID: p.id})
 	})
 	return nil
 }
@@ -487,8 +513,8 @@ type clientListener struct {
 
 func (l *clientListener) Close() error {
 	l.once.Do(func() {
-		_ = l.client.write(protocol.Frame{Type: protocol.TypeListenClose, StreamID: l.id})
 		l.client.removeListener(l.id)
+		_ = l.client.write(protocol.Frame{Type: protocol.TypeListenClose, StreamID: l.id})
 	})
 	return nil
 }
@@ -529,6 +555,8 @@ type clientStream struct {
 	deadlineMu    sync.Mutex
 	readDeadline  time.Time
 	writeDeadline time.Time
+	errorMu       sync.Mutex
+	terminalErr   error
 	sendWindow    *flowWindow
 	done          chan struct{}
 	doneOnce      sync.Once
@@ -584,6 +612,11 @@ func (s *clientStream) handle(frame protocol.Frame) {
 
 func (s *clientStream) fail(err error) {
 	s.openOnce.Do(func() { s.openDone <- err })
+	s.errorMu.Lock()
+	if s.terminalErr == nil {
+		s.terminalErr = err
+	}
+	s.errorMu.Unlock()
 	s.doneOnce.Do(func() { close(s.done) })
 	s.stateMu.Lock()
 	if !s.closedRemote {
@@ -594,6 +627,15 @@ func (s *clientStream) fail(err error) {
 		}
 	}
 	s.stateMu.Unlock()
+}
+
+func (s *clientStream) terminalError() error {
+	s.errorMu.Lock()
+	defer s.errorMu.Unlock()
+	if s.terminalErr == nil {
+		return io.EOF
+	}
+	return s.terminalErr
 }
 
 func (s *clientStream) Read(p []byte) (int, error) {
@@ -650,6 +692,8 @@ func (s *clientStream) Read(p []byte) (int, error) {
 			}
 		case <-timer:
 			return 0, osTimeout{}
+		case <-s.done:
+			return 0, s.terminalError()
 		case <-s.client.closed:
 			return 0, ErrClientClosed
 		}
@@ -684,9 +728,9 @@ func (s *clientStream) Write(p []byte) (int, error) {
 
 func (s *clientStream) Close() error {
 	s.closeOnce.Do(func() {
-		_ = s.client.write(protocol.Frame{Type: protocol.TypeClose, StreamID: s.id})
 		s.client.removeStream(s.id)
 		s.fail(io.EOF)
+		_ = s.client.write(protocol.Frame{Type: protocol.TypeClose, StreamID: s.id})
 	})
 	return nil
 }
