@@ -5,6 +5,10 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#ifndef CLOSE_RANGE_CLOEXEC
+#define CLOSE_RANGE_CLOEXEC (1U << 2)
+#endif
+
 int main(void) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) return 1;
@@ -15,6 +19,10 @@ int main(void) {
     if (bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 16) < 0) {
         close_range((unsigned int)fd, (unsigned int)fd, 0);
         return 2;
+    }
+    if (close_range((unsigned int)fd, (unsigned int)fd, CLOSE_RANGE_CLOEXEC) < 0) {
+        close(fd);
+        return 5;
     }
     pid_t child = fork();
     if (child < 0) {
