@@ -167,3 +167,12 @@ func TestParseOptionsLoadsConfigThenAppliesCLIOverrides(t *testing.T) {
 		t.Fatalf("options: %#v", opts)
 	}
 }
+
+func TestAddAddressPortTracksExplicitMappingPorts(t *testing.T) {
+	ports := make(map[uint16]bool)
+	addAddressPort(ports, "127.0.0.1:9000")
+	addAddressPort(ports, "127.0.0.1:8000")
+	if !ports[8000] || !ports[9000] {
+		t.Fatalf("ports=%v", ports)
+	}
+}

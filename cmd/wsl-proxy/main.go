@@ -316,9 +316,11 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 			addAddressPort(excluded, httpListener.Addr().String())
 		}
 		for _, mapping := range opts.reverse {
+			addAddressPort(excluded, mapping.Windows)
 			addAddressPort(excluded, mapping.WSL)
 		}
 		for _, mapping := range opts.reverseUDP {
+			addAddressPort(excluded, mapping.Windows)
 			addAddressPort(excluded, mapping.WSL)
 		}
 		watcher := &autoforward.Watcher{Scanner: autoforward.DefaultProcScanner(), Opener: client, WindowsHost: opts.autoForwardHost, Interval: opts.autoForwardInterval, Included: opts.autoInclude, Excluded: excluded, Logger: logger}
