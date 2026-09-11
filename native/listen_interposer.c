@@ -145,17 +145,27 @@ static int control_request(const char *request, char *response, size_t capacity)
         return -1;
     }
     size_t used = 0;
+    int terminated = 0;
     while (used + 1 < capacity) {
         ssize_t count = recv(fd, response + used, 1, 0);
         if (count <= 0) {
+            if (count < 0 && errno == EINTR) {
+                continue;
+            }
             int saved = count == 0 ? ECONNRESET : errno;
             real_close(fd);
             errno = saved;
             return -1;
         }
         if (response[used++] == '\n') {
+            terminated = 1;
             break;
         }
+    }
+    if (!terminated) {
+        real_close(fd);
+        errno = EOVERFLOW;
+        return -1;
     }
     response[used] = '\0';
     real_close(fd);
