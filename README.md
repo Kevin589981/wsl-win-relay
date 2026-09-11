@@ -15,6 +15,7 @@ The repository is under active implementation. The current milestone is usable a
 - TCP half-close propagation so TLS/HTTP clients can finish writes before reading responses.
 - Cross-platform builds and WSL interop integration coverage.
 - Dynamic `/proc/net/tcp{,6}` listener discovery with automatic Windows add/remove.
+- Strict opt-in `listen()` coordination for dynamically linked Linux applications.
 - Verified in the target failure mode: WSL could not reach the configured Windows proxy port, while this relay still reached the public Internet and cloned a GitHub repository.
 
 Explicit reverse port forwarding is now implemented: Windows listens on chosen ports and forwards accepted connections to WSL destinations through the same relay. Strict synchronization with arbitrary WSL `listen(2)` calls is the next layer because a polling user-space process cannot change the result of an already-completed system call.
@@ -102,3 +103,33 @@ Useful controls:
 ```
 
 The SOCKS5 listener and explicit reverse-forward destinations are excluded automatically. Automatic mappings are removed when their WSL listener disappears.
+
+## Strict synchronized listen
+
+Build the WSL launcher and interposer with GCC:
+
+```bash
+./scripts/build-wsl.sh
+```
+
+Keep `wsl-proxy-linux` running, then launch an application through the wrapper:
+
+```bash
+./scripts/wsl-win-relay-run python3 -m http.server 8000
+```
+
+Before the application's libc `listen()` succeeds, the wrapper reserves
+Windows `127.0.0.1:8000`. If Windows reports that the address is already in
+use, the application receives Linux `EADDRINUSE` and its `listen()` fails. If
+Linux itself rejects the listen, the Windows reservation is aborted. Windows
+does not accept clients until both sides have succeeded.
+
+Set `WSL_WIN_RELAY_DEBUG=1` to print control requests and responses from the
+interposer. `WSL_WIN_RELAY_CONTROL` and `WSL_WIN_RELAY_PRELOAD` override the
+default control socket and shared-library paths.
+
+Strict mode currently covers dynamically linked applications using libc. Static
+or setuid binaries and programs making raw syscalls should use automatic polling
+until a kernel-aware adapter is available. Descriptor duplication, fork
+ownership, and crash lease recovery are tracked as lifecycle work rather than
+being silently treated as fully supported.

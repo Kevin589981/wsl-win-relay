@@ -1,0 +1,24 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -eq 0 ]; then
+    echo "usage: wsl-win-relay-run COMMAND [ARG ...]" >&2
+    exit 2
+fi
+
+repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+library=${WSL_WIN_RELAY_PRELOAD:-"$repo_dir/lib/libwsl_win_relay_listen.so"}
+control=${WSL_WIN_RELAY_CONTROL:-/tmp/wsl-win-relay-control.sock}
+
+if [ ! -r "$library" ]; then
+    echo "listen interposer not found: $library (run scripts/build-wsl.sh)" >&2
+    exit 1
+fi
+
+export WSL_WIN_RELAY_CONTROL=$control
+if [ -n "${LD_PRELOAD:-}" ]; then
+    export LD_PRELOAD="$library:$LD_PRELOAD"
+else
+    export LD_PRELOAD=$library
+fi
+exec "$@"
