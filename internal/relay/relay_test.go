@@ -51,6 +51,28 @@ func TestClientServerEcho(t *testing.T) {
 	}
 }
 
+func TestHandshakeIsIdempotent(t *testing.T) {
+	clientSide, serverSide := net.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := NewServer(serverSide, nil)
+	go func() { _ = server.Serve(ctx) }()
+	client := NewClient(clientSide)
+	go func() { _ = client.Run(ctx) }()
+	for attempt := 0; attempt < 2; attempt++ {
+		capabilities, err := client.Handshake(ctx, protocol.CapabilityTCP|protocol.CapabilityUDP)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if capabilities != protocol.AllCapabilities {
+			t.Fatalf("capabilities 0x%x", capabilities)
+		}
+	}
+	_ = client.Close()
+	_ = serverSide.Close()
+	_ = clientSide.Close()
+}
+
 func TestReverseForward(t *testing.T) {
 	clientSide, serverSide := net.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Kevin589981/wsl-win-relay/internal/protocol"
 	"github.com/Kevin589981/wsl-win-relay/internal/transport/stdio"
 )
 
@@ -18,12 +19,12 @@ func TestWindowsRelayProcess(t *testing.T) {
 	if runtime.GOOS != "windows" && runtime.GOOS != "linux" {
 		t.Skip("requires Windows or WSL interop")
 	}
+	if os.Getenv("WSL_WIN_RELAY_E2E") != "1" {
+		t.Skip("set WSL_WIN_RELAY_E2E=1 after building the Windows relay")
+	}
 	if runtime.GOOS == "linux" {
 		if _, err := os.Stat("/proc/sys/fs/binfmt_misc/WSLInterop"); err != nil {
 			t.Skip("requires WSL interop to launch the Windows relay")
-		}
-		if os.Getenv("WSL_WIN_RELAY_E2E") != "1" {
-			t.Skip("set WSL_WIN_RELAY_E2E=1 to run the network-dependent WSL check")
 		}
 	}
 	wd, err := os.Getwd()
@@ -72,6 +73,9 @@ func TestWindowsRelayProcess(t *testing.T) {
 	client := NewClient(endpoint)
 	done := make(chan error, 1)
 	go func() { done <- client.Run(ctx) }()
+	if capabilities, err := client.Handshake(ctx, protocol.AllCapabilities); err != nil || capabilities != protocol.AllCapabilities {
+		t.Fatalf("handshake capabilities=0x%x err=%v", capabilities, err)
+	}
 	conn, err := client.DialContext(ctx, target)
 	if err != nil {
 		t.Fatal(err)

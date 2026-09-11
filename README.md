@@ -20,6 +20,7 @@ The repository is under active implementation. The current TCP milestone is usab
 - SOCKS5 UDP ASSOCIATE for DNS, QUIC-capable clients, and other UDP traffic.
 - Optional HTTP CONNECT proxy for tools that only support `HTTP_PROXY`.
 - Per-stream 256 KiB credit windows that isolate slow TCP consumers.
+- Startup capability negotiation before any proxy or mapped port is advertised.
 - Verified in the target failure mode: WSL could not reach the configured Windows proxy port, while this relay still reached the public Internet and cloned a GitHub repository.
 
 Explicit reverse port forwarding and strict synchronization with dynamically linked application `listen()` calls are implemented. The broader automatic mode remains polling-based so it can support unmodified applications.

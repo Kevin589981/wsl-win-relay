@@ -22,6 +22,7 @@ import (
 	"github.com/Kevin589981/wsl-win-relay/internal/forward"
 	"github.com/Kevin589981/wsl-win-relay/internal/httpproxy"
 	"github.com/Kevin589981/wsl-win-relay/internal/listencontrol"
+	"github.com/Kevin589981/wsl-win-relay/internal/protocol"
 	"github.com/Kevin589981/wsl-win-relay/internal/relay"
 	"github.com/Kevin589981/wsl-win-relay/internal/socks5"
 	"github.com/Kevin589981/wsl-win-relay/internal/transport/stdio"
@@ -206,6 +207,13 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 
 	relayDone := make(chan error, 1)
 	go func() { relayDone <- client.Run(ctx) }()
+	handshakeCtx, handshakeCancel := context.WithTimeout(ctx, 5*time.Second)
+	capabilities, err := client.Handshake(handshakeCtx, protocol.AllCapabilities)
+	handshakeCancel()
+	if err != nil {
+		return fmt.Errorf("relay handshake: %w", err)
+	}
+	logger.Printf("Windows relay ready (capabilities 0x%x)", capabilities)
 	var controlDone chan error
 	if opts.controlSocket != "" {
 		control := &listencontrol.Server{Path: opts.controlSocket, WindowsHost: opts.strictListenHost, Reserve: func(reserveCtx context.Context, windows, wsl string) (listencontrol.Reservation, error) {

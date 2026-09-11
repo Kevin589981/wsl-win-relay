@@ -71,6 +71,8 @@ func (s *Server) Serve(ctx context.Context) error {
 
 func (s *Server) handle(frame protocol.Frame) {
 	switch frame.Type {
+	case protocol.TypeHello:
+		_ = s.send(protocol.Frame{Type: protocol.TypeHelloOK, Payload: protocol.EncodeCapabilities(protocol.AllCapabilities)})
 	case protocol.TypeOpen:
 		go s.open(frame.StreamID, string(frame.Payload))
 	case protocol.TypeListenOpen:

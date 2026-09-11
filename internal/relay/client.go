@@ -15,24 +15,64 @@ import (
 )
 
 var ErrClientClosed = errors.New("relay client is closed")
+var ErrMissingCapabilities = errors.New("Windows relay is missing required capabilities")
 
 type Client struct {
-	rw        io.ReadWriter
-	writeMu   sync.Mutex
-	mu        sync.Mutex
-	streams   map[uint32]*clientStream
-	listeners map[uint32]*clientListener
-	datagrams map[uint32]*clientPacketConn
-	nextID    atomic.Uint32
-	closed    chan struct{}
-	closeOne  sync.Once
-	closeErr  error
+	rw                io.ReadWriter
+	writeMu           sync.Mutex
+	mu                sync.Mutex
+	streams           map[uint32]*clientStream
+	listeners         map[uint32]*clientListener
+	datagrams         map[uint32]*clientPacketConn
+	nextID            atomic.Uint32
+	closed            chan struct{}
+	closeOne          sync.Once
+	closeErr          error
+	helloDone         chan helloResult
+	helloOnce         sync.Once
+	handshakeMu       sync.Mutex
+	peerCapabilities  uint64
+	handshakeComplete bool
+}
+
+type helloResult struct {
+	capabilities uint64
+	err          error
 }
 
 func NewClient(rw io.ReadWriter) *Client {
-	c := &Client{rw: rw, streams: make(map[uint32]*clientStream), listeners: make(map[uint32]*clientListener), datagrams: make(map[uint32]*clientPacketConn), closed: make(chan struct{})}
+	c := &Client{rw: rw, streams: make(map[uint32]*clientStream), listeners: make(map[uint32]*clientListener), datagrams: make(map[uint32]*clientPacketConn), closed: make(chan struct{}), helloDone: make(chan helloResult, 1)}
 	c.nextID.Store(^uint32(0))
 	return c
+}
+
+func (c *Client) Handshake(ctx context.Context, required uint64) (uint64, error) {
+	c.handshakeMu.Lock()
+	defer c.handshakeMu.Unlock()
+	if c.handshakeComplete {
+		if c.peerCapabilities&required != required {
+			return c.peerCapabilities, fmt.Errorf("%w: required 0x%x, peer 0x%x", ErrMissingCapabilities, required, c.peerCapabilities)
+		}
+		return c.peerCapabilities, nil
+	}
+	if err := c.write(protocol.Frame{Type: protocol.TypeHello, Payload: protocol.EncodeCapabilities(required)}); err != nil {
+		return 0, err
+	}
+	select {
+	case result := <-c.helloDone:
+		if result.err != nil {
+			return 0, result.err
+		}
+		c.peerCapabilities, c.handshakeComplete = result.capabilities, true
+		if result.capabilities&required != required {
+			return result.capabilities, fmt.Errorf("%w: required 0x%x, peer 0x%x", ErrMissingCapabilities, required, result.capabilities)
+		}
+		return result.capabilities, nil
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	case <-c.closed:
+		return 0, ErrClientClosed
+	}
 }
 
 func (c *Client) OpenPacketContext(ctx context.Context) (net.PacketConn, error) {
@@ -190,6 +230,10 @@ func (c *Client) write(frame protocol.Frame) error {
 }
 
 func (c *Client) dispatch(frame protocol.Frame) {
+	if frame.Type == protocol.TypeHelloOK {
+		c.helloOnce.Do(func() { c.helloDone <- helloResult{capabilities: protocol.DecodeCapabilities(frame.Payload)} })
+		return
+	}
 	if frame.Type == protocol.TypeDatagramOK || frame.Type == protocol.TypeDatagramError || frame.Type == protocol.TypeDatagramData || frame.Type == protocol.TypeDatagramClose {
 		c.mu.Lock()
 		packet := c.datagrams[frame.StreamID]
@@ -254,6 +298,7 @@ func (c *Client) fail(err error) {
 	c.closeOne.Do(func() {
 		c.closeErr = err
 		close(c.closed)
+		c.helloOnce.Do(func() { c.helloDone <- helloResult{err: err} })
 		c.mu.Lock()
 		streams := make([]*clientStream, 0, len(c.streams))
 		for _, s := range c.streams {

@@ -40,6 +40,8 @@ const (
 	TypeDatagramData
 	TypeDatagramClose
 	TypeWindowUpdate
+	TypeHello
+	TypeHelloOK
 )
 
 type Frame struct {
@@ -49,8 +51,11 @@ type Frame struct {
 }
 
 func (f Frame) Validate() error {
-	if f.StreamID == 0 {
+	if f.StreamID == 0 && f.Type != TypeHello && f.Type != TypeHelloOK {
 		return errors.New("stream id must be non-zero")
+	}
+	if (f.Type == TypeHello || f.Type == TypeHelloOK) && f.StreamID != 0 {
+		return errors.New("hello frames must use stream id zero")
 	}
 	if !knownType(f.Type) {
 		return fmt.Errorf("unknown frame type %d", f.Type)
@@ -78,6 +83,9 @@ func (f Frame) Validate() error {
 	}
 	if f.Type == TypeWindowUpdate && len(f.Payload) != 4 {
 		return errors.New("window update must contain a byte count")
+	}
+	if (f.Type == TypeHello || f.Type == TypeHelloOK) && len(f.Payload) != 8 {
+		return errors.New("hello frame must contain capabilities")
 	}
 	return nil
 }
@@ -124,7 +132,7 @@ func Read(r io.Reader) (Frame, error) {
 }
 
 func knownType(t Type) bool {
-	return t >= TypeOpen && t <= TypeWindowUpdate
+	return t >= TypeOpen && t <= TypeHelloOK
 }
 
 func writeFull(w io.Writer, p []byte) error {
