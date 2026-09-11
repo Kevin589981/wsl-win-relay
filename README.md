@@ -31,12 +31,15 @@ See [the implementation plan](docs/plans/2026-09-12-wsl-win-relay.md) and [archi
 
 ## Build
 
-Build the Linux proxy and Windows relay from the repository root:
+Build the Linux proxy and Windows relay from the repository root. From Windows PowerShell:
 
-```bash
-go build -o bin/wsl-proxy ./cmd/wsl-proxy
-GOOS=windows GOARCH=amd64 go build -o bin/wsl-win-relay.exe ./cmd/win-relay
+```powershell
+$env:GOOS='linux'; $env:GOARCH='amd64'; go build -o bin/wsl-proxy-linux ./cmd/wsl-proxy
+$env:GOOS='windows'; $env:GOARCH='amd64'; go build -o bin/wsl-win-relay.exe ./cmd/win-relay
+Remove-Item Env:GOOS,Env:GOARCH
 ```
+
+`wsl-proxy-linux` is the binary to run inside WSL; `wsl-win-relay.exe` is launched by it through WSL interop. Alternatively, run `go build` for the Linux proxy directly inside WSL.
 
 Place `wsl-win-relay.exe` somewhere visible to WSL interop (or pass its absolute path with `-relay-exe`) and start:
 
