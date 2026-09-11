@@ -159,11 +159,12 @@ Set `WSL_WIN_RELAY_DEBUG=1` to print control requests and responses from the
 interposer. `WSL_WIN_RELAY_CONTROL` and `WSL_WIN_RELAY_PRELOAD` override the
 default control socket and shared-library paths.
 
-Strict mode currently covers dynamically linked applications using libc. Static
-or setuid binaries and programs making raw syscalls should use automatic polling
-until a kernel-aware adapter is available. Descriptor duplication, fork
-ownership, and crash lease recovery are tracked as lifecycle work rather than
-being silently treated as fully supported.
+Strict mode currently covers dynamically linked applications using libc,
+including `dup()`, `dup2()`, and `dup3()` descriptor duplication. Static or
+setuid binaries, programs making raw syscalls, and fork-heavy ownership
+patterns should use automatic polling until a kernel-aware adapter is
+available. The daemon reaps leases from processes that exit without closing
+their descriptors; fork ownership remains an explicit limitation.
 
 ## Transparent mode
 

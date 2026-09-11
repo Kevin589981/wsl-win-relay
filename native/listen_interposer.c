@@ -17,15 +17,23 @@
 
 typedef int (*listen_fn)(int, int);
 typedef int (*close_fn)(int);
+typedef int (*dup_fn)(int);
+typedef int (*dup2_fn)(int, int);
+typedef int (*dup3_fn)(int, int, int);
+
+struct tracked_lease { uint64_t id; unsigned refs; };
 
 struct tracked_fd {
     int fd;
-    uint64_t lease;
+    struct tracked_lease *lease;
     struct tracked_fd *next;
 };
 
 static listen_fn real_listen;
 static close_fn real_close;
+static dup_fn real_dup;
+static dup2_fn real_dup2;
+static dup3_fn real_dup3;
 static pthread_once_t init_once = PTHREAD_ONCE_INIT;
 static pthread_mutex_t tracked_mu = PTHREAD_MUTEX_INITIALIZER;
 static struct tracked_fd *tracked;
@@ -38,6 +46,9 @@ static int debug_enabled(void) {
 static void initialize(void) {
     real_listen = (listen_fn)dlsym(RTLD_NEXT, "listen");
     real_close = (close_fn)dlsym(RTLD_NEXT, "close");
+    real_dup = (dup_fn)dlsym(RTLD_NEXT, "dup");
+    real_dup2 = (dup2_fn)dlsym(RTLD_NEXT, "dup2");
+    real_dup3 = (dup3_fn)dlsym(RTLD_NEXT, "dup3");
 }
 
 static int write_all(int fd, const char *data, size_t length) {
@@ -152,7 +163,10 @@ static int add_tracked(int fd, uint64_t lease) {
 		return -1;
     }
     entry->fd = fd;
-    entry->lease = lease;
+    entry->lease = malloc(sizeof(*entry->lease));
+    if (entry->lease == NULL) { free(entry); return -1; }
+    entry->lease->id = lease;
+    entry->lease->refs = 1;
     pthread_mutex_lock(&tracked_mu);
     entry->next = tracked;
 	tracked = entry;
@@ -168,7 +182,7 @@ static uint64_t remove_tracked(int fd) {
         if ((*cursor)->fd == fd) {
             struct tracked_fd *removed = *cursor;
             *cursor = removed->next;
-            lease = removed->lease;
+            if (--removed->lease->refs == 0) { lease = removed->lease->id; free(removed->lease); }
             free(removed);
             break;
         }
@@ -176,6 +190,63 @@ static uint64_t remove_tracked(int fd) {
     }
     pthread_mutex_unlock(&tracked_mu);
     return lease;
+}
+
+static int duplicate_tracking(int oldfd, int newfd) {
+    int result = 0;
+    pthread_mutex_lock(&tracked_mu);
+    struct tracked_fd *source = NULL;
+    for (struct tracked_fd *entry = tracked; entry != NULL; entry = entry->next) {
+        if (entry->fd == oldfd) { source = entry; break; }
+    }
+    if (source != NULL) {
+        struct tracked_fd *entry = malloc(sizeof(*entry));
+        if (entry == NULL) { result = -1; }
+        else {
+            entry->fd = newfd;
+            entry->lease = source->lease;
+            entry->lease->refs++;
+            entry->next = tracked;
+            tracked = entry;
+        }
+    }
+    pthread_mutex_unlock(&tracked_mu);
+    return result;
+}
+
+static int replace_tracking(int oldfd, int newfd, uint64_t *release) {
+    *release = 0;
+    struct tracked_fd *replacement = NULL;
+    pthread_mutex_lock(&tracked_mu);
+    struct tracked_fd *source = NULL;
+    for (struct tracked_fd *entry = tracked; entry != NULL; entry = entry->next) {
+        if (entry->fd == oldfd) { source = entry; break; }
+    }
+    struct tracked_fd **cursor = &tracked;
+    while (*cursor != NULL) {
+        if ((*cursor)->fd == newfd) {
+            struct tracked_fd *removed = *cursor;
+            *cursor = removed->next;
+            if (--removed->lease->refs == 0) { *release = removed->lease->id; free(removed->lease); }
+            free(removed);
+            break;
+        }
+        cursor = &(*cursor)->next;
+    }
+    if (source != NULL) {
+        replacement = malloc(sizeof(*replacement));
+        if (replacement == NULL) {
+            pthread_mutex_unlock(&tracked_mu);
+            return -1;
+        }
+        replacement->fd = newfd;
+        replacement->lease = source->lease;
+        replacement->lease->refs++;
+        replacement->next = tracked;
+        tracked = replacement;
+    }
+    pthread_mutex_unlock(&tracked_mu);
+    return 0;
 }
 
 int listen(int sockfd, int backlog) {
@@ -245,4 +316,45 @@ int close(int fd) {
         errno = saved;
     }
     return real_close == NULL ? (errno = ENOSYS, -1) : real_close(fd);
+}
+
+int dup(int oldfd) {
+    pthread_once(&init_once, initialize);
+    int newfd = real_dup == NULL ? -1 : real_dup(oldfd);
+    if (newfd >= 0 && duplicate_tracking(oldfd, newfd) < 0) {
+        (void)real_close(newfd);
+        errno = ENOMEM;
+        return -1;
+    }
+    return newfd;
+}
+
+int dup2(int oldfd, int newfd) {
+    pthread_once(&init_once, initialize);
+    if (real_dup2 == NULL) { errno = ENOSYS; return -1; }
+    int result = real_dup2(oldfd, newfd);
+    if (result < 0 || oldfd == newfd) return result;
+    uint64_t release = 0;
+    if (replace_tracking(oldfd, newfd, &release) < 0) {
+        (void)real_close(result);
+        errno = ENOMEM;
+        return -1;
+    }
+    if (release != 0) (void)lease_operation("CLOSE", release);
+    return result;
+}
+
+int dup3(int oldfd, int newfd, int flags) {
+    pthread_once(&init_once, initialize);
+    if (real_dup3 == NULL) { errno = ENOSYS; return -1; }
+    int result = real_dup3(oldfd, newfd, flags);
+    if (result < 0 || oldfd == newfd) return result;
+    uint64_t release = 0;
+    if (replace_tracking(oldfd, newfd, &release) < 0) {
+        (void)real_close(result);
+        errno = ENOMEM;
+        return -1;
+    }
+    if (release != 0) (void)lease_operation("CLOSE", release);
+    return result;
 }
