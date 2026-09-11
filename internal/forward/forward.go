@@ -1,0 +1,83 @@
+package forward
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"strings"
+	"sync"
+)
+
+type Mapping struct {
+	Windows string
+	WSL     string
+}
+
+func ParseMapping(value string) (Mapping, error) {
+	parts := strings.SplitN(value, "=", 2)
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+		return Mapping{}, fmt.Errorf("invalid reverse mapping %q; expected WINDOWS_ADDR=WSL_TARGET", value)
+	}
+	return Mapping{Windows: strings.TrimSpace(parts[0]), WSL: strings.TrimSpace(parts[1])}, nil
+}
+
+type Mappings []Mapping
+
+func (m *Mappings) Set(value string) error {
+	mapping, err := ParseMapping(value)
+	if err != nil {
+		return err
+	}
+	*m = append(*m, mapping)
+	return nil
+}
+
+func (m *Mappings) String() string {
+	parts := make([]string, 0, len(*m))
+	for _, mapping := range *m {
+		parts = append(parts, mapping.Windows+"="+mapping.WSL)
+	}
+	return strings.Join(parts, ",")
+}
+
+type Opener interface {
+	ReverseForward(context.Context, string, string) (io.Closer, error)
+}
+
+type Set struct {
+	mu      sync.Mutex
+	closers []io.Closer
+	closed  bool
+}
+
+func OpenAll(ctx context.Context, opener Opener, mappings []Mapping) (*Set, error) {
+	set := &Set{}
+	for _, mapping := range mappings {
+		closer, err := opener.ReverseForward(ctx, mapping.Windows, mapping.WSL)
+		if err != nil {
+			_ = set.Close()
+			return nil, fmt.Errorf("%s=%s: %w", mapping.Windows, mapping.WSL, err)
+		}
+		set.closers = append(set.closers, closer)
+	}
+	return set, nil
+}
+
+func (s *Set) Close() error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil
+	}
+	s.closed = true
+	closers := append([]io.Closer(nil), s.closers...)
+	s.closers = nil
+	s.mu.Unlock()
+	var first error
+	for i := len(closers) - 1; i >= 0; i-- {
+		if err := closers[i].Close(); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
+}

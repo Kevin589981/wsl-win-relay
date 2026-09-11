@@ -16,7 +16,7 @@ The repository is under active implementation. The current milestone is usable a
 - Cross-platform builds and WSL interop integration coverage.
 - Verified in the target failure mode: WSL could not reach the configured Windows proxy port, while this relay still reached the public Internet and cloned a GitHub repository.
 
-The next milestone is explicit reverse port forwarding: Windows listens on a chosen port and forwards accepted connections to a chosen WSL destination through the same relay. Transparent automatic discovery of arbitrary WSL `listen(2)` calls is intentionally a later layer because a user-space process cannot safely steal an already-bound port without kernel/routing support.
+Explicit reverse port forwarding is now implemented: Windows listens on chosen ports and forwards accepted connections to WSL destinations through the same relay. Transparent automatic discovery of arbitrary WSL `listen(2)` calls is the next layer because a user-space process cannot safely steal an already-bound port without kernel/routing support.
 
 ## Security model
 
@@ -71,12 +71,12 @@ To expose a WSL service on a Windows port, add an explicit reverse mapping:
 ```bash
 ./bin/wsl-proxy-linux \
   -relay-exe /mnt/d/Code/net/wsl-win-relay/bin/wsl-win-relay.exe \
-  -reverse 0.0.0.0:8000=127.0.0.1:8000
+  -reverse 0.0.0.0:8000=127.0.0.1:8000 \
+  -reverse 127.0.0.1:9000=127.0.0.1:9000
 ```
 
 The WSL application continues to bind `127.0.0.1:8000`; the Windows relay
 owns `0.0.0.0:8000` and forwards each accepted connection. A Windows bind
-conflict is reported during startup. Firewall policy can still reject later
-connections, so it must be checked separately. Multiple mappings will get a
-dedicated configuration format in a later milestone; the core protocol already
-uses independent listener IDs and supports multiple listeners.
+conflict is reported during startup. All repeated `-reverse` registrations are
+transactional: if one fails, earlier registrations are removed. Firewall policy
+can still reject later connections, so it must be checked separately.
