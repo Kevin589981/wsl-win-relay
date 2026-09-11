@@ -259,7 +259,8 @@ With WSL systemd enabled, install the user service:
 systemctl --user status wsl-win-relay.service
 ```
 
-The service restarts the proxy after a Windows relay crash; startup handshake,
+The service restarts the proxy after a Windows relay crash or broken stdio
+transport; startup handshake,
 reverse registrations, and control sockets are recreated on each restart. The
 proxy also retries a relay-only EOF on its own with a two-second backoff when
 run directly, while configuration and listener errors remain fatal. The

@@ -329,7 +329,7 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 
 	select {
 	case err := <-relayDone:
-		if errors.Is(err, io.EOF) {
+		if isRelayTransportExit(err) {
 			return errRelayExited
 		}
 		return err
@@ -344,6 +344,10 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func isRelayTransportExit(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.ErrClosedPipe)
 }
 
 func relayArguments(opts options) []string {

@@ -67,6 +67,17 @@ func TestHandshakeFailureClassification(t *testing.T) {
 	}
 }
 
+func TestRelayTransportExitClassification(t *testing.T) {
+	for _, err := range []error{io.EOF, io.ErrUnexpectedEOF, io.ErrClosedPipe} {
+		if !isRelayTransportExit(err) {
+			t.Fatalf("%v should trigger relay restart", err)
+		}
+	}
+	if isRelayTransportExit(errors.New("invalid protocol magic")) {
+		t.Fatal("protocol errors must remain fatal")
+	}
+}
+
 func TestParsePortSet(t *testing.T) {
 	got, err := parsePortSet("53, 1080,8000")
 	if err != nil {
