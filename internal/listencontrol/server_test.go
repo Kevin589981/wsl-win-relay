@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -17,7 +18,7 @@ func TestReserveCommitAndClose(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "control.sock")
 	var mu sync.Mutex
 	reservation := &fakeReservation{}
-	server := &Server{Path: path, Reserve: func(_ context.Context, windows, wsl string) (Reservation, error) {
+	server := &Server{Path: path, ProcessIdentity: func(int) (string, error) { return "start", nil }, Reserve: func(_ context.Context, windows, wsl string) (Reservation, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		if windows != "127.0.0.1:8000" || wsl != "127.0.0.1:8000" {
@@ -41,9 +42,7 @@ func TestReserveCommitAndClose(t *testing.T) {
 	if got := request(t, path, "CLOSE "+id+"\n"); got != "OK\n" {
 		t.Fatalf("close: %q", got)
 	}
-	mu.Lock()
-	committed, closed := reservation.committed, reservation.closed
-	mu.Unlock()
+	committed, closed := reservation.values()
 	if !committed || !closed {
 		t.Fatalf("committed=%v closed=%v", committed, closed)
 	}
@@ -58,6 +57,48 @@ func TestReserveCommitAndClose(t *testing.T) {
 	}
 }
 
+func TestReapsLeaseWhenProcessIdentityDisappears(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "control.sock")
+	reservation := &fakeReservation{}
+	var alive atomic.Bool
+	alive.Store(true)
+	server := &Server{
+		Path:         path,
+		ReapInterval: time.Millisecond,
+		ProcessIdentity: func(int) (string, error) {
+			if !alive.Load() {
+				return "", os.ErrNotExist
+			}
+			return "start", nil
+		},
+		Reserve: func(context.Context, string, string) (Reservation, error) { return reservation, nil },
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(ctx) }()
+	waitForSocket(t, path)
+	if response := request(t, path, "RESERVE 456 tcp4 8001\n"); !strings.HasPrefix(response, "OK ") {
+		t.Fatalf("reserve: %q", response)
+	}
+	alive.Store(false)
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		_, closed := reservation.values()
+		if closed {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	_, closed := reservation.values()
+	if !closed {
+		t.Fatal("orphaned lease was not reaped")
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPrepareSocketPathRefusesRegularFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "control.sock")
 	if err := os.WriteFile(path, []byte("keep"), 0o600); err != nil {
@@ -69,12 +110,28 @@ func TestPrepareSocketPathRefusesRegularFile(t *testing.T) {
 }
 
 type fakeReservation struct {
+	mu        sync.Mutex
 	committed bool
 	closed    bool
 }
 
-func (f *fakeReservation) Commit() error { f.committed = true; return nil }
-func (f *fakeReservation) Close() error  { f.closed = true; return nil }
+func (f *fakeReservation) Commit() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.committed = true
+	return nil
+}
+func (f *fakeReservation) Close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closed = true
+	return nil
+}
+func (f *fakeReservation) values() (bool, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.committed, f.closed
+}
 
 func waitForSocket(t *testing.T, path string) {
 	t.Helper()

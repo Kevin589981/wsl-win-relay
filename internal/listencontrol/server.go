@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type Reservation interface {
@@ -20,19 +21,23 @@ type Reservation interface {
 	Close() error
 }
 type ReserveFunc func(context.Context, string, string) (Reservation, error)
+type ProcessIdentityFunc func(int) (string, error)
 
 type Server struct {
-	Path        string
-	WindowsHost string
-	Reserve     ReserveFunc
-	mu          sync.Mutex
-	leases      map[uint64]*lease
-	next        atomic.Uint64
+	Path            string
+	WindowsHost     string
+	Reserve         ReserveFunc
+	ProcessIdentity ProcessIdentityFunc
+	ReapInterval    time.Duration
+	mu              sync.Mutex
+	leases          map[uint64]*lease
+	next            atomic.Uint64
 }
 
 type lease struct {
 	reservation Reservation
 	pid         int
+	identity    string
 	committed   bool
 }
 
@@ -42,6 +47,12 @@ func (s *Server) Serve(ctx context.Context) error {
 	}
 	if s.WindowsHost == "" {
 		s.WindowsHost = "127.0.0.1"
+	}
+	if s.ProcessIdentity == nil {
+		s.ProcessIdentity = procProcessIdentity
+	}
+	if s.ReapInterval <= 0 {
+		s.ReapInterval = time.Second
 	}
 	if err := prepareSocketPath(s.Path); err != nil {
 		return err
@@ -55,6 +66,7 @@ func (s *Server) Serve(ctx context.Context) error {
 		return fmt.Errorf("secure control socket: %w", err)
 	}
 	go func() { <-ctx.Done(); _ = listener.Close() }()
+	go s.reapLoop(ctx)
 	for {
 		conn, acceptErr := listener.Accept()
 		if acceptErr != nil {
@@ -123,6 +135,11 @@ func (s *Server) handleReserve(ctx context.Context, conn net.Conn, parts []strin
 		writeError(conn, 97, "unsupported network")
 		return
 	}
+	identity, err := s.ProcessIdentity(pid)
+	if err != nil {
+		writeError(conn, 3, "requesting process no longer exists")
+		return
+	}
 	port, err := strconv.ParseUint(parts[3], 10, 16)
 	if err != nil || port == 0 {
 		writeError(conn, 22, "invalid port")
@@ -142,7 +159,7 @@ func (s *Server) handleReserve(ctx context.Context, conn net.Conn, parts []strin
 	id := s.next.Add(1)
 	s.mu.Lock()
 	s.ensureLeases()
-	s.leases[id] = &lease{reservation: reservation, pid: pid}
+	s.leases[id] = &lease{reservation: reservation, pid: pid, identity: identity}
 	s.mu.Unlock()
 	_, _ = fmt.Fprintf(conn, "OK %d\n", id)
 }
@@ -208,6 +225,56 @@ func (s *Server) closeAll() {
 	for _, l := range leases {
 		_ = l.reservation.Close()
 	}
+}
+
+func (s *Server) reapLoop(ctx context.Context) {
+	ticker := time.NewTicker(s.ReapInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.reapDeadProcesses()
+		}
+	}
+}
+
+func (s *Server) reapDeadProcesses() {
+	type owner struct {
+		id       uint64
+		pid      int
+		identity string
+	}
+	s.mu.Lock()
+	owners := make([]owner, 0, len(s.leases))
+	for id, l := range s.leases {
+		owners = append(owners, owner{id: id, pid: l.pid, identity: l.identity})
+	}
+	s.mu.Unlock()
+	for _, candidate := range owners {
+		identity, err := s.ProcessIdentity(candidate.pid)
+		if err != nil || identity != candidate.identity {
+			s.remove(candidate.id)
+		}
+	}
+}
+
+func procProcessIdentity(pid int) (string, error) {
+	data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return "", err
+	}
+	text := string(data)
+	end := strings.LastIndex(text, ")")
+	if end < 0 {
+		return "", errors.New("malformed proc stat")
+	}
+	fields := strings.Fields(text[end+1:])
+	if len(fields) <= 19 {
+		return "", errors.New("incomplete proc stat")
+	}
+	return fields[19], nil
 }
 
 func (s *Server) ensureLeases() {
