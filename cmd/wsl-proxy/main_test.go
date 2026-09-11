@@ -1,11 +1,55 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
+
+func TestSuperviseRetriesRelayExit(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	calls := 0
+	err := supervise(ctx, options{}, log.New(io.Discard, "", 0), func(context.Context, options, *log.Logger) error {
+		calls++
+		if calls == 1 {
+			return errRelayExited
+		}
+		cancel()
+		return context.Canceled
+	}, 0)
+	if !errors.Is(err, context.Canceled) || calls != 2 {
+		t.Fatalf("err=%v calls=%d", err, calls)
+	}
+}
+
+func TestSuperviseDoesNotRetryFatalErrors(t *testing.T) {
+	want := errors.New("configuration failed")
+	calls := 0
+	err := supervise(context.Background(), options{}, log.New(io.Discard, "", 0), func(context.Context, options, *log.Logger) error {
+		calls++
+		return want
+	}, 0)
+	if !errors.Is(err, want) || calls != 1 {
+		t.Fatalf("err=%v calls=%d", err, calls)
+	}
+}
+
+func TestSupervisePrefersContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	err := supervise(ctx, options{}, log.New(io.Discard, "", 0), func(context.Context, options, *log.Logger) error {
+		cancel()
+		return errRelayExited
+	}, 0)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err=%v", err)
+	}
+}
 
 func TestParsePortSet(t *testing.T) {
 	got, err := parsePortSet("53, 1080,8000")

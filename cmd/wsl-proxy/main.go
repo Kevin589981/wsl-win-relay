@@ -56,17 +56,26 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if err := supervise(ctx, opts, logger, run, relayRestartDelay); err != nil && !errors.Is(err, context.Canceled) {
+		logger.Printf("stopped: %v", err)
+		os.Exit(1)
+	}
+}
+
+func supervise(ctx context.Context, opts options, logger *log.Logger, execute func(context.Context, options, *log.Logger) error, restartDelay time.Duration) error {
 	for {
-		err := run(ctx, opts, logger)
-		if err == nil || errors.Is(err, context.Canceled) || ctx.Err() != nil {
-			return
+		err := execute(ctx, opts, logger)
+		if err == nil || errors.Is(err, context.Canceled) {
+			return err
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
 		if !errors.Is(err, errRelayExited) {
-			logger.Printf("stopped: %v", err)
-			os.Exit(1)
+			return err
 		}
-		logger.Printf("%v; restarting in %s", err, relayRestartDelay)
-		timer := time.NewTimer(relayRestartDelay)
+		logger.Printf("%v; restarting in %s", err, restartDelay)
+		timer := time.NewTimer(restartDelay)
 		select {
 		case <-timer.C:
 		case <-ctx.Done():
@@ -76,7 +85,7 @@ func main() {
 				default:
 				}
 			}
-			return
+			return ctx.Err()
 		}
 	}
 }
