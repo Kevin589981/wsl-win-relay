@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -24,102 +25,150 @@ import (
 	"github.com/Kevin589981/wsl-win-relay/internal/transport/stdio"
 )
 
-func main() {
-	listenAddr := flag.String("listen", "127.0.0.1:1080", "SOCKS5 listen address")
-	httpListenAddr := flag.String("http-listen", "", "optional HTTP CONNECT proxy listen address")
-	relayExe := flag.String("relay-exe", "wsl-win-relay.exe", "Windows relay executable")
-	var reverseMappings forward.Mappings
-	flag.Var(&reverseMappings, "reverse", "reverse mapping WINDOWS_ADDR=WSL_TARGET (repeatable)")
-	autoForward := flag.Bool("auto-forward", false, "automatically mirror WSL TCP listeners to Windows")
-	autoForwardHost := flag.String("auto-forward-host", "127.0.0.1", "Windows bind host for automatic mappings")
-	autoForwardInterval := flag.Duration("auto-forward-interval", time.Second, "automatic listener scan interval")
-	autoForwardInclude := flag.String("auto-forward-include", "", "comma-separated allowlist of ports for automatic mapping")
-	autoForwardExclude := flag.String("auto-forward-exclude", "", "comma-separated ports excluded from automatic mapping")
-	controlSocket := flag.String("control-socket", "/tmp/wsl-win-relay-control.sock", "Unix socket for strict listener coordination; empty disables")
-	flag.Parse()
+type options struct {
+	socksListen         string
+	httpListen          string
+	relayExe            string
+	reverse             forward.Mappings
+	autoForward         bool
+	autoForwardHost     string
+	autoForwardInterval time.Duration
+	autoInclude         map[uint16]bool
+	autoExclude         map[uint16]bool
+	controlSocket       string
+	strictListenHost    string
+}
 
+func main() {
 	logger := log.New(os.Stderr, "wsl-proxy: ", log.LstdFlags)
+	opts, err := parseOptions(os.Args[1:])
+	if err != nil {
+		logger.Printf("configuration: %v", err)
+		os.Exit(2)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if err := run(ctx, opts, logger); err != nil && !errors.Is(err, context.Canceled) {
+		logger.Printf("stopped: %v", err)
+		os.Exit(1)
+	}
+}
 
-	cmd := exec.CommandContext(ctx, *relayExe, "win-relay")
+func parseOptions(args []string) (options, error) {
+	var opts options
+	var include, exclude string
+	set := flag.NewFlagSet("wsl-proxy", flag.ContinueOnError)
+	set.SetOutput(io.Discard)
+	set.StringVar(&opts.socksListen, "listen", "127.0.0.1:1080", "SOCKS5 listen address")
+	set.StringVar(&opts.httpListen, "http-listen", "", "optional HTTP CONNECT proxy listen address")
+	set.StringVar(&opts.relayExe, "relay-exe", "wsl-win-relay.exe", "Windows relay executable")
+	set.Var(&opts.reverse, "reverse", "reverse mapping WINDOWS_ADDR=WSL_TARGET (repeatable)")
+	set.BoolVar(&opts.autoForward, "auto-forward", false, "automatically mirror WSL TCP listeners to Windows")
+	set.StringVar(&opts.autoForwardHost, "auto-forward-host", "127.0.0.1", "Windows bind host for automatic mappings")
+	set.DurationVar(&opts.autoForwardInterval, "auto-forward-interval", time.Second, "automatic listener scan interval")
+	set.StringVar(&include, "auto-forward-include", "", "comma-separated allowlist of ports for automatic mapping")
+	set.StringVar(&exclude, "auto-forward-exclude", "", "comma-separated ports excluded from automatic mapping")
+	set.StringVar(&opts.controlSocket, "control-socket", "/tmp/wsl-win-relay-control.sock", "Unix socket for strict listener coordination; empty disables")
+	set.StringVar(&opts.strictListenHost, "strict-listen-host", "127.0.0.1", "Windows bind host for strict listener coordination")
+	if err := set.Parse(args); err != nil {
+		return options{}, err
+	}
+	if set.NArg() != 0 {
+		return options{}, fmt.Errorf("unexpected arguments: %s", strings.Join(set.Args(), " "))
+	}
+	var err error
+	opts.autoInclude, err = parsePortSet(include)
+	if err != nil {
+		return options{}, fmt.Errorf("auto-forward-include: %w", err)
+	}
+	opts.autoExclude, err = parsePortSet(exclude)
+	if err != nil {
+		return options{}, fmt.Errorf("auto-forward-exclude: %w", err)
+	}
+	if opts.socksListen == "" {
+		return options{}, errors.New("SOCKS5 listen address cannot be empty")
+	}
+	if opts.relayExe == "" {
+		return options{}, errors.New("relay executable cannot be empty")
+	}
+	return opts, nil
+}
+
+func run(parent context.Context, opts options, logger *log.Logger) error {
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+	socksListener, err := net.Listen("tcp", opts.socksListen)
+	if err != nil {
+		return fmt.Errorf("SOCKS5 listen on %s: %w", opts.socksListen, err)
+	}
+	defer socksListener.Close()
+	var httpListener net.Listener
+	if opts.httpListen != "" {
+		httpListener, err = net.Listen("tcp", opts.httpListen)
+		if err != nil {
+			return fmt.Errorf("HTTP proxy listen on %s: %w", opts.httpListen, err)
+		}
+		defer httpListener.Close()
+	}
+
+	cmd := exec.CommandContext(ctx, opts.relayExe, "win-relay")
 	cmd.Stderr = os.Stderr
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		logger.Fatalf("open relay stdin: %v", err)
+		return fmt.Errorf("open relay stdin: %w", err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		logger.Fatalf("open relay stdout: %v", err)
+		return fmt.Errorf("open relay stdout: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
-		logger.Fatalf("start relay %q: %v", *relayExe, err)
+		return fmt.Errorf("start relay %q: %w", opts.relayExe, err)
 	}
-
-	endpoint := stdio.New(stdout, stdin, func() error {
-		_ = stdin.Close()
-		_ = stdout.Close()
-		return nil
-	})
+	endpoint := stdio.New(stdout, stdin, func() error { _ = stdin.Close(); _ = stdout.Close(); return nil })
 	client := relay.NewClient(endpoint)
+	var reverseForwards *forward.Set
+	defer func() {
+		if reverseForwards != nil {
+			_ = reverseForwards.Close()
+		}
+		_ = client.Close()
+		_ = endpoint.Close()
+		cancel()
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		waitDone := make(chan struct{})
+		go func() { _ = cmd.Wait(); close(waitDone) }()
+		select {
+		case <-waitDone:
+		case <-time.After(2 * time.Second):
+			logger.Printf("relay process did not exit promptly")
+		}
+	}()
+
 	relayDone := make(chan error, 1)
 	go func() { relayDone <- client.Run(ctx) }()
 	var controlDone chan error
-	if *controlSocket != "" {
-		control := &listencontrol.Server{Path: *controlSocket, Reserve: func(reserveCtx context.Context, windows, wsl string) (listencontrol.Reservation, error) {
+	if opts.controlSocket != "" {
+		control := &listencontrol.Server{Path: opts.controlSocket, WindowsHost: opts.strictListenHost, Reserve: func(reserveCtx context.Context, windows, wsl string) (listencontrol.Reservation, error) {
 			return client.ReserveReverseForward(reserveCtx, windows, wsl)
 		}}
 		controlDone = make(chan error, 1)
 		go func() { controlDone <- control.Serve(ctx) }()
-		logger.Printf("strict-listen control socket %s", *controlSocket)
+		logger.Printf("strict-listen control socket %s", opts.controlSocket)
 	}
-	reverseForwards, err := forward.OpenAll(ctx, client, reverseMappings)
+	reverseForwards, err = forward.OpenAll(ctx, client, opts.reverse)
 	if err != nil {
-		logger.Fatalf("register reverse forwards: %v", err)
+		return fmt.Errorf("register reverse forwards: %w", err)
 	}
-	for _, mapping := range reverseMappings {
+	for _, mapping := range opts.reverse {
 		logger.Printf("reverse forwarding %s -> %s", mapping.Windows, mapping.WSL)
 	}
 
-	listener, err := net.Listen("tcp", *listenAddr)
-	if err != nil {
-		_ = endpoint.Close()
-		_ = cmd.Process.Kill()
-		logger.Fatalf("listen on %s: %v", *listenAddr, err)
-	}
-	logger.Printf("SOCKS5 listening on %s", listener.Addr())
-	var httpListener net.Listener
-	if *httpListenAddr != "" {
-		httpListener, err = net.Listen("tcp", *httpListenAddr)
-		if err != nil {
-			logger.Fatalf("HTTP proxy listen on %s: %v", *httpListenAddr, err)
-		}
-	}
-	var autoDone chan error
-	if *autoForward {
-		included, parseErr := parsePortSet(*autoForwardInclude)
-		if parseErr != nil {
-			logger.Fatalf("parse -auto-forward-include: %v", parseErr)
-		}
-		excluded, parseErr := parsePortSet(*autoForwardExclude)
-		if parseErr != nil {
-			logger.Fatalf("parse -auto-forward-exclude: %v", parseErr)
-		}
-		addAddressPort(excluded, listener.Addr().String())
-		if httpListener != nil {
-			addAddressPort(excluded, httpListener.Addr().String())
-		}
-		for _, mapping := range reverseMappings {
-			addAddressPort(excluded, mapping.WSL)
-		}
-		watcher := &autoforward.Watcher{Scanner: autoforward.DefaultProcScanner(), Opener: client, WindowsHost: *autoForwardHost, Interval: *autoForwardInterval, Included: included, Excluded: excluded, Logger: logger}
-		autoDone = make(chan error, 1)
-		go func() { autoDone <- watcher.Run(ctx) }()
-		logger.Printf("automatic forwarding enabled on Windows host %s", *autoForwardHost)
-	}
-	proxy := &socks5.Server{Listener: listener, Dialer: client, Logger: logger}
-	serveDone := make(chan error, 1)
-	go func() { serveDone <- proxy.Serve(ctx) }()
+	logger.Printf("SOCKS5 listening on %s", socksListener.Addr())
+	proxy := &socks5.Server{Listener: socksListener, Dialer: client, Logger: logger}
+	socksDone := make(chan error, 1)
+	go func() { socksDone <- proxy.Serve(ctx) }()
 	var httpDone chan error
 	if httpListener != nil {
 		httpProxy := &httpproxy.Server{Listener: httpListener, Dialer: client, Logger: logger}
@@ -128,48 +177,47 @@ func main() {
 		logger.Printf("HTTP CONNECT proxy listening on %s", httpListener.Addr())
 	}
 
-	select {
-	case err := <-relayDone:
-		if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
-			logger.Printf("relay stopped: %v", err)
+	var autoDone chan error
+	if opts.autoForward {
+		excluded := clonePortSet(opts.autoExclude)
+		addAddressPort(excluded, socksListener.Addr().String())
+		if httpListener != nil {
+			addAddressPort(excluded, httpListener.Addr().String())
 		}
-	case err := <-serveDone:
-		if err != nil {
-			logger.Printf("proxy stopped: %v", err)
+		for _, mapping := range opts.reverse {
+			addAddressPort(excluded, mapping.WSL)
 		}
-	case <-ctx.Done():
-	case err := <-autoDone:
-		if err != nil {
-			logger.Printf("automatic forwarding stopped: %v", err)
-		}
-	case err := <-controlDone:
-		if err != nil {
-			logger.Printf("strict-listen control stopped: %v", err)
-		}
-	case err := <-httpDone:
-		if err != nil {
-			logger.Printf("HTTP CONNECT proxy stopped: %v", err)
-		}
+		watcher := &autoforward.Watcher{Scanner: autoforward.DefaultProcScanner(), Opener: client, WindowsHost: opts.autoForwardHost, Interval: opts.autoForwardInterval, Included: opts.autoInclude, Excluded: excluded, Logger: logger}
+		autoDone = make(chan error, 1)
+		go func() { autoDone <- watcher.Run(ctx) }()
+		logger.Printf("automatic forwarding enabled on Windows host %s", opts.autoForwardHost)
 	}
 
-	stop()
-	_ = listener.Close()
-	if httpListener != nil {
-		_ = httpListener.Close()
-	}
-	_ = client.Close()
-	_ = reverseForwards.Close()
-	_ = endpoint.Close()
-	if cmd.Process != nil {
-		_ = cmd.Process.Kill()
-	}
-	waitDone := make(chan error, 1)
-	go func() { waitDone <- cmd.Wait() }()
 	select {
-	case <-waitDone:
-	case <-time.After(2 * time.Second):
-		logger.Printf("relay process did not exit promptly")
+	case err := <-relayDone:
+		if errors.Is(err, io.EOF) {
+			return errors.New("Windows relay exited")
+		}
+		return err
+	case err := <-socksDone:
+		return err
+	case err := <-httpDone:
+		return err
+	case err := <-autoDone:
+		return err
+	case err := <-controlDone:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
 	}
+}
+
+func clonePortSet(source map[uint16]bool) map[uint16]bool {
+	result := make(map[uint16]bool, len(source))
+	for port, enabled := range source {
+		result[port] = enabled
+	}
+	return result
 }
 
 func parsePortSet(value string) (map[uint16]bool, error) {
