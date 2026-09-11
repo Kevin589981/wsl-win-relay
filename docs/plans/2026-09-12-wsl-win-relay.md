@@ -6,6 +6,28 @@
 
 **Tech Stack:** Go standard library, cross-compiled Windows/Linux binaries, `go test`.
 
+## Current Completion Matrix
+
+- [x] Framed stdio relay with bounded streams and capability negotiation.
+- [x] SOCKS5 TCP CONNECT and UDP ASSOCIATE, plus optional HTTP CONNECT.
+- [x] Windows-side HTTP CONNECT and SOCKS5/SOCKS5H upstream support.
+- [x] Explicit TCP and UDP reverse forwarding with bind-error propagation.
+- [x] Polling TCP listener discovery with include/exclude policies.
+- [x] Strict TCP `listen()` and non-zero UDP `bind()` coordination through the
+      native launcher/interposer, including descriptor ownership cleanup.
+- [x] Process-boundary recovery that recreates mappings after broken relay
+      transports.
+- [x] Opt-in TUN/tun2socks transparent TCP/UDP routing, including real WSL
+      verification while HNS had removed the default route.
+- [x] systemd user-service installer and private configuration handling.
+- [ ] Automatic UDP listener discovery. This remains intentionally deferred:
+      `/proc/net/udp` does not safely identify server sockets versus ephemeral
+      client sockets; use explicit `-reverse-udp` or strict UDP `bind()` mode.
+- [ ] Kernel-level coverage for static binaries, raw syscalls, and all
+      `clone()`/`vfork()` ownership patterns.
+- [ ] In-process hot reconnect that preserves existing connections across a
+      broken stdio session.
+
 ---
 
 ### Task 1: Establish repository and design contracts
