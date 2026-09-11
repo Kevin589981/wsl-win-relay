@@ -1,0 +1,112 @@
+package protocol
+
+import (
+	"encoding/binary"
+	"errors"
+	"fmt"
+	"io"
+)
+
+const (
+	Version        uint8 = 1
+	HeaderSize           = 16
+	MaxPayloadSize       = 1 << 20
+	MaxTargetSize        = 4096
+)
+
+var magic = [4]byte{'W', 'W', 'R', '1'}
+
+type Type uint8
+
+const (
+	TypeOpen Type = iota + 1
+	TypeOpenOK
+	TypeOpenError
+	TypeData
+	TypeClose
+	TypeReset
+)
+
+type Frame struct {
+	Type     Type
+	StreamID uint32
+	Payload  []byte
+}
+
+func (f Frame) Validate() error {
+	if f.StreamID == 0 {
+		return errors.New("stream id must be non-zero")
+	}
+	if !knownType(f.Type) {
+		return fmt.Errorf("unknown frame type %d", f.Type)
+	}
+	if len(f.Payload) > MaxPayloadSize {
+		return fmt.Errorf("payload exceeds %d bytes", MaxPayloadSize)
+	}
+	if (f.Type == TypeOpenOK || f.Type == TypeClose) && len(f.Payload) != 0 {
+		return fmt.Errorf("frame type %d must have an empty payload", f.Type)
+	}
+	if f.Type == TypeOpen && (len(f.Payload) == 0 || len(f.Payload) > MaxTargetSize) {
+		return fmt.Errorf("open target must be between 1 and %d bytes", MaxTargetSize)
+	}
+	return nil
+}
+
+func Write(w io.Writer, f Frame) error {
+	if err := f.Validate(); err != nil {
+		return err
+	}
+	header := make([]byte, HeaderSize)
+	copy(header[:4], magic[:])
+	header[4] = Version
+	header[5] = byte(f.Type)
+	binary.BigEndian.PutUint32(header[8:12], f.StreamID)
+	binary.BigEndian.PutUint32(header[12:16], uint32(len(f.Payload)))
+	if err := writeFull(w, header); err != nil {
+		return err
+	}
+	return writeFull(w, f.Payload)
+}
+
+func Read(r io.Reader) (Frame, error) {
+	header := make([]byte, HeaderSize)
+	if _, err := io.ReadFull(r, header); err != nil {
+		return Frame{}, err
+	}
+	if string(header[:4]) != string(magic[:]) {
+		return Frame{}, errors.New("invalid protocol magic")
+	}
+	if header[4] != Version {
+		return Frame{}, fmt.Errorf("unsupported protocol version %d", header[4])
+	}
+	length := binary.BigEndian.Uint32(header[12:16])
+	if length > MaxPayloadSize {
+		return Frame{}, fmt.Errorf("payload exceeds %d bytes", MaxPayloadSize)
+	}
+	f := Frame{Type: Type(header[5]), StreamID: binary.BigEndian.Uint32(header[8:12]), Payload: make([]byte, length)}
+	if _, err := io.ReadFull(r, f.Payload); err != nil {
+		return Frame{}, err
+	}
+	if err := f.Validate(); err != nil {
+		return Frame{}, err
+	}
+	return f, nil
+}
+
+func knownType(t Type) bool {
+	return t >= TypeOpen && t <= TypeReset
+}
+
+func writeFull(w io.Writer, p []byte) error {
+	for len(p) > 0 {
+		n, err := w.Write(p)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+		p = p[n:]
+	}
+	return nil
+}
