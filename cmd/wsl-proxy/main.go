@@ -364,7 +364,7 @@ type noCommitReservation struct{ io.Closer }
 func (noCommitReservation) Commit() error { return nil }
 
 func classifyHandshakeError(err error) error {
-	if errors.Is(err, io.EOF) || errors.Is(err, relay.ErrClientClosed) {
+	if isRelayTransportExit(err) || errors.Is(err, relay.ErrClientClosed) {
 		return errRelayExited
 	}
 	return fmt.Errorf("relay handshake: %w", err)
