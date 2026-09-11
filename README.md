@@ -65,6 +65,19 @@ Remove-Item Env:GOOS,Env:GOARCH
 
 `wsl-proxy-linux` is the binary to run inside WSL; `wsl-win-relay.exe` is launched by it through WSL interop. Alternatively, run `go build` for the Linux proxy directly inside WSL.
 
+## Configuration
+
+For long-running use, start from [`wsl-win-relay.example.json`](wsl-win-relay.example.json):
+
+```bash
+./bin/wsl-proxy-linux -config ./wsl-win-relay.json
+```
+
+The JSON decoder rejects unknown fields so misspelled safety or bind settings do
+not silently disappear. Command-line options override scalar configuration
+values; repeated command-line `-reverse` mappings are added to configured
+mappings.
+
 Place `wsl-win-relay.exe` somewhere visible to WSL interop (or pass its absolute path with `-relay-exe`) and start:
 
 ```bash

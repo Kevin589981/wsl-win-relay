@@ -11,12 +11,14 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/Kevin589981/wsl-win-relay/internal/autoforward"
+	appconfig "github.com/Kevin589981/wsl-win-relay/internal/config"
 	"github.com/Kevin589981/wsl-win-relay/internal/forward"
 	"github.com/Kevin589981/wsl-win-relay/internal/httpproxy"
 	"github.com/Kevin589981/wsl-win-relay/internal/listencontrol"
@@ -55,28 +57,53 @@ func main() {
 }
 
 func parseOptions(args []string) (options, error) {
-	var opts options
-	var include, exclude string
+	configPath, err := findConfigPath(args)
+	if err != nil {
+		return options{}, err
+	}
+	fileConfig := appconfig.Default()
+	if configPath != "" {
+		fileConfig, err = appconfig.Load(configPath)
+		if err != nil {
+			return options{}, fmt.Errorf("load %s: %w", configPath, err)
+		}
+	}
+	interval, err := fileConfig.AutoForwardDuration()
+	if err != nil {
+		return options{}, err
+	}
+	opts := options{
+		socksListen: fileConfig.SOCKS5Listen, httpListen: fileConfig.HTTPConnectListen,
+		relayExe: fileConfig.RelayExecutable, autoForward: fileConfig.AutoForward.Enabled,
+		autoForwardHost: fileConfig.AutoForward.WindowsHost, autoForwardInterval: interval,
+		controlSocket: fileConfig.ControlSocket, strictListenHost: fileConfig.StrictListenHost,
+	}
+	for _, mapping := range fileConfig.Reverse {
+		if err := opts.reverse.Set(mapping); err != nil {
+			return options{}, fmt.Errorf("config reverse: %w", err)
+		}
+	}
+	include, exclude := formatPorts(fileConfig.AutoForward.Include), formatPorts(fileConfig.AutoForward.Exclude)
 	set := flag.NewFlagSet("wsl-proxy", flag.ContinueOnError)
 	set.SetOutput(io.Discard)
-	set.StringVar(&opts.socksListen, "listen", "127.0.0.1:1080", "SOCKS5 listen address")
-	set.StringVar(&opts.httpListen, "http-listen", "", "optional HTTP CONNECT proxy listen address")
-	set.StringVar(&opts.relayExe, "relay-exe", "wsl-win-relay.exe", "Windows relay executable")
+	set.StringVar(&configPath, "config", configPath, "JSON configuration file")
+	set.StringVar(&opts.socksListen, "listen", opts.socksListen, "SOCKS5 listen address")
+	set.StringVar(&opts.httpListen, "http-listen", opts.httpListen, "optional HTTP CONNECT proxy listen address")
+	set.StringVar(&opts.relayExe, "relay-exe", opts.relayExe, "Windows relay executable")
 	set.Var(&opts.reverse, "reverse", "reverse mapping WINDOWS_ADDR=WSL_TARGET (repeatable)")
-	set.BoolVar(&opts.autoForward, "auto-forward", false, "automatically mirror WSL TCP listeners to Windows")
-	set.StringVar(&opts.autoForwardHost, "auto-forward-host", "127.0.0.1", "Windows bind host for automatic mappings")
-	set.DurationVar(&opts.autoForwardInterval, "auto-forward-interval", time.Second, "automatic listener scan interval")
-	set.StringVar(&include, "auto-forward-include", "", "comma-separated allowlist of ports for automatic mapping")
-	set.StringVar(&exclude, "auto-forward-exclude", "", "comma-separated ports excluded from automatic mapping")
-	set.StringVar(&opts.controlSocket, "control-socket", "/tmp/wsl-win-relay-control.sock", "Unix socket for strict listener coordination; empty disables")
-	set.StringVar(&opts.strictListenHost, "strict-listen-host", "127.0.0.1", "Windows bind host for strict listener coordination")
+	set.BoolVar(&opts.autoForward, "auto-forward", opts.autoForward, "automatically mirror WSL TCP listeners to Windows")
+	set.StringVar(&opts.autoForwardHost, "auto-forward-host", opts.autoForwardHost, "Windows bind host for automatic mappings")
+	set.DurationVar(&opts.autoForwardInterval, "auto-forward-interval", opts.autoForwardInterval, "automatic listener scan interval")
+	set.StringVar(&include, "auto-forward-include", include, "comma-separated allowlist of ports for automatic mapping")
+	set.StringVar(&exclude, "auto-forward-exclude", exclude, "comma-separated ports excluded from automatic mapping")
+	set.StringVar(&opts.controlSocket, "control-socket", opts.controlSocket, "Unix socket for strict listener coordination; empty disables")
+	set.StringVar(&opts.strictListenHost, "strict-listen-host", opts.strictListenHost, "Windows bind host for strict listener coordination")
 	if err := set.Parse(args); err != nil {
 		return options{}, err
 	}
 	if set.NArg() != 0 {
 		return options{}, fmt.Errorf("unexpected arguments: %s", strings.Join(set.Args(), " "))
 	}
-	var err error
 	opts.autoInclude, err = parsePortSet(include)
 	if err != nil {
 		return options{}, fmt.Errorf("auto-forward-include: %w", err)
@@ -92,6 +119,37 @@ func parseOptions(args []string) (options, error) {
 		return options{}, errors.New("relay executable cannot be empty")
 	}
 	return opts, nil
+}
+
+func findConfigPath(args []string) (string, error) {
+	var path string
+	for index := 0; index < len(args); index++ {
+		if args[index] == "-config" || args[index] == "--config" {
+			if index+1 >= len(args) {
+				return "", errors.New("-config requires a path")
+			}
+			path = args[index+1]
+			index++
+			continue
+		}
+		if strings.HasPrefix(args[index], "-config=") {
+			path = strings.TrimPrefix(args[index], "-config=")
+		}
+		if strings.HasPrefix(args[index], "--config=") {
+			path = strings.TrimPrefix(args[index], "--config=")
+		}
+	}
+	return path, nil
+}
+
+func formatPorts(ports []uint16) string {
+	copyPorts := append([]uint16(nil), ports...)
+	sort.Slice(copyPorts, func(i, j int) bool { return copyPorts[i] < copyPorts[j] })
+	values := make([]string, len(copyPorts))
+	for index, port := range copyPorts {
+		values[index] = strconv.Itoa(int(port))
+	}
+	return strings.Join(values, ",")
 }
 
 func run(parent context.Context, opts options, logger *log.Logger) error {
