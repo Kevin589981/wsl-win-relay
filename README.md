@@ -301,7 +301,7 @@ wrapper to `~/bin/wsl-win-relay-service`, and the strict-listen launcher to
 it under `~/lib`. It creates a private
 `${XDG_CONFIG_HOME:-~/.config}/wsl-win-relay/config.json` from the example only
 when one does not already exist. It rejects symlinked/non-regular config paths
-and enforces mode `0600` on every run. Build with `scripts/build-wsl.sh` first
+and enforces directory mode `0700` and file mode `0600` on every run. Build with `scripts/build-wsl.sh` first
 and set the Windows `relay_exe` path in the config.
 
 Relay-session recovery intentionally starts a fresh child and loses existing

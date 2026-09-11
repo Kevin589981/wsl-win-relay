@@ -19,6 +19,7 @@ if [ -r "$repo_dir/lib/libwsl_win_relay_listen.so" ]; then
     install -m 0755 "$repo_dir/lib/libwsl_win_relay_listen.so" "$lib_dir/libwsl_win_relay_listen.so"
 fi
 mkdir -p "$service_dir" "$config_dir"
+chmod 700 "$config_dir"
 install -m 0644 "$repo_dir/systemd/wsl-win-relay.service" "$service_dir/wsl-win-relay.service"
 if [ ! -e "$config_dir/config.json" ]; then
     install -m 0600 "$repo_dir/wsl-win-relay.example.json" "$config_dir/config.json"
