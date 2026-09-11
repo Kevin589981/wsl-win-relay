@@ -15,6 +15,7 @@ import (
 )
 
 var ErrClientClosed = errors.New("relay client is closed")
+var ErrClientAlreadyRunning = errors.New("relay client is already running")
 var ErrMissingCapabilities = errors.New("Windows relay is missing required capabilities")
 
 type Client struct {
@@ -28,6 +29,7 @@ type Client struct {
 	closed            chan struct{}
 	closeOne          sync.Once
 	closeErr          error
+	runOnce           sync.Once
 	helloDone         chan helloResult
 	helloOnce         sync.Once
 	handshakeMu       sync.Mutex
@@ -102,6 +104,11 @@ func (c *Client) OpenPacketContext(ctx context.Context) (net.PacketConn, error) 
 
 // Run reads and dispatches frames until the transport closes or ctx is canceled.
 func (c *Client) Run(ctx context.Context) error {
+	started := false
+	c.runOnce.Do(func() { started = true })
+	if !started {
+		return ErrClientAlreadyRunning
+	}
 	result := make(chan error, 1)
 	go func() {
 		for {

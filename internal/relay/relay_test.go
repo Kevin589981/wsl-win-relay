@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"testing"
@@ -71,6 +72,16 @@ func TestHandshakeIsIdempotent(t *testing.T) {
 	_ = client.Close()
 	_ = serverSide.Close()
 	_ = clientSide.Close()
+}
+
+func TestClientRunRejectsSecondReader(t *testing.T) {
+	client := NewClient(&discardReadWriter{})
+	if err := client.Run(context.Background()); !errors.Is(err, io.EOF) {
+		t.Fatalf("first run: %v", err)
+	}
+	if err := client.Run(context.Background()); !errors.Is(err, ErrClientAlreadyRunning) {
+		t.Fatalf("second run: %v", err)
+	}
 }
 
 func TestReverseForward(t *testing.T) {
