@@ -84,6 +84,22 @@ static int debug_enabled(void) {
     return value != NULL && value[0] != '\0' && strcmp(value, "0") != 0;
 }
 
+static int control_retry_attempts(void) {
+    const char *value = getenv("WSL_WIN_RELAY_CONTROL_RETRY_SECONDS");
+    if (value == NULL || value[0] == '\0') {
+        return 20;
+    }
+    char *end = NULL;
+    long seconds = strtol(value, &end, 10);
+    if (end == value || *end != '\0' || seconds < 0) {
+        return 20;
+    }
+    if (seconds > 60) {
+        seconds = 60;
+    }
+    return (int)(seconds * 10) + 1;
+}
+
 static void initialize(void) {
     real_listen = (listen_fn)dlsym(RTLD_NEXT, "listen");
     real_bind = (bind_fn)dlsym(RTLD_NEXT, "bind");
@@ -188,7 +204,8 @@ static int reserve_listener(const char *network, uint16_t port, const char *host
     char request[128];
     char response[256];
     snprintf(request, sizeof(request), "RESERVE %ld %s %u %s\n", (long)getpid(), network, (unsigned)port, host);
-    for (int attempt = 0; attempt < 20; attempt++) {
+    int attempts = control_retry_attempts();
+    for (int attempt = 0; attempt < attempts; attempt++) {
         if (control_request(request, response, sizeof(response)) == 0) {
             unsigned long long value;
             if (sscanf(response, "OK %llu", &value) != 1) {
@@ -201,8 +218,10 @@ static int reserve_listener(const char *network, uint16_t port, const char *host
         if (errno != ENOENT && errno != ECONNREFUSED && errno != ECONNRESET) {
             return -1;
         }
-        struct timespec delay = {.tv_sec = 0, .tv_nsec = 100000000L};
-        (void)nanosleep(&delay, NULL);
+        if (attempt + 1 < attempts) {
+            struct timespec delay = {.tv_sec = 0, .tv_nsec = 100000000L};
+            (void)nanosleep(&delay, NULL);
+        }
     }
     return -1;
 }

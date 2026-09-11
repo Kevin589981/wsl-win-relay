@@ -28,8 +28,9 @@ Provide `libwsl_win_relay_listen.so` and a `wsl-win-relay-run` launcher. The int
 8. Releases abandoned mappings through the control daemon's process-identity
    lease reaper when an owner exits without callbacks.
 9. Retries only transient control-socket availability errors for a bounded
-   two-second startup/recovery window; definitive Windows bind errors are
-   returned immediately.
+   two-second startup/recovery window by default; the
+   `WSL_WIN_RELAY_CONTROL_RETRY_SECONDS` environment variable can extend it to
+   sixty seconds. Definitive Windows bind errors are returned immediately.
 
 ## Consequences
 
