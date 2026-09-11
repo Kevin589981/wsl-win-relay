@@ -75,3 +75,7 @@ Design an opt-in launcher/interposition path that registers the Windows listener
 ### Task 11: UDP relay and SOCKS5 UDP ASSOCIATE
 
 Add endpoint-preserving datagram frames and Windows UDP socket lifecycle management. Then implement SOCKS5 UDP ASSOCIATE, including domain destinations, source endpoint responses, association ownership, timeouts, and malformed or fragmented packet rejection.
+
+### Task 12: Transparent WSL routing
+
+Integrate a pinned tun2socks release as an external TUN adapter. Provide route/DNS/device setup with complete rollback, preserve an uplink route for the local relay endpoint, document root and `/dev/net/tun` requirements, and verify a proxy-unaware TCP/UDP application through Windows egress.
