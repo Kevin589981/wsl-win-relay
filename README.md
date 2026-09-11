@@ -252,6 +252,11 @@ The script searches `PATH` and the Go `GOPATH/bin` installation location; set
 `WWR_TUN2SOCKS_BIN` when running under `sudo` or another environment with a
 different tool path.
 
+The TUN setup and rollback path has been smoke-tested under WSL as root,
+including IPv4 split routes, optional IPv6 routes, process shutdown, and device
+cleanup. A full transparent traffic test additionally requires the pinned
+`tun2socks` binary and a running local SOCKS5 endpoint.
+
 ## Long-running service
 
 With WSL systemd enabled, install the user service:
