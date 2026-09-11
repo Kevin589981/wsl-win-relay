@@ -65,3 +65,17 @@ curl --proxy socks5h://127.0.0.1:1080 https://example.com
 ```
 
 The `socks5h` form is intentional: the hostname is sent through the relay and resolved by Windows rather than by WSL.
+
+To expose a WSL service on a Windows port, add an explicit reverse mapping:
+
+```bash
+./bin/wsl-proxy-linux \
+  -relay-exe /mnt/d/Code/net/wsl-win-relay/bin/wsl-win-relay.exe \
+  -reverse 0.0.0.0:8000=127.0.0.1:8000
+```
+
+The WSL application continues to bind `127.0.0.1:8000`; the Windows relay
+owns `0.0.0.0:8000` and forwards each accepted connection. A Windows bind
+conflict or firewall denial is reported during startup. Multiple mappings will
+get a dedicated configuration format in a later milestone; the core protocol
+already uses independent listener IDs and supports multiple listeners.

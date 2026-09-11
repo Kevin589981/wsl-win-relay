@@ -2,9 +2,11 @@ package relay
 
 import (
 	"context"
+	"encoding/binary"
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 
 	"github.com/Kevin589981/wsl-win-relay/internal/protocol"
 )
@@ -12,13 +14,15 @@ import (
 type DialContextFunc func(context.Context, string) (net.Conn, error)
 
 type Server struct {
-	rw      io.ReadWriter
-	dial    DialContextFunc
-	writeMu sync.Mutex
-	mu      sync.Mutex
-	streams map[uint32]*serverStream
-	ctx     context.Context
-	cancel  context.CancelFunc
+	rw         io.ReadWriter
+	dial       DialContextFunc
+	writeMu    sync.Mutex
+	mu         sync.Mutex
+	streams    map[uint32]*serverStream
+	listeners  map[uint32]*serverListener
+	nextStream atomic.Uint32
+	ctx        context.Context
+	cancel     context.CancelFunc
 }
 
 type serverStream struct {
@@ -33,7 +37,7 @@ func NewServer(rw io.ReadWriter, dial DialContextFunc) *Server {
 			return d.DialContext(ctx, "tcp", target)
 		}
 	}
-	return &Server{rw: rw, dial: dial, streams: make(map[uint32]*serverStream)}
+	return &Server{rw: rw, dial: dial, streams: make(map[uint32]*serverStream), listeners: make(map[uint32]*serverListener)}
 }
 
 func (s *Server) Serve(ctx context.Context) error {
@@ -52,6 +56,10 @@ func (s *Server) handle(frame protocol.Frame) {
 	switch frame.Type {
 	case protocol.TypeOpen:
 		go s.open(frame.StreamID, string(frame.Payload))
+	case protocol.TypeListenOpen:
+		go s.openListener(frame.StreamID, string(frame.Payload))
+	case protocol.TypeListenClose:
+		s.removeListener(frame.StreamID)
 	case protocol.TypeData:
 		s.mu.Lock()
 		stream := s.streams[frame.StreamID]
@@ -74,6 +82,70 @@ func (s *Server) handle(frame protocol.Frame) {
 		}
 	case protocol.TypeClose, protocol.TypeReset:
 		s.remove(frame.StreamID)
+	}
+}
+
+type serverListener struct {
+	listener net.Listener
+	cancel   context.CancelFunc
+}
+
+func (s *Server) openListener(id uint32, addr string) {
+	if id == 0 || addr == "" {
+		_ = s.send(protocol.Frame{Type: protocol.TypeListenError, StreamID: id, Payload: []byte("invalid listen request")})
+		return
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		_ = s.send(protocol.Frame{Type: protocol.TypeListenError, StreamID: id, Payload: []byte(err.Error())})
+		return
+	}
+	ctx, cancel := context.WithCancel(s.ctx)
+	s.mu.Lock()
+	if _, exists := s.listeners[id]; exists {
+		s.mu.Unlock()
+		cancel()
+		_ = ln.Close()
+		return
+	}
+	s.listeners[id] = &serverListener{listener: ln, cancel: cancel}
+	s.mu.Unlock()
+	if err := s.send(protocol.Frame{Type: protocol.TypeListenOK, StreamID: id}); err != nil {
+		s.removeListener(id)
+		return
+	}
+	go func() {
+		<-ctx.Done()
+		_ = ln.Close()
+	}()
+	for {
+		conn, acceptErr := ln.Accept()
+		if acceptErr != nil {
+			return
+		}
+		streamID := s.nextStream.Add(1)
+		stream := &serverStream{conn: conn, cancel: func() {}}
+		s.mu.Lock()
+		s.streams[streamID] = stream
+		s.mu.Unlock()
+		payload := make([]byte, 4)
+		binary.BigEndian.PutUint32(payload, id)
+		if err := s.send(protocol.Frame{Type: protocol.TypeInboundOpen, StreamID: streamID, Payload: payload}); err != nil {
+			s.remove(streamID)
+			return
+		}
+		go s.copyToClient(streamID, conn)
+	}
+}
+
+func (s *Server) removeListener(id uint32) {
+	s.mu.Lock()
+	l := s.listeners[id]
+	delete(s.listeners, id)
+	s.mu.Unlock()
+	if l != nil {
+		l.cancel()
+		_ = l.listener.Close()
 	}
 }
 
@@ -158,6 +230,15 @@ func (s *Server) remove(id uint32) {
 func (s *Server) shutdown() {
 	if s.cancel != nil {
 		s.cancel()
+	}
+	s.mu.Lock()
+	listenerIDs := make([]uint32, 0, len(s.listeners))
+	for id := range s.listeners {
+		listenerIDs = append(listenerIDs, id)
+	}
+	s.mu.Unlock()
+	for _, id := range listenerIDs {
+		s.removeListener(id)
 	}
 	s.mu.Lock()
 	ids := make([]uint32, 0, len(s.streams))

@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -16,18 +17,19 @@ import (
 var ErrClientClosed = errors.New("relay client is closed")
 
 type Client struct {
-	rw       io.ReadWriter
-	writeMu  sync.Mutex
-	mu       sync.Mutex
-	streams  map[uint32]*clientStream
-	nextID   atomic.Uint32
-	closed   chan struct{}
-	closeOne sync.Once
-	closeErr error
+	rw        io.ReadWriter
+	writeMu   sync.Mutex
+	mu        sync.Mutex
+	streams   map[uint32]*clientStream
+	listeners map[uint32]*clientListener
+	nextID    atomic.Uint32
+	closed    chan struct{}
+	closeOne  sync.Once
+	closeErr  error
 }
 
 func NewClient(rw io.ReadWriter) *Client {
-	c := &Client{rw: rw, streams: make(map[uint32]*clientStream), closed: make(chan struct{})}
+	c := &Client{rw: rw, streams: make(map[uint32]*clientStream), listeners: make(map[uint32]*clientListener), closed: make(chan struct{})}
 	return c
 }
 
@@ -90,6 +92,36 @@ func (c *Client) DialContext(ctx context.Context, target string) (net.Conn, erro
 	}
 }
 
+// ReverseForward asks the Windows side to listen on windowsAddr and forward
+// accepted connections to the WSL-local target.
+func (c *Client) ReverseForward(ctx context.Context, windowsAddr, target string) (io.Closer, error) {
+	if windowsAddr == "" || target == "" || len(windowsAddr) > protocol.MaxTargetSize || len(target) > protocol.MaxTargetSize {
+		return nil, fmt.Errorf("invalid reverse-forward address")
+	}
+	id := c.nextID.Add(1)
+	l := &clientListener{id: id, client: c, target: target, ctx: ctx, ready: make(chan error, 1)}
+	c.mu.Lock()
+	c.listeners[id] = l
+	c.mu.Unlock()
+	if err := c.write(protocol.Frame{Type: protocol.TypeListenOpen, StreamID: id, Payload: []byte(windowsAddr)}); err != nil {
+		c.removeListener(id)
+		return nil, err
+	}
+	select {
+	case err := <-l.ready:
+		if err != nil {
+			c.removeListener(id)
+			return nil, err
+		}
+		return l, nil
+	case <-ctx.Done():
+		_ = l.Close()
+		return nil, ctx.Err()
+	case <-c.closed:
+		return nil, ErrClientClosed
+	}
+}
+
 func (c *Client) Close() error {
 	c.fail(ErrClientClosed)
 	return c.closeErr
@@ -102,6 +134,32 @@ func (c *Client) write(frame protocol.Frame) error {
 }
 
 func (c *Client) dispatch(frame protocol.Frame) {
+	if frame.Type == protocol.TypeListenOK || frame.Type == protocol.TypeListenError {
+		c.mu.Lock()
+		l := c.listeners[frame.StreamID]
+		c.mu.Unlock()
+		if l != nil {
+			if frame.Type == protocol.TypeListenOK {
+				l.ready <- nil
+			} else {
+				l.ready <- errors.New(string(frame.Payload))
+			}
+		}
+		return
+	}
+	if frame.Type == protocol.TypeInboundOpen {
+		if len(frame.Payload) != 4 {
+			return
+		}
+		listenerID := binary.BigEndian.Uint32(frame.Payload)
+		c.mu.Lock()
+		l := c.listeners[listenerID]
+		c.mu.Unlock()
+		if l != nil {
+			go c.acceptInbound(l, frame.StreamID)
+		}
+		return
+	}
 	c.mu.Lock()
 	s := c.streams[frame.StreamID]
 	c.mu.Unlock()
@@ -127,11 +185,68 @@ func (c *Client) fail(err error) {
 			streams = append(streams, s)
 		}
 		c.streams = make(map[uint32]*clientStream)
+		c.listeners = make(map[uint32]*clientListener)
 		c.mu.Unlock()
 		for _, s := range streams {
 			s.fail(err)
 		}
 	})
+}
+
+func (c *Client) removeListener(id uint32) { c.mu.Lock(); delete(c.listeners, id); c.mu.Unlock() }
+
+func (c *Client) acceptInbound(l *clientListener, streamID uint32) {
+	s := newClientStream(c, streamID, l.target)
+	s.openOnce.Do(func() { s.openDone <- nil })
+	c.mu.Lock()
+	c.streams[streamID] = s
+	c.mu.Unlock()
+	local, err := (&net.Dialer{}).DialContext(l.ctx, "tcp", l.target)
+	if err != nil {
+		_ = c.write(protocol.Frame{Type: protocol.TypeReset, StreamID: streamID, Payload: []byte(err.Error())})
+		c.removeStream(streamID)
+		return
+	}
+	bridge(local, s)
+	c.removeStream(streamID)
+}
+
+type clientListener struct {
+	id     uint32
+	client *Client
+	target string
+	ctx    context.Context
+	ready  chan error
+	once   sync.Once
+}
+
+func (l *clientListener) Close() error {
+	l.once.Do(func() {
+		_ = l.client.write(protocol.Frame{Type: protocol.TypeListenClose, StreamID: l.id})
+		l.client.removeListener(l.id)
+	})
+	return nil
+}
+
+func bridge(a, b net.Conn) error {
+	errCh := make(chan error, 2)
+	copyOne := func(dst, src net.Conn) {
+		_, err := io.Copy(dst, src)
+		if cw, ok := dst.(interface{ CloseWrite() error }); ok {
+			_ = cw.CloseWrite()
+		} else {
+			_ = dst.Close()
+			_ = src.Close()
+		}
+		errCh <- err
+	}
+	go copyOne(a, b)
+	go copyOne(b, a)
+	err := <-errCh
+	<-errCh
+	_ = a.Close()
+	_ = b.Close()
+	return err
 }
 
 type clientStream struct {
