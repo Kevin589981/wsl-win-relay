@@ -393,13 +393,17 @@ func (p *socks5PacketConn) WriteTo(data []byte, address net.Addr) (int, error) {
 	if address == nil {
 		return 0, errors.New("datagram destination is required")
 	}
-	target, err := encodeTarget(address.String())
+	return p.WriteToTarget(data, address.String())
+}
+
+func (p *socks5PacketConn) WriteToTarget(data []byte, target string) (int, error) {
+	targetAddress, err := encodeTarget(target)
 	if err != nil {
 		return 0, err
 	}
-	packet := make([]byte, 0, 3+len(target)+len(data))
+	packet := make([]byte, 0, 3+len(targetAddress)+len(data))
 	packet = append(packet, 0, 0, 0)
-	packet = append(packet, target...)
+	packet = append(packet, targetAddress...)
 	packet = append(packet, data...)
 	if _, err := p.udp.WriteToUDP(packet, p.relay); err != nil {
 		return 0, err

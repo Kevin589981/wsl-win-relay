@@ -12,9 +12,8 @@ no portable datagram mode, while SOCKS5 defines UDP ASSOCIATE and keeps a TCP
 control connection alive for the association lifetime.
 
 The relay protocol already carries a destination endpoint with every UDP
-datagram. The Windows side resolves that endpoint before writing to its
-`PacketConn`, so the upstream packet implementation can use the same address
-contract as native UDP without changing WSL-side SOCKS5 behavior.
+datagram. Native UDP sockets need a resolved `net.UDPAddr`, while a SOCKS5
+wrapper can preserve a domain endpoint and let the upstream proxy resolve it.
 
 ## Decision
 
@@ -30,9 +29,9 @@ dialer implements the factory as follows:
 
 The SOCKS5 TCP control connection is closed together with the packet
 connection, and context cancellation closes both so blocked reads terminate.
-The relay continues to resolve datagram destinations on Windows before passing
-them to the packet connection. This preserves existing behavior and avoids
-introducing a second DNS policy in the upstream layer.
+Native packet connections continue to resolve datagram destinations on Windows.
+The SOCKS5 packet wrapper additionally implements a target-string write path so
+domain destinations can use SOCKS5H remote resolution.
 
 ## Consequences
 
@@ -49,18 +48,16 @@ introducing a second DNS policy in the upstream layer.
 - HTTP/HTTPS upstreams cannot proxy UDP; users requiring that must use SOCKS5.
 - SOCKS5 UDP support depends on the upstream proxy allowing UDP ASSOCIATE and
   receiving UDP traffic from the relay host.
-- Destination names in the relay protocol are resolved by Windows before the
-  upstream packet wrapper sees them, so `socks5h` does not provide a separate
-  remote-DNS policy for relay datagrams.
+- Native and SOCKS5 packet paths use different DNS policies: native UDP is
+  resolved by Windows, while SOCKS5H can resolve domain destinations remotely.
 
 ## Alternatives Considered
 
 **Tunnel UDP over repeated HTTP CONNECT streams:** rejected because it is
 non-standard, inefficient, and incompatible with ordinary HTTP proxies.
 
-**Resolve datagram names inside the SOCKS5 wrapper:** rejected because it would
-split DNS behavior between relay paths and change the established protocol
-contract.
+**Resolve every datagram name before the packet wrapper:** rejected because it
+would prevent SOCKS5H remote resolution when Windows DNS is unavailable.
 
 **Keep UDP native for every upstream scheme:** rejected because SOCKS5 UDP
 ASSOCIATE is specifically useful when native Windows UDP egress is unavailable.

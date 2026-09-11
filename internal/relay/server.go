@@ -15,6 +15,9 @@ import (
 
 type DialContextFunc func(context.Context, string) (net.Conn, error)
 type PacketDialContextFunc func(context.Context) (net.PacketConn, error)
+type targetPacketWriter interface {
+	WriteToTarget([]byte, string) (int, error)
+}
 
 type Server struct {
 	rw         io.ReadWriter
@@ -199,13 +202,19 @@ func (s *Server) writeDatagrams(id uint32, datagram *serverDatagram) {
 				s.datagramError(id, err)
 				continue
 			}
-			address, err := net.ResolveUDPAddr("udp", target)
-			if err != nil {
-				s.datagramError(id, err)
-				continue
+			var writeErr error
+			if targetWriter, ok := datagram.conn.(targetPacketWriter); ok {
+				_, writeErr = targetWriter.WriteToTarget(data, target)
+			} else {
+				address, resolveErr := net.ResolveUDPAddr("udp", target)
+				if resolveErr != nil {
+					s.datagramError(id, resolveErr)
+					continue
+				}
+				_, writeErr = datagram.conn.WriteTo(data, address)
 			}
-			if _, err := datagram.conn.WriteTo(data, address); err != nil {
-				s.datagramError(id, err)
+			if writeErr != nil {
+				s.datagramError(id, writeErr)
 			}
 		case <-datagram.done:
 			return

@@ -226,11 +226,12 @@ func TestSOCKS5PacketDialer(t *testing.T) {
 			serverErr <- readErr
 			return
 		}
-		if count < 4 || buffer[0] != 0 || buffer[1] != 0 || buffer[2] != 0 || buffer[3] != 1 {
+		if count < 4 || buffer[0] != 0 || buffer[1] != 0 || buffer[2] != 0 || buffer[3] != 3 || buffer[4] != byte(len("example.test")) {
 			serverErr <- io.ErrUnexpectedEOF
 			return
 		}
-		if binary.BigEndian.Uint16(buffer[8:10]) != 5353 || string(buffer[10:count]) != "ping" {
+		portOffset := 5 + len("example.test")
+		if string(buffer[5:portOffset]) != "example.test" || binary.BigEndian.Uint16(buffer[portOffset:portOffset+2]) != 5353 || string(buffer[portOffset+2:count]) != "ping" {
 			serverErr <- io.ErrUnexpectedEOF
 			return
 		}
@@ -250,7 +251,7 @@ func TestSOCKS5PacketDialer(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer packet.Close()
-	if _, err := packet.WriteTo([]byte("ping"), &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 5353}); err != nil {
+	if _, err := packet.WriteTo([]byte("ping"), packetAddr("example.test:5353")); err != nil {
 		t.Fatal(err)
 	}
 	buffer := make([]byte, 16)
