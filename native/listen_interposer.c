@@ -110,10 +110,10 @@ static int control_request(const char *request, char *response, size_t capacity)
     return 0;
 }
 
-static int reserve_listener(const char *network, uint16_t port, uint64_t *lease) {
+static int reserve_listener(const char *network, uint16_t port, const char *host, uint64_t *lease) {
     char request[128];
     char response[256];
-    snprintf(request, sizeof(request), "RESERVE %ld %s %u\n", (long)getpid(), network, (unsigned)port);
+    snprintf(request, sizeof(request), "RESERVE %ld %s %u %s\n", (long)getpid(), network, (unsigned)port, host);
     if (control_request(request, response, sizeof(response)) < 0) {
         return -1;
     }
@@ -193,14 +193,17 @@ int listen(int sockfd, int backlog) {
     if (getsockname(sockfd, (struct sockaddr *)&local, &local_length) < 0) {
         return real_listen(sockfd, backlog);
     }
-    const char *network;
-    uint16_t port;
-    if (local.ss_family == AF_INET) {
-        network = "tcp4";
-        port = ntohs(((struct sockaddr_in *)&local)->sin_port);
-    } else if (local.ss_family == AF_INET6) {
-        network = "tcp6";
-        port = ntohs(((struct sockaddr_in6 *)&local)->sin6_port);
+	const char *network;
+	char host[INET6_ADDRSTRLEN];
+	uint16_t port;
+	if (local.ss_family == AF_INET) {
+		network = "tcp4";
+		port = ntohs(((struct sockaddr_in *)&local)->sin_port);
+		if (inet_ntop(AF_INET, &((struct sockaddr_in *)&local)->sin_addr, host, sizeof(host)) == NULL) { return real_listen(sockfd, backlog); }
+	} else if (local.ss_family == AF_INET6) {
+		network = "tcp6";
+		port = ntohs(((struct sockaddr_in6 *)&local)->sin6_port);
+		if (inet_ntop(AF_INET6, &((struct sockaddr_in6 *)&local)->sin6_addr, host, sizeof(host)) == NULL) { return real_listen(sockfd, backlog); }
     } else {
         return real_listen(sockfd, backlog);
     }
@@ -208,7 +211,7 @@ int listen(int sockfd, int backlog) {
         return real_listen(sockfd, backlog);
     }
     uint64_t lease;
-    if (reserve_listener(network, port, &lease) < 0) {
+	if (reserve_listener(network, port, host, &lease) < 0) {
         return -1;
     }
     if (real_listen(sockfd, backlog) < 0) {

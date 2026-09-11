@@ -122,7 +122,7 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 }
 
 func (s *Server) handleReserve(ctx context.Context, conn net.Conn, parts []string) {
-	if len(parts) != 4 {
+	if len(parts) != 4 && len(parts) != 5 {
 		writeError(conn, 22, "RESERVE requires pid, network, and port")
 		return
 	}
@@ -149,6 +149,15 @@ func (s *Server) handleReserve(ctx context.Context, conn net.Conn, parts []strin
 	wslHost := "127.0.0.1"
 	if parts[2] == "tcp6" {
 		wslHost = "::1"
+	}
+	if len(parts) == 5 && parts[4] != "" {
+		wslHost = parts[4]
+		if parts[2] == "tcp4" && (wslHost == "0.0.0.0" || wslHost == "::") {
+			wslHost = "127.0.0.1"
+		}
+		if parts[2] == "tcp6" && wslHost == "::" {
+			wslHost = "::1"
+		}
 	}
 	wslTarget := net.JoinHostPort(wslHost, strconv.Itoa(int(port)))
 	reservation, err := s.Reserve(ctx, windowsAddr, wslTarget)
