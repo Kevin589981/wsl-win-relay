@@ -153,7 +153,9 @@ For a WSL UDP service, use a separate explicit UDP mapping:
 
 The Windows relay binds the UDP port and forwards each source endpoint to the
 WSL target through an isolated local flow. Responses return to the original
-Windows source. A bind conflict is reported while the mapping starts.
+Windows source. A bind conflict is reported while the mapping starts. Each
+mapping caps active source flows at 1024; idle flows are reclaimed after five
+minutes and new sources are dropped while the cap is reached.
 Automatic listener discovery currently remains TCP-only because
 `/proc/net/udp` cannot safely distinguish a UDP server socket from an
 ephemeral client socket.

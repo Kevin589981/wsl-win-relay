@@ -571,7 +571,12 @@ func (c *Client) acceptInbound(l *clientListener, s *clientStream) {
 	c.removeStream(s.id)
 }
 
-const reverseDatagramIdleTimeout = 5 * time.Minute
+const (
+	reverseDatagramIdleTimeout = 5 * time.Minute
+	// Bound per-mapping local sockets when a Windows listener is exposed to
+	// untrusted sources. Expired flows are reclaimed by the idle deadline.
+	maxReverseDatagramFlows = 1024
+)
 
 type clientReverseDatagram struct {
 	client    *Client
@@ -629,6 +634,10 @@ func (l *clientReverseDatagram) handle(frame protocol.Frame) {
 		}
 		flow := l.flows[key]
 		if flow == nil {
+			if len(l.flows) >= maxReverseDatagramFlows {
+				l.mu.Unlock()
+				return
+			}
 			conn, listenErr := net.ListenUDP("udp", nil)
 			if listenErr != nil {
 				l.mu.Unlock()
