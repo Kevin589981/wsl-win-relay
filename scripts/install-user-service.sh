@@ -2,8 +2,15 @@
 set -eu
 
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+bin_dir=$HOME/bin
 service_dir=${XDG_CONFIG_HOME:-"$HOME/.config"}/systemd/user
 config_dir=${XDG_CONFIG_HOME:-"$HOME/.config"}/wsl-win-relay
+if [ ! -x "$repo_dir/bin/wsl-proxy-linux" ]; then
+    echo "missing $repo_dir/bin/wsl-proxy-linux; run scripts/build-wsl.sh first" >&2
+    exit 1
+fi
+mkdir -p "$bin_dir"
+install -m 0755 "$repo_dir/bin/wsl-proxy-linux" "$bin_dir/wsl-proxy-linux"
 mkdir -p "$service_dir" "$config_dir"
 install -m 0644 "$repo_dir/systemd/wsl-win-relay.service" "$service_dir/wsl-win-relay.service"
 if [ ! -e "$config_dir/config.json" ]; then

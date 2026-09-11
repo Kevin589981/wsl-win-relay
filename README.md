@@ -211,9 +211,11 @@ systemctl --user status wsl-win-relay.service
 
 The service restarts the proxy after a Windows relay crash; startup handshake,
 reverse registrations, and control sockets are recreated on each restart. The
-installer creates a private `~/.config/wsl-win-relay/config.json` from the
-example only when one does not already exist, rejects symlinked/non-regular
-config paths, and enforces mode `0600` on every run.
+installer copies the built Linux proxy to `~/bin/wsl-proxy-linux`, then creates
+a private `~/.config/wsl-win-relay/config.json` from the example only when one
+does not already exist. It rejects symlinked/non-regular config paths and
+enforces mode `0600` on every run. Build with `scripts/build-wsl.sh` first and
+set the Windows `relay_exe` path in the config.
 
 ## Transparent mode
 
