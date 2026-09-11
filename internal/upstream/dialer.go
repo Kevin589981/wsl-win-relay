@@ -107,6 +107,9 @@ func httpConnect(conn net.Conn, target string, user *url.Userinfo) error {
 			}
 			var one [1]byte
 			count, err := conn.Read(one[:])
+			if count == 0 && err == nil {
+				return "", io.ErrNoProgress
+			}
 			used += count
 			if err != nil {
 				return "", err
@@ -255,7 +258,7 @@ func writeAll(writer io.Writer, data []byte) error {
 		if err != nil {
 			return err
 		}
-		if count <= 0 {
+		if count <= 0 || count > len(data) {
 			return io.ErrShortWrite
 		}
 		data = data[count:]
