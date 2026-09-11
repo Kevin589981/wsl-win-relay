@@ -2,7 +2,7 @@
 
 An emergency WSL-to-Windows network relay for cases where WSL networking is broken but Windows still has connectivity.
 
-The first release exposes a loopback SOCKS5 proxy inside WSL. A Windows helper process performs outbound TCP connections, and the two processes exchange multiplexed frames over stdin/stdout. The design keeps protocol, transport, relay, and user-facing adapters independent so transparent TCP/UDP adapters can be added later.
+The first release exposes a loopback SOCKS5 proxy inside WSL. A Windows helper process performs outbound TCP connections, and the two processes exchange multiplexed frames over stdin/stdout. The design keeps protocol, transport, relay, and user-facing adapters independent so the optional transparent adapter does not become a protocol dependency.
 
 ## Status
 
@@ -21,6 +21,7 @@ The repository is under active implementation. The current TCP milestone is usab
 - Optional HTTP CONNECT proxy for tools that only support `HTTP_PROXY`.
 - Per-stream 256 KiB credit windows that isolate slow TCP consumers.
 - Startup capability negotiation before any proxy or mapped port is advertised.
+- Idempotent systemd user-service installation with private configuration permissions and restart-on-relay-failure.
 - Verified in the target failure mode: WSL could not reach the configured Windows proxy port, while this relay still reached the public Internet and cloned a GitHub repository.
 
 Explicit reverse port forwarding and strict synchronization with dynamically linked application `listen()` calls are implemented. The broader automatic mode remains polling-based so it can support unmodified applications.
@@ -34,10 +35,10 @@ Automatic discovery is available as an opt-in polling mode. It mirrors detected 
 - There is no proxy authentication in the first milestone; do not bind the listener to a LAN address.
 - The relay is intended for the same user's WSL and Windows processes, not as a general network service.
 
-## Planned layers
+## Layered adapters
 
 ```text
-SOCKS5 / future transparent adapters
+SOCKS5 / HTTP CONNECT / TUN transparent adapter
               |
        multiplexed relay
               |
@@ -45,6 +46,12 @@ SOCKS5 / future transparent adapters
               |
       Windows WinSock
 ```
+
+The SOCKS5 and HTTP CONNECT adapters are suitable for proxy-aware command-line
+tools. The TUN adapter is implemented as an opt-in operational layer and needs
+root, `/dev/net/tun`, `iproute2`, and the pinned `tun2socks` binary; it remains
+separate from the relay core so it can be replaced without changing stream or
+datagram semantics.
 
 See [the implementation plan](docs/plans/2026-09-12-wsl-win-relay.md) and [architecture ADR](docs/adr/0001-layered-relay-architecture.md).
 
