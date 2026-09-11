@@ -19,6 +19,8 @@ route6_added=0
 tun_added=0
 dns_backup=
 dns_was_present=0
+dns_symlink=0
+dns_link_target=
 tun_pid=
 
 cleanup() {
@@ -36,7 +38,10 @@ cleanup() {
         ip -6 route del 8000::/1 dev "$device" 2>/dev/null || true
     fi
     if [ -n "$dns_backup" ]; then
-        if [ "$dns_was_present" -eq 1 ]; then
+        if [ "$dns_symlink" -eq 1 ]; then
+            rm -f /etc/resolv.conf
+            ln -s "$dns_link_target" /etc/resolv.conf
+        elif [ "$dns_was_present" -eq 1 ]; then
             cat "$dns_backup" > /etc/resolv.conf
         else
             rm -f /etc/resolv.conf
@@ -68,7 +73,12 @@ ip link set dev "$device" up
 
 if [ -n "$dns" ]; then
     dns_backup=$(mktemp /tmp/wsl-win-relay-resolv.XXXXXX)
-    if [ -e /etc/resolv.conf ]; then
+    if [ -L /etc/resolv.conf ]; then
+        dns_symlink=1
+        dns_link_target=$(readlink /etc/resolv.conf)
+        if [ -e /etc/resolv.conf ]; then cat /etc/resolv.conf > "$dns_backup"; dns_was_present=1; fi
+        rm -f /etc/resolv.conf
+    elif [ -e /etc/resolv.conf ]; then
         cat /etc/resolv.conf > "$dns_backup"
         dns_was_present=1
     fi
@@ -76,11 +86,11 @@ if [ -n "$dns" ]; then
 fi
 
 ip route add 0.0.0.0/1 dev "$device" metric 1
-ip route add 128.0.0.0/1 dev "$device" metric 1
 route_added=1
+ip route add 128.0.0.0/1 dev "$device" metric 1
 if ip -6 route add ::/1 dev "$device" metric 1 2>/dev/null; then
-    ip -6 route add 8000::/1 dev "$device" metric 1
     route6_added=1
+    ip -6 route add 8000::/1 dev "$device" metric 1
 fi
 
 echo "transparent relay active: $device -> $proxy via $uplink"
