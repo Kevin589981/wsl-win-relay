@@ -227,6 +227,7 @@ func (s *Server) readDatagrams(id uint32, conn net.PacketConn) {
 	for {
 		count, source, err := conn.ReadFrom(buffer)
 		if err != nil {
+			s.removeDatagram(id)
 			return
 		}
 		payload, err := protocol.EncodeDatagram(source.String(), buffer[:count])

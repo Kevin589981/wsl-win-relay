@@ -375,6 +375,25 @@ func TestClientServerUDPDatagram(t *testing.T) {
 	_ = clientSide.Close()
 }
 
+func TestServerDatagramReadErrorRemovesAssociation(t *testing.T) {
+	packet := &errorPacketConn{closed: make(chan struct{})}
+	server := NewServer(&discardReadWriter{}, nil)
+	server.ctx = context.Background()
+	server.packetDial = func(context.Context) (net.PacketConn, error) { return packet, nil }
+	server.openDatagram(2)
+	select {
+	case <-packet.closed:
+	case <-time.After(time.Second):
+		t.Fatal("datagram packet connection was not closed")
+	}
+	server.mu.Lock()
+	_, present := server.datagrams[2]
+	server.mu.Unlock()
+	if present {
+		t.Fatal("datagram association remained registered after read failure")
+	}
+}
+
 func TestSlowStreamDoesNotBlockOtherStreams(t *testing.T) {
 	clientSide, serverSide := net.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -469,6 +488,25 @@ type blockingReadCloser struct {
 	unblock chan struct{}
 	closed  chan struct{}
 }
+
+type errorPacketConn struct {
+	closed chan struct{}
+}
+
+func (p *errorPacketConn) ReadFrom([]byte) (int, net.Addr, error) { return 0, nil, io.ErrUnexpectedEOF }
+func (p *errorPacketConn) WriteTo([]byte, net.Addr) (int, error)  { return 0, io.ErrClosedPipe }
+func (p *errorPacketConn) Close() error {
+	select {
+	case <-p.closed:
+	default:
+		close(p.closed)
+	}
+	return nil
+}
+func (p *errorPacketConn) LocalAddr() net.Addr              { return relayAddr("error") }
+func (p *errorPacketConn) SetDeadline(time.Time) error      { return nil }
+func (p *errorPacketConn) SetReadDeadline(time.Time) error  { return nil }
+func (p *errorPacketConn) SetWriteDeadline(time.Time) error { return nil }
 
 func (r *blockingReadCloser) Read([]byte) (int, error) {
 	<-r.unblock
