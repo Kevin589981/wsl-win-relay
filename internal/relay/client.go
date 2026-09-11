@@ -517,6 +517,7 @@ type clientStream struct {
 	closeOnce     sync.Once
 	stateMu       sync.Mutex
 	closedRemote  bool
+	readEOF       bool
 	readBuf       []byte
 	deadlineMu    sync.Mutex
 	readDeadline  time.Time
@@ -558,6 +559,9 @@ func (s *clientStream) handle(frame protocol.Frame) {
 			s.fail(errors.New("invalid stream window update"))
 		}
 	case protocol.TypeHalfClose:
+		s.stateMu.Lock()
+		s.readEOF = true
+		s.stateMu.Unlock()
 		select {
 		case s.incoming <- streamEvent{err: io.EOF}:
 		case <-s.client.closed:
@@ -594,6 +598,23 @@ func (s *clientStream) Read(p []byte) (int, error) {
 				return n, err
 			}
 			return n, nil
+		}
+		s.stateMu.Lock()
+		readEOF := s.readEOF
+		s.stateMu.Unlock()
+		if readEOF {
+			select {
+			case event := <-s.incoming:
+				if len(event.data) > 0 {
+					s.readBuf = event.data
+					continue
+				}
+				if event.err != nil {
+					return 0, event.err
+				}
+			default:
+				return 0, io.EOF
+			}
 		}
 		s.deadlineMu.Lock()
 		wait := s.readDeadline

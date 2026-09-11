@@ -336,6 +336,18 @@ func TestSlowDatagramConsumerDropsInsteadOfBlocking(t *testing.T) {
 	}
 }
 
+func TestStreamEOFIsPersistentAfterHalfClose(t *testing.T) {
+	stream := newClientStream(NewClient(&discardReadWriter{}), 1, "example:1")
+	stream.handle(protocol.Frame{Type: protocol.TypeHalfClose, StreamID: 1})
+	buffer := make([]byte, 1)
+	if _, err := stream.Read(buffer); err != io.EOF {
+		t.Fatalf("first read: %v", err)
+	}
+	if _, err := stream.Read(buffer); err != io.EOF {
+		t.Fatalf("second read: %v", err)
+	}
+}
+
 type discardReadWriter struct{}
 
 func (*discardReadWriter) Read([]byte) (int, error)    { return 0, io.EOF }
