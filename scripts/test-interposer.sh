@@ -17,13 +17,13 @@ trap cleanup EXIT INT TERM
 
 gcc -O2 -Wall -Wextra -Werror \
     -o "$tmp_dir/interposer-smoke" "$repo_dir/native/interposer_smoke.c"
-python3 "$repo_dir/scripts/interposer-control.py" "$control_socket" "$request_log" &
+# Start the application first so the interposer's bounded retry path covers a
+# relay control socket that is still coming up.
+(
+    sleep 0.2
+    exec python3 "$repo_dir/scripts/interposer-control.py" "$control_socket" "$request_log"
+) &
 control_pid=$!
-for _ in $(seq 1 100); do
-    [ -S "$control_socket" ] && break
-    sleep 0.01
-done
-[ -S "$control_socket" ] || { echo "control socket did not start" >&2; exit 1; }
 WSL_WIN_RELAY_CONTROL=$control_socket \
 LD_PRELOAD="$repo_dir/lib/libwsl_win_relay_listen.so" \
     "$tmp_dir/interposer-smoke"
