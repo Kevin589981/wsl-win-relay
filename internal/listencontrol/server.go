@@ -49,8 +49,8 @@ type leaseOwner struct {
 }
 
 func (s *Server) Serve(ctx context.Context) error {
-	if s.Path == "" || s.Reserve == nil {
-		return errors.New("control socket path and reserve function are required")
+	if s.Path == "" || (s.Reserve == nil && s.ReserveDatagram == nil) {
+		return errors.New("control socket path and at least one reserve function are required")
 	}
 	if s.WindowsHost == "" {
 		s.WindowsHost = "127.0.0.1"
@@ -148,6 +148,10 @@ func (s *Server) handleReserve(ctx context.Context, conn net.Conn, parts []strin
 	}
 	if (parts[2] == "udp4" || parts[2] == "udp6") && s.ReserveDatagram == nil {
 		writeError(conn, 95, "UDP reverse forwarding is unavailable")
+		return
+	}
+	if (parts[2] == "tcp4" || parts[2] == "tcp6") && s.Reserve == nil {
+		writeError(conn, 95, "TCP reverse forwarding is unavailable")
 		return
 	}
 	identity, err := s.ProcessIdentity(pid)

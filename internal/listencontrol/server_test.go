@@ -3,7 +3,6 @@ package listencontrol
 import (
 	"bufio"
 	"context"
-	"errors"
 	"io"
 	"net"
 	"os"
@@ -64,9 +63,6 @@ func TestReserveUDP(t *testing.T) {
 	server := &Server{
 		Path:            path,
 		ProcessIdentity: func(int) (string, error) { return "start", nil },
-		Reserve: func(context.Context, string, string) (Reservation, error) {
-			return nil, errors.New("unexpected TCP reserve")
-		},
 		ReserveDatagram: func(_ context.Context, windows, wsl string) (Reservation, error) {
 			if windows != "127.0.0.1:5353" || wsl != "127.0.0.1:5353" {
 				t.Fatalf("UDP mapping %s -> %s", windows, wsl)
