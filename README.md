@@ -2,7 +2,7 @@
 
 An emergency WSL-to-Windows network relay for cases where WSL networking is broken but Windows still has connectivity.
 
-The first release exposes a loopback SOCKS5 proxy inside WSL. A Windows helper process performs outbound TCP connections, and the two processes exchange multiplexed frames over stdin/stdout. The design keeps protocol, transport, relay, and user-facing adapters independent so the optional transparent adapter does not become a protocol dependency.
+The first release exposes a loopback SOCKS5 proxy inside WSL. A Windows helper process performs outbound TCP and UDP connections, and the two processes exchange multiplexed frames over stdin/stdout. The design keeps protocol, transport, relay, and user-facing adapters independent so the optional transparent adapter does not become a protocol dependency.
 
 ## Status
 
