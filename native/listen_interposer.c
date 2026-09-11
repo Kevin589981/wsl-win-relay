@@ -101,6 +101,13 @@ static int write_all(int fd, const char *data, size_t length) {
     while (length > 0) {
         ssize_t written = send(fd, data, length, MSG_NOSIGNAL);
         if (written < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return -1;
+        }
+        if (written == 0) {
+            errno = EIO;
             return -1;
         }
         data += written;
