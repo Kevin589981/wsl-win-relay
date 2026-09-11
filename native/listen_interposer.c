@@ -336,6 +336,7 @@ int dup2(int oldfd, int newfd) {
     if (result < 0 || oldfd == newfd) return result;
     uint64_t release = 0;
     if (replace_tracking(oldfd, newfd, &release) < 0) {
+        if (release != 0) (void)lease_operation("CLOSE", release);
         (void)real_close(result);
         errno = ENOMEM;
         return -1;
@@ -351,6 +352,7 @@ int dup3(int oldfd, int newfd, int flags) {
     if (result < 0 || oldfd == newfd) return result;
     uint64_t release = 0;
     if (replace_tracking(oldfd, newfd, &release) < 0) {
+        if (release != 0) (void)lease_operation("CLOSE", release);
         (void)real_close(result);
         errno = ENOMEM;
         return -1;
