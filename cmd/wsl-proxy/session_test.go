@@ -133,6 +133,64 @@ func TestSessionDialerRetriesReverseReservationAfterSessionReplacement(t *testin
 	}
 }
 
+func TestSessionDialerReverseForwardCommitsMapping(t *testing.T) {
+	clientSide, serverSide := net.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := relay.NewServer(serverSide, nil)
+	go func() { _ = server.Serve(ctx) }()
+	client := relay.NewClient(clientSide)
+	go func() { _ = client.Run(ctx) }()
+	dialer := newSessionDialer()
+	dialer.set(client)
+
+	target, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		conn, acceptErr := target.Accept()
+		if acceptErr == nil {
+			accepted <- conn
+		}
+	}()
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	windowsAddr := probe.Addr().String()
+	_ = probe.Close()
+
+	mapping, err := dialer.ReverseForward(ctx, windowsAddr, target.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mapping.Close()
+	conn, err := net.Dial("tcp", windowsAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	select {
+	case targetConn := <-accepted:
+		defer targetConn.Close()
+		if _, err := targetConn.Write([]byte("committed")); err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("reverse mapping did not forward an accepted connection")
+	}
+	buf := make([]byte, len("committed"))
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		t.Fatal(err)
+	}
+	if string(buf) != "committed" {
+		t.Fatalf("got %q", buf)
+	}
+}
+
 func TestSessionRetryErrorIncludesClosedNetwork(t *testing.T) {
 	if !isSessionRetryError(net.ErrClosed) {
 		t.Fatal("net.ErrClosed should trigger session retry")
