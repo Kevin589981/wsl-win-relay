@@ -381,10 +381,10 @@ for Linux amd64 targets, including process-style `fork()` children:
 ```
 
 It coordinates direct TCP/UDP `bind()` and TCP `listen()` syscalls through the
-same control socket. Process-style `fork()` and `clone(SIGCHLD)` children are
-attached and inherit lease ownership with `ADOPT`/`RELEASE`. The kernel adapter
-is deliberately opt-in and currently rejects `vfork()`, `clone3()`, and
-`CLONE_THREAD` with `ENOTSUP`; thread-group descriptor inheritance and
+same control socket. Process-style `fork()`, `clone(SIGCHLD)`, and non-thread
+`clone3()` children are attached and inherit lease ownership with
+`ADOPT`/`RELEASE`. The kernel adapter is deliberately opt-in and currently
+rejects `vfork()` and `CLONE_THREAD` with `ENOTSUP`; thread-group descriptor inheritance and
 non-amd64 targets remain unsupported. Setuid/setgid targets are rejected in
 both launcher modes because ptrace cannot preserve their privilege semantics.
 Use the default interposer for dynamically linked applications.

@@ -437,16 +437,23 @@ static int handle_entry(struct user_regs_struct *regs) {
     if (debug_enabled()) {
         fprintf(stderr, "strict-supervisor: syscall %lu\n", syscall_number);
     }
-    if (syscall_number == SYS_vfork
-#ifdef SYS_clone3
-        || syscall_number == SYS_clone3
-#endif
-    ) {
+    if (syscall_number == SYS_vfork) {
         return stop_syscall(regs, ENOTSUP);
     }
     if (syscall_number == SYS_clone && ((unsigned long)regs->rdi & CLONE_THREAD) != 0) {
         return stop_syscall(regs, ENOTSUP);
     }
+#ifdef SYS_clone3
+    if (syscall_number == SYS_clone3) {
+        struct clone_args arguments;
+        memset(&arguments, 0, sizeof(arguments));
+        if (regs->rsi < sizeof(arguments.flags) ||
+            read_target_memory(regs->rdi, &arguments, regs->rsi < sizeof(arguments) ? regs->rsi : sizeof(arguments)) < 0 ||
+            (arguments.flags & CLONE_THREAD) != 0) {
+            return stop_syscall(regs, ENOTSUP);
+        }
+    }
+#endif
     if (syscall_number == SYS_socket) {
         pending_call.kind = PENDING_SOCKET;
         pending_call.family = (int)regs->rdi;

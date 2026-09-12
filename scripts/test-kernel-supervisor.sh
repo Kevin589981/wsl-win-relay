@@ -24,6 +24,8 @@ printf '%s\n' \
     '#include <string.h>' \
     '#include <sys/socket.h>' \
     '#include <errno.h>' \
+    '#include <linux/sched.h>' \
+    '#include <sys/syscall.h>' \
     '#include <sys/wait.h>' \
     '#include <unistd.h>' \
     'int main(int argc, char **argv) {' \
@@ -36,6 +38,16 @@ printf '%s\n' \
     '    if (child < 0) return errno == ENOTSUP ? 0 : 7;' \
     '    if (child == 0) { usleep(100000); close(fd); _exit(0); }' \
     '    close(fd); return waitpid(child, 0, 0) == child ? 0 : 6;' \
+    '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "clone3") == 0) {' \
+    '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0};' \
+    '    address.sin_family = AF_INET; address.sin_port = htons(47129); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
+    '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 2;' \
+    '    struct clone_args arguments = {0}; arguments.exit_signal = SIGCHLD;' \
+    '    long child = syscall(SYS_clone3, &arguments, sizeof(arguments));' \
+    '    if (child < 0) { int error = errno; close(fd); return error == ENOSYS || error == EPERM ? 77 : 7; }' \
+    '    if (child == 0) { usleep(100000); close(fd); _exit(0); }' \
+    '    close(fd); return waitpid((pid_t)child, 0, 0) == (pid_t)child ? 0 : 6;' \
     '  }' \
     '  int duplicate = argc > 1 && strcmp(argv[1], "dup") == 0;' \
     '  int udp = argc > 1 && strcmp(argv[1], "udp") == 0;' \
@@ -110,6 +122,21 @@ if WSL_WIN_RELAY_CONTROL="$tmp_dir/reject.sock" "$repo_dir/scripts/wsl-win-relay
 fi
 grep -q 'RESERVE .* tcp4 47125' "$tmp_dir/reject.log"
 ! grep -q '^COMMIT ' "$tmp_dir/reject.log"
+
+start_control "$tmp_dir/clone3.sock" "$tmp_dir/clone3.log"
+set +e
+WSL_WIN_RELAY_CONTROL="$tmp_dir/clone3.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" clone3
+clone3_status=$?
+set -e
+if [ "$clone3_status" -ne 0 ] && [ "$clone3_status" -ne 77 ]; then
+    echo "clone3 process target failed with status $clone3_status" >&2
+    exit 1
+fi
+if [ "$clone3_status" -eq 0 ]; then
+    grep -q 'RESERVE .* tcp4 47129' "$tmp_dir/clone3.log"
+    grep -q '^ADOPT ' "$tmp_dir/clone3.log"
+fi
+stop_control
 
 start_control "$tmp_dir/env.sock" "$tmp_dir/env.log"
 LD_PRELOAD=/definitely/not-loaded WSL_WIN_RELAY_CONTROL="$tmp_dir/env.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" env

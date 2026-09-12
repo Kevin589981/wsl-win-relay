@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted, fork support implemented; clone/thread-group follow-up
+Accepted, process-child support implemented; thread-group follow-up
 
 ## Context
 
@@ -18,7 +18,8 @@ the lease owner known to the control server.
 ## Decision
 
 Phase two introduces an explicit supervisor process table. The first increment
-implements process-style `fork()`/`clone(SIGCHLD)` children; the remaining
+implements process-style `fork()`/`clone(SIGCHLD)` and non-thread `clone3()`
+children; the remaining
 thread-group work follows the same model:
 
 - Every traced task has its own pid/tid, syscall-entry state, pending record,
@@ -26,8 +27,8 @@ thread-group work follows the same model:
 - `PTRACE_O_TRACEFORK` and `PTRACE_O_TRACECLONE` attach process-style children
   before they can execute another syscall. The event handler clones inherited
   fd state and issues `ADOPT child-pid lease` once per inherited lease.
-- `CLONE_THREAD`, `vfork()`, and `clone3()` remain fail-closed until their
-  distinct lifecycle semantics are implemented.
+- `CLONE_THREAD` and `vfork()` remain fail-closed until their distinct
+  shared-address-space lifecycle semantics are implemented.
 - Lease teardown will use owner-scoped `RELEASE pid lease`; a lease is closed
   by the control server only after its final owner disappears. `CLOSE` remains
   reserved for a lease with no child owner.

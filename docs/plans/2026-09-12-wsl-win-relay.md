@@ -82,7 +82,8 @@
       static child-process support.
 - [x] Static process-style `fork()`/`clone(SIGCHLD)` children are now traced,
       inherit fd state, and adopt/release Windows lease ownership; vfork,
-      clone3, and `CLONE_THREAD` remain fail-closed follow-up boundaries.
+      `CLONE_THREAD`, and unusual thread-group ownership remain fail-closed
+      follow-up boundaries; non-thread `clone3()` is traced when supported.
 - [x] The strict launcher now fails closed for directly executed static ELF
       and setuid/setgid targets instead of silently implying interposition;
       true kernel-level coverage remains a separate adapter boundary.
