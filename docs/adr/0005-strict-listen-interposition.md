@@ -39,6 +39,9 @@ Provide `libwsl_win_relay_listen.so` and a `wsl-win-relay-run` launcher. The int
    errors for a bounded two-second startup/recovery window by default; the
    `WSL_WIN_RELAY_CONTROL_RETRY_SECONDS` environment variable can extend it to
    sixty seconds. Definitive Windows bind errors are returned immediately.
+   `COMMIT` and `ADOPT` share this retry policy, while destructive cleanup
+   operations remain single-shot best effort so application shutdown cannot
+   hang on an unavailable control daemon.
 
 ## Consequences
 

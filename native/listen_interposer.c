@@ -61,6 +61,7 @@ static void atfork_prepare(void);
 static void atfork_parent(void);
 static void atfork_child(void);
 static int release_lease(pid_t pid, uint64_t lease);
+static int control_request(const char *request, char *response, size_t capacity);
 
 static int fcntl_command_has_argument(int command) {
     switch (command) {
@@ -125,6 +126,25 @@ static int control_error_retryable(int error) {
     default:
         return 0;
     }
+}
+
+static int control_request_retry(const char *request, char *response, size_t capacity, int attempts) {
+    if (attempts <= 0) {
+        attempts = 1;
+    }
+    for (int attempt = 0; attempt < attempts; attempt++) {
+        if (control_request(request, response, capacity) == 0) {
+            return 0;
+        }
+        if (!control_error_retryable(errno)) {
+            return -1;
+        }
+        if (attempt + 1 < attempts) {
+            struct timespec delay = {.tv_sec = 0, .tv_nsec = 100000000L};
+            (void)nanosleep(&delay, NULL);
+        }
+    }
+    return -1;
 }
 
 static void initialize(void) {
@@ -233,48 +253,45 @@ static int reserve_listener(const char *network, uint16_t port, const char *host
     char request[128];
     char response[256];
     snprintf(request, sizeof(request), "RESERVE %ld %s %u %s\n", (long)getpid(), network, (unsigned)port, host);
-    int attempts = control_retry_attempts();
-    for (int attempt = 0; attempt < attempts; attempt++) {
-        if (control_request(request, response, sizeof(response)) == 0) {
-            unsigned long long value;
-            if (sscanf(response, "OK %llu", &value) != 1) {
-                errno = EPROTO;
-                return -1;
-            }
-            *lease = (uint64_t)value;
-            return 0;
-        }
-        if (!control_error_retryable(errno)) {
-            return -1;
-        }
-        if (attempt + 1 < attempts) {
-            struct timespec delay = {.tv_sec = 0, .tv_nsec = 100000000L};
-            (void)nanosleep(&delay, NULL);
-        }
+    if (control_request_retry(request, response, sizeof(response), control_retry_attempts()) < 0) {
+        return -1;
     }
-    return -1;
+    unsigned long long value;
+    if (sscanf(response, "OK %llu", &value) != 1) {
+        errno = EPROTO;
+        return -1;
+    }
+    *lease = (uint64_t)value;
+    return 0;
 }
 
 static int lease_operation(const char *operation, uint64_t lease) {
     char request[128];
     char response[256];
     snprintf(request, sizeof(request), "%s %llu\n", operation, (unsigned long long)lease);
-    return control_request(request, response, sizeof(response));
+    int attempts = strcmp(operation, "COMMIT") == 0 ? control_retry_attempts() : 1;
+    return control_request_retry(request, response, sizeof(response), attempts);
 }
 
 static int adopt_lease(pid_t pid, uint64_t lease) {
     char request[128];
     char response[256];
     snprintf(request, sizeof(request), "ADOPT %ld %llu\n", (long)pid, (unsigned long long)lease);
-    return control_request(request, response, sizeof(response));
+    return control_request_retry(request, response, sizeof(response), control_retry_attempts());
 }
 
 static int release_lease(pid_t pid, uint64_t lease) {
     char request[128];
     char response[256];
     snprintf(request, sizeof(request), "RELEASE %ld %llu\n", (long)pid, (unsigned long long)lease);
-    return control_request(request, response, sizeof(response));
+    return control_request_retry(request, response, sizeof(response), 1);
 }
+
+/*
+ * The daemon treats duplicate COMMIT and ADOPT operations as idempotent for a
+ * live lease. Destructive RELEASE/CLOSE operations stay single-shot so an
+ * application cannot hang during shutdown while the control service is gone.
+ */
 
 static void atfork_prepare(void) {
     pthread_mutex_lock(&tracked_mu);

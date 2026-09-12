@@ -10,6 +10,7 @@ reject_port = sys.argv[3] if len(sys.argv) > 3 else None
 delay_port = sys.argv[4] if len(sys.argv) > 4 else None
 delay_seconds = float(sys.argv[5]) if len(sys.argv) > 5 else 0
 delayed = False
+delay_commit_done = False
 path.unlink(missing_ok=True)
 server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 server.bind(str(path))
@@ -42,6 +43,9 @@ with server:
                     except OSError:
                         pass
             else:
+                if text.startswith("COMMIT ") and delayed and not delay_commit_done:
+                    delay_commit_done = True
+                    time.sleep(delay_seconds)
                 try:
                     connection.sendall(b"OK\n")
                 except OSError:
