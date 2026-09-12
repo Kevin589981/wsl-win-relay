@@ -35,12 +35,14 @@ printf '%s\n' \
     '  }' \
     '  int duplicate = argc > 1 && strcmp(argv[1], "dup") == 0;' \
     '  int udp = argc > 1 && strcmp(argv[1], "udp") == 0;' \
-    '  int port = argc > 2 ? atoi(argv[2]) : (udp ? 47126 : 47125);' \
-    '  int fd = socket(AF_INET, udp ? SOCK_DGRAM : SOCK_STREAM, 0);' \
-    '  struct sockaddr_in address = {0};' \
-    '  address.sin_family = AF_INET; address.sin_port = htons((unsigned short)port);' \
-    '  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
-    '  if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0) return 2;' \
+    '  int ipv6 = argc > 1 && strcmp(argv[1], "tcp6") == 0;' \
+    '  int port = argc > 2 ? atoi(argv[2]) : (udp ? 47126 : (ipv6 ? 47127 : 47125));' \
+    '  int family = ipv6 ? AF_INET6 : AF_INET;' \
+    '  int fd = socket(family, udp ? SOCK_DGRAM : SOCK_STREAM, 0);' \
+    '  struct sockaddr_storage address = {0};' \
+    '  if (ipv6) { struct sockaddr_in6 *v6 = (struct sockaddr_in6 *)&address; v6->sin6_family = AF_INET6; v6->sin6_port = htons((unsigned short)port); v6->sin6_addr = in6addr_loopback; }' \
+    '  else { struct sockaddr_in *v4 = (struct sockaddr_in *)&address; v4->sin_family = AF_INET; v4->sin_port = htons((unsigned short)port); v4->sin_addr.s_addr = htonl(INADDR_LOOPBACK); }' \
+    '  if (fd < 0 || bind(fd, (struct sockaddr *)&address, ipv6 ? sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in)) < 0) return 2;' \
     '  if (!udp && listen(fd, 4) < 0) return 3;' \
     '  if (duplicate) { int alias = dup(fd); if (alias < 0) return 4; close(fd); usleep(100000); close(alias); return 0; }' \
     '  usleep(100000); close(fd); return 0;' \
@@ -83,6 +85,13 @@ start_control "$tmp_dir/udp.sock" "$tmp_dir/udp.log"
 WSL_WIN_RELAY_CONTROL="$tmp_dir/udp.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" udp
 grep -q 'RESERVE .* udp4 47126' "$tmp_dir/udp.log"
 grep -q '^CLOSE ' "$tmp_dir/udp.log"
+stop_control
+
+start_control "$tmp_dir/tcp6.sock" "$tmp_dir/tcp6.log"
+WSL_WIN_RELAY_CONTROL="$tmp_dir/tcp6.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" tcp6
+grep -q 'RESERVE .* tcp6 47127' "$tmp_dir/tcp6.log"
+grep -q '^COMMIT ' "$tmp_dir/tcp6.log"
+grep -q '^CLOSE ' "$tmp_dir/tcp6.log"
 stop_control
 
 start_control "$tmp_dir/dup.sock" "$tmp_dir/dup.log"
