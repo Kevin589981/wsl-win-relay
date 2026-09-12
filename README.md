@@ -441,8 +441,10 @@ UDP `bind()`, `dup()`, `dup2()`, `dup3()`, `fcntl(F_DUPFD*)`, `close_range()`,
 inheritance, process-style `clone()` without `CLONE_FILES`, and parent-side
 `vfork()` adoption. The dynamic interposer rejects process-style
 `CLONE_FILES` in the raw/libc `clone()` paths because its tracking table is
-process-local; `clone3()` shared-fd semantics are outside the dynamic contract.
-Static or shared-fd process creation should use the opt-in kernel adapter.
+process-local. It applies the same check to `clone3()` by safely reading the
+caller's flags; malformed or unreadable clone arguments fail closed with
+`ENOTSUP`. Static or shared-fd process creation should use the opt-in kernel
+adapter.
 Static binaries should use the
 opt-in `--kernel` adapter; setuid binaries remain rejected. Child-side
 networking before `vfork()` `exec`/`_exit` is supported only for direct

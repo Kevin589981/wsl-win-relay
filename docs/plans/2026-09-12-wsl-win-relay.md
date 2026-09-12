@@ -99,6 +99,9 @@
       path and are covered by a static self-exec/rebind smoke test.
 - [x] Process-style `clone(CLONE_FILES)` children share the supervisor group
       state and descriptor lease, matching Linux shared-fd semantics.
+- [x] Dynamic raw `clone()` and `clone3()` paths fail closed for non-thread
+      `CLONE_FILES`; `clone3()` flags are read with `process_vm_readv` so an
+      invalid caller pointer cannot crash the interposer.
 - [x] ptrace register access is isolated for amd64 and aarch64 in
       `native/strict_supervisor_regs.h`; unsupported architectures fail at
       compile time until a dedicated adapter is added.

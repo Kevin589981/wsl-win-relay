@@ -232,6 +232,19 @@ int main(void) {
             errno != ENOTSUP) {
             return 26;
         }
+#ifdef SYS_clone3
+        struct clone_args shared_clone3 = {0};
+        shared_clone3.flags = CLONE_FILES;
+        shared_clone3.exit_signal = SIGCHLD;
+        errno = 0;
+        if (syscall(SYS_clone3, &shared_clone3, sizeof(shared_clone3)) != -1 || errno != ENOTSUP) {
+            return 27;
+        }
+        errno = 0;
+        if (syscall(SYS_clone3, (void *)1, sizeof(shared_clone3)) != -1 || errno != ENOTSUP) {
+            return 28;
+        }
+#endif
         return 0;
     }
     usleep(100000);

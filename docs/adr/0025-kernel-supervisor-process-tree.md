@@ -63,8 +63,10 @@ path for dynamically linked applications because it already implements the
 lower-overhead process lifecycle hooks. Its process-local tracking table cannot
 represent shared descriptor tables across process boundaries, so it rejects
 process-style `CLONE_FILES` in the raw/libc `clone()` paths. `clone3()` shared
-fd semantics remain outside the dynamic contract; applications needing those
-forms use this kernel adapter instead.
+fd creation is checked with a bounded `process_vm_readv` flags read and is
+rejected when the dynamic control socket is enabled; unreadable flags fail
+closed as `ENOTSUP`. Applications needing shared-fd process creation use this
+kernel adapter instead.
 
 ## Consequences
 

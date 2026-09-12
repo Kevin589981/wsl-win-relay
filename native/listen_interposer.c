@@ -18,6 +18,7 @@
 #include <sys/syscall.h>
 #include <sys/un.h>
 #include <sys/types.h>
+#include <sys/uio.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -77,6 +78,27 @@ static int reject_shared_files_clone(unsigned long flags) {
         return 1;
     }
     return 0;
+}
+
+/*
+ * clone3() receives a caller-owned structure, so inspect only its flags
+ * through process_vm_readv instead of dereferencing an untrusted pointer.
+ * This keeps the dynamic path fail-closed for shared descriptor tables while
+ * allowing ordinary clone3/vfork implementations to proceed.
+ */
+static int reject_shared_files_clone3(const void *arguments, size_t size) {
+    if (!relay_control_enabled() || arguments == NULL || size < sizeof(uint64_t)) {
+        return 0;
+    }
+    uint64_t flags = 0;
+    struct iovec local = {.iov_base = &flags, .iov_len = sizeof(flags)};
+    struct iovec remote = {.iov_base = (void *)arguments, .iov_len = sizeof(flags)};
+    ssize_t copied = process_vm_readv(getpid(), &local, 1, &remote, 1, 0);
+    if (copied != (ssize_t)sizeof(flags)) {
+        errno = ENOTSUP;
+        return 1;
+    }
+    return reject_shared_files_clone((unsigned long)flags);
 }
 
 static int fcntl_command_has_argument(int command) {
@@ -689,6 +711,9 @@ long syscall(long number, ...) {
             struct clone_args *clone_arguments = va_arg(arguments, struct clone_args *);
             size_t clone_arguments_size = va_arg(arguments, size_t);
             va_end(arguments);
+            if (reject_shared_files_clone3(clone_arguments, clone_arguments_size)) {
+                return -1;
+            }
             syscall_interposer_depth++;
             long result = real_syscall(SYS_clone3, clone_arguments, clone_arguments_size);
             syscall_interposer_depth--;
