@@ -309,15 +309,6 @@ func runWorker(opts options, logger *log.Logger) error {
 			}
 		}
 	}()
-	if hostCmd != nil {
-		go func() {
-			select {
-			case <-hostDone:
-				stop()
-			case <-service.Done():
-			}
-		}()
-	}
 	go monitorSocketHost(service, hostEndpoint, opts.tokenHex, roleSocketHost, stop)
 	listener, err := localipc.Listen(opts.endpoint)
 	if err != nil {
