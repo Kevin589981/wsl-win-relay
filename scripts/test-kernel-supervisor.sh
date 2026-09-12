@@ -27,10 +27,12 @@ printf '%s\n' \
     '#include <fcntl.h>' \
     '#include <linux/sched.h>' \
     '#include <pthread.h>' \
+    '#include <signal.h>' \
     '#include <sys/syscall.h>' \
     '#include <sys/wait.h>' \
     '#include <unistd.h>' \
     'static void *thread_close(void *argument) { usleep(1000000); close(*(int *)argument); return NULL; }' \
+    'static void *thread_exit_group(void *argument) { (void)argument; usleep(100000); syscall(SYS_exit_group, 0); return NULL; }' \
     'int main(int argc, char **argv) {' \
     '  if (argc > 1 && strcmp(argv[1], "env") == 0) return getenv("LD_PRELOAD") == NULL ? 0 : 8;' \
     '  if (argc > 1 && strcmp(argv[1], "fork") == 0) {' \
@@ -76,6 +78,19 @@ printf '%s\n' \
     '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 2;' \
     '    if (pthread_create(&thread, NULL, thread_close, &fd) != 0) return 4;' \
     '    syscall(SYS_exit, 0); return 6;' \
+    '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "signal") == 0) {' \
+    '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0};' \
+    '    address.sin_family = AF_INET; address.sin_port = htons(47141); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
+    '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 2;' \
+    '    kill(getpid(), SIGTERM); pause(); return 6;' \
+    '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "thread-exit-group") == 0) {' \
+    '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0}; pthread_t thread;' \
+    '    address.sin_family = AF_INET; address.sin_port = htons(47142); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
+    '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 2;' \
+    '    if (pthread_create(&thread, NULL, thread_exit_group, NULL) != 0) return 4;' \
+    '    return pthread_join(thread, NULL) == 0 ? 0 : 5;' \
     '  }' \
     '  if (argc > 1 && strcmp(argv[1], "fcntl-dup") == 0) {' \
     '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0};' \
@@ -298,6 +313,25 @@ grep -q 'RESERVE .* tcp4 47132' "$tmp_dir/leader-sys-exit.log"
 grep -q '^ADOPT ' "$tmp_dir/leader-sys-exit.log"
 test "$(grep -Ec '^ADOPT ' "$tmp_dir/leader-sys-exit.log")" -eq 1
 test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/leader-sys-exit.log")" -eq 2
+stop_control
+
+start_control "$tmp_dir/signal.sock" "$tmp_dir/signal.log"
+set +e
+WSL_WIN_RELAY_CONTROL="$tmp_dir/signal.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" signal
+signal_status=$?
+set -e
+if [ "$signal_status" -ne 143 ]; then
+    echo "signal target failed with status $signal_status" >&2
+    exit 1
+fi
+grep -q 'RESERVE .* tcp4 47141' "$tmp_dir/signal.log"
+test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/signal.log")" -eq 1
+stop_control
+
+start_control "$tmp_dir/thread-exit-group.sock" "$tmp_dir/thread-exit-group.log"
+WSL_WIN_RELAY_CONTROL="$tmp_dir/thread-exit-group.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" thread-exit-group
+grep -q 'RESERVE .* tcp4 47142' "$tmp_dir/thread-exit-group.log"
+test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/thread-exit-group.log")" -eq 1
 stop_control
 
 start_control "$tmp_dir/env.sock" "$tmp_dir/env.log"

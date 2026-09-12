@@ -92,6 +92,9 @@
       descriptor-table unsharing remains explicitly rejected in strict mode.
 - [x] Leader-exit ownership migration excludes already-exiting thread tasks,
       avoiding duplicate owner transfers during `PTRACE_EVENT_EXIT` ordering.
+- [x] Signal-terminated roots and thread-triggered `exit_group` teardown are
+      covered by static supervisor smoke cases; lease cleanup remains
+      single-shot when the group has no ordinary return path.
 - [x] `FD_CLOEXEC`, `dup3(O_CLOEXEC)`, and `close_range(..., CLOEXEC)` state is
       retired on `PTRACE_EVENT_EXEC`, so exec does not leave stale Windows
       listener reservations behind.
