@@ -86,7 +86,10 @@ static int reject_shared_files_clone(unsigned long flags) {
  * This keeps the dynamic path fail-closed for shared descriptor tables while
  * allowing ordinary clone3/vfork implementations to proceed.
  */
-static int reject_shared_files_clone3(const void *arguments, size_t size) {
+static int reject_shared_files_clone3(const void *arguments, size_t size, uint64_t *flags_out) {
+    if (flags_out != NULL) {
+        *flags_out = 0;
+    }
     if (!relay_control_enabled() || arguments == NULL || size < sizeof(uint64_t)) {
         return 0;
     }
@@ -97,6 +100,9 @@ static int reject_shared_files_clone3(const void *arguments, size_t size) {
     if (copied != (ssize_t)sizeof(flags)) {
         errno = ENOTSUP;
         return 1;
+    }
+    if (flags_out != NULL) {
+        *flags_out = flags;
     }
     return reject_shared_files_clone((unsigned long)flags);
 }
@@ -711,15 +717,15 @@ long syscall(long number, ...) {
             struct clone_args *clone_arguments = va_arg(arguments, struct clone_args *);
             size_t clone_arguments_size = va_arg(arguments, size_t);
             va_end(arguments);
-            if (reject_shared_files_clone3(clone_arguments, clone_arguments_size)) {
+            uint64_t clone_flags = 0;
+            if (reject_shared_files_clone3(clone_arguments, clone_arguments_size, &clone_flags)) {
                 return -1;
             }
             syscall_interposer_depth++;
             long result = real_syscall(SYS_clone3, clone_arguments, clone_arguments_size);
             syscall_interposer_depth--;
             if (result > 0) {
-                uint64_t flags = clone_arguments == NULL ? 0 : clone_arguments->flags;
-                if ((flags & CLONE_THREAD) == 0) {
+                if ((clone_flags & CLONE_THREAD) == 0) {
                     adopt_tracked_for_pid((pid_t)result);
                 }
             }
