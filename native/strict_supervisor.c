@@ -474,16 +474,28 @@ static void terminate_tracee(void) {
             (void)kill(task->pid, SIGKILL);
         }
     }
-    for (;;) {
+    /* SIGKILL is not blockable, but a ptrace stop can delay delivery until
+     * the next wait transition. Drain available reports without allowing a
+     * broken tracee state to wedge the supervisor forever. */
+    for (int attempt = 0; attempt < 500; attempt++) {
         int status;
-        pid_t pid = waitpid(-1, &status, __WALL);
-        if (pid > 0) {
-            continue;
+        pid_t pid;
+        do {
+            pid = waitpid(-1, &status, __WALL | WNOHANG);
+        } while (pid < 0 && errno == EINTR);
+        if (pid < 0 && errno == ECHILD) {
+            break;
         }
-        if (pid < 0 && errno == EINTR) {
-            continue;
+        if (pid == 0) {
+            struct timespec delay = {.tv_sec = 0, .tv_nsec = 10000000L};
+            nanosleep(&delay, NULL);
         }
-        break;
+    }
+    if (debug_enabled()) {
+        int status;
+        if (waitpid(-1, &status, __WALL | WNOHANG) == 0) {
+            fprintf(stderr, "strict-supervisor: timed out waiting for tracee teardown\n");
+        }
     }
 }
 
