@@ -68,6 +68,8 @@
 - [x] Opt-in broker-mode hot reconnect preserves existing TCP streams across
       connector/stdio replacement; a real delayed HTTP stream test covers the
       connector process boundary.
+- [x] Broker-mode can be selected from the persistent JSON configuration while
+      attach credentials remain environment-only.
 - [ ] Broker-process crash recovery and making broker-mode the service default;
       a broker crash necessarily destroys its kernel socket ownership.
 

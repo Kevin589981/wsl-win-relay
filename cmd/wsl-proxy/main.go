@@ -152,7 +152,7 @@ func parseOptions(args []string) (options, error) {
 		return options{}, err
 	}
 	opts := options{
-		socksListen: fileConfig.SOCKS5Listen, httpListen: fileConfig.HTTPConnectListen,
+		socksListen: fileConfig.SOCKS5Listen, httpListen: fileConfig.HTTPConnectListen, brokerMode: fileConfig.BrokerMode,
 		relayExe: fileConfig.RelayExecutable, upstreamProxy: fileConfig.UpstreamProxy, autoForward: fileConfig.AutoForward.Enabled,
 		autoForwardHost: fileConfig.AutoForward.WindowsHost, autoForwardHost6: fileConfig.AutoForward.WindowsHost6, autoForwardInterval: interval,
 		controlSocket: fileConfig.ControlSocket, strictListenHost: fileConfig.StrictListenHost, strictListenHost6: fileConfig.StrictListenHost6,
@@ -178,7 +178,7 @@ func parseOptions(args []string) (options, error) {
 	set.StringVar(&opts.socksListen, "listen", opts.socksListen, "SOCKS5 listen address")
 	set.StringVar(&opts.httpListen, "http-listen", opts.httpListen, "optional HTTP CONNECT proxy listen address")
 	set.StringVar(&opts.relayExe, "relay-exe", opts.relayExe, "Windows relay executable")
-	set.BoolVar(&opts.brokerMode, "broker-mode", false, "reuse one relay client across reconnecting broker connector processes")
+	set.BoolVar(&opts.brokerMode, "broker-mode", opts.brokerMode, "reuse one relay client across reconnecting broker connector processes")
 	set.StringVar(&opts.upstreamProxy, "upstream-proxy", opts.upstreamProxy, "optional Windows-side HTTP CONNECT or SOCKS5 proxy URL")
 	set.Var(&opts.reverse, "reverse", "reverse mapping WINDOWS_ADDR=WSL_TARGET (repeatable)")
 	set.Var(&opts.reverseUDP, "reverse-udp", "reverse UDP mapping WINDOWS_ADDR=WSL_TARGET (repeatable)")

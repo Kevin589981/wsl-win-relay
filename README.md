@@ -56,6 +56,11 @@ preserves in-flight TCP streams. `scripts/test-broker-reconnect.sh` verifies
 this with a delayed HTTP response. A crash of the broker process itself still
 loses kernel socket ownership and is a separate recovery problem.
 
+Set `"broker_mode": true` in the JSON configuration to persist this mode for
+the systemd user service. Keep `WSL_WIN_RELAY_ATTACH_TOKEN` and
+`WSL_WIN_RELAY_BROKER_ENDPOINT` in the service environment; the token is
+intentionally not accepted from the configuration file.
+
 ## Security model
 
 - The WSL listener binds to `127.0.0.1` by default.
