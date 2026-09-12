@@ -40,7 +40,11 @@ if [ ! -e "$env_file" ]; then
         printf 'WSL_WIN_RELAY_BROKER_EXE=%s\n' "$(quote_env_value "$WSL_WIN_RELAY_BROKER_EXE")"
         printf 'WSL_WIN_RELAY_BROKER_ENDPOINT=%s\n' "$(quote_env_value "$endpoint")"
         printf 'WSL_WIN_RELAY_ATTACH_TOKEN=%s\n' "$(quote_env_value "$token")"
+        printf 'WSL_WIN_RELAY_BROKER_MODE=1\n'
     } >"$env_file"
+fi
+if ! grep -q '^WSL_WIN_RELAY_BROKER_MODE=' "$env_file"; then
+    printf '%s\n' 'WSL_WIN_RELAY_BROKER_MODE=1' >>"$env_file"
 fi
 chmod 600 "$env_file"
 
@@ -48,4 +52,5 @@ systemctl --user daemon-reload
 systemctl --user enable wsl-win-relay-broker.service
 systemctl --user restart wsl-win-relay-broker.service
 echo "enabled and restarted wsl-win-relay-broker.service"
-echo "set broker_mode=true in $config_dir/config.json and restart wsl-win-relay.service"
+echo "broker mode is now the default for the proxy service when this env file is loaded"
+echo "restart wsl-win-relay.service to attach it to the broker"

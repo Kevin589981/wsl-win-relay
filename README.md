@@ -39,9 +39,10 @@ it provides a per-instance token, generation-safe ownership, a bounded versioned
 attach handshake, and deterministic registry-summary/resume-ack messages. The
 transport-independent broker core in `internal/broker` now accepts those
 sessions and tracks stable entry IDs. The Windows broker/connector that owns
-sockets across connector restarts is not yet enabled by default. Until that
-layer is complete, a broken stdio session still ends in-flight connections
-while new requests and mappings recover normally.
+sockets across connector restarts is enabled by the broker user-service
+installer; manually launched proxies remain stdio by default. A broken stdio
+session still ends in-flight connections while new requests and mappings
+recover normally.
 
 An opt-in broker transport is available for integration testing. Build with
 `scripts/build-wsl.sh`, start `wsl-win-broker.exe` on Windows with a private
@@ -66,7 +67,10 @@ that a broker process restart is detected and both automatic and explicit
 Windows mappings are reconstructed by the still-running WSL proxy.
 
 Set `"broker_mode": true` in the JSON configuration to persist this mode for
-the systemd user service. Keep `WSL_WIN_RELAY_ATTACH_TOKEN` and
+the systemd user service. When `install-broker-user-service.sh` creates the
+private broker environment it also sets `WSL_WIN_RELAY_BROKER_MODE=1`, which
+makes broker mode the proxy service default once that environment is loaded.
+Keep `WSL_WIN_RELAY_ATTACH_TOKEN` and
 `WSL_WIN_RELAY_BROKER_ENDPOINT` in the service environment; the token is
 intentionally not accepted from the configuration file.
 
@@ -75,7 +79,8 @@ mounted Windows `wsl-win-broker.exe` path and run
 `./scripts/install-broker-user-service.sh`. It creates a mode-0600
 `broker.env`, generates the attach token once, and enables
 `wsl-win-relay-broker.service` with a bounded restart policy. The normal proxy
-service wrapper loads the same env file for connector children. A broker crash
+service wrapper loads the same env file for connector children and selects
+broker mode when `WSL_WIN_RELAY_BROKER_MODE=1`. A broker crash
 still loses already-established kernel sockets, while the running proxy
 reconstructs explicit and automatic mappings after the broker restarts.
 

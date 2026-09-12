@@ -84,9 +84,11 @@
 - [x] Broker instance identity detects a broker process restart and rebuilds
       stale peer state plus explicit/automatic mappings without restarting the
       WSL proxy; a real broker-restart integration test covers both directions.
-- [ ] Make broker-mode the service default and preserve already-established
-      sockets across a broker process crash; the latter requires moving kernel
-      socket ownership outside the broker process.
+- [x] Broker-mode becomes the proxy service default when the broker installer
+      provisions `WSL_WIN_RELAY_BROKER_MODE=1` in the private environment; JSON
+      and command-line configuration remain available for explicit control.
+- [ ] Preserve already-established sockets across a broker process crash; the
+      latter requires moving kernel socket ownership outside the broker process.
 
 The hot-reconnect item is intentionally staged behind [ADR-0015](../adr/0015-persistent-windows-ownership-and-attach.md): it requires moving socket ownership into a persistent Windows broker before a connector can safely resume protocol state.
 

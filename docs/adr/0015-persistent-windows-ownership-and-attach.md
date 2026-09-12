@@ -10,8 +10,9 @@ reverse-UDP flows across connector replacement. Automatic polling mappings are
 rebound by the long-lived WSL watcher after a connector replacement. A broker
 instance ID now lets the WSL proxy detect a broker process restart and rebuild
 stale peer state plus mappings without restarting the proxy. Established
-sockets still end when the broker process crashes, and broker mode remains
-opt-in pending operational rollout.
+sockets still end when the broker process crashes. The broker installer now
+selects broker mode as the proxy service default through a private environment
+flag, while JSON and command-line settings remain explicit overrides.
 
 ## Context
 
@@ -109,5 +110,6 @@ alive and makes the connector retry with bounded backoff.
 5. Make broker mode opt-in, run real HNS-failure and connector-restart tests.
 6. Add a bounded broker supervisor and explicit service startup contract before
    making broker mode the long-running-service default. The optional systemd
-   broker unit now supplies the supervisor, and instance-loss detection rebuilds
-   mappings after restart; established broker-owned sockets remain unrecoverable.
+   broker unit now supplies the supervisor and private default flag, and
+   instance-loss detection rebuilds mappings after restart; established
+   broker-owned sockets remain unrecoverable.
