@@ -178,6 +178,9 @@
       reuse, while transient probe failures leave externally-owned roles alone.
 - [x] Windows broker interop smoke can route through a Windows-side upstream
       proxy without requiring WSL to reach that proxy endpoint.
+- [x] Broker installation validates the private token file as a regular,
+      protected hexadecimal credential and rejects environment/token mismatches
+      before service restart.
 - [x] Socket-host bridge crash recovery preserves already-established streams
       because the socket owner, rather than the bridge, owns the kernel sockets.
 - [x] Socket-owner crash recovery rebuilds the owner, outer bridges, and new

@@ -26,6 +26,8 @@ milestone is usable and tested:
 - Per-stream 256 KiB credit windows that isolate slow TCP consumers.
 - Startup capability negotiation before any proxy or mapped port is advertised.
 - Idempotent systemd user-service installation with private configuration permissions and restart-on-relay-failure.
+- Broker installation validates the protected token file and rejects missing,
+  malformed, or environment-mismatched credentials before restarting services.
 - Control-socket startup is exclusive: an active prior instance is preserved and
   rejected, while an unreferenced stale socket is cleaned up safely.
 - Verified in the target failure mode: WSL could not reach the configured Windows proxy port, while this relay still reached the public Internet and cloned a GitHub repository.
