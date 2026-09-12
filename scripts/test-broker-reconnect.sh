@@ -74,11 +74,14 @@ WSL_WIN_RELAY_BROKER_ENDPOINT="$tmp_dir/broker.sock" \
     "$tmp_dir/win-broker" -endpoint "$tmp_dir/broker.sock" -token-hex "$token" \
     >"$tmp_dir/broker.log" 2>&1 &
 broker_pid=$!
-for _ in $(seq 1 100); do
+for _ in $(seq 1 300); do
     [ -S "$tmp_dir/broker.sock" ] && break
     sleep 0.1
 done
-[ -S "$tmp_dir/broker.sock" ]
+if [ ! -S "$tmp_dir/broker.sock" ]; then
+    cat "$tmp_dir/broker.log"
+    exit 1
+fi
 
 WSL_WIN_RELAY_ATTACH_TOKEN=$token \
 WSL_WIN_RELAY_BROKER_ENDPOINT="$tmp_dir/broker.sock" \
@@ -93,16 +96,19 @@ curl --noproxy '' --silent --show-error --fail \
     --socks5-hostname 127.0.0.1:18083 \
     http://127.0.0.1:18082/ >"$tmp_dir/curl.out" 2>"$tmp_dir/curl.err" &
 curl_pid=$!
-for _ in $(seq 1 100); do
+for _ in $(seq 1 300); do
     grep -q request-started "$tmp_dir/http.log" && break
     sleep 0.1
 done
-grep -q request-started "$tmp_dir/http.log"
+if ! grep -q request-started "$tmp_dir/http.log"; then
+    cat "$tmp_dir/broker.log" "$tmp_dir/proxy.log" "$tmp_dir/curl.err" "$tmp_dir/http.log"
+    exit 1
+fi
 
 # Confirm the broker-owned Windows listener exists before replacing the
 # connector. The probe sends no HTTP bytes, so it does not consume the
 # delayed-response request used by the in-flight stream assertion.
-for _ in $(seq 1 100); do
+for _ in $(seq 1 300); do
     if python3 - <<'PY'
 import socket
 
@@ -120,7 +126,7 @@ PY
     fi
     sleep 0.1
 done
-python3 - <<'PY'
+if ! python3 - <<'PY'
 import socket
 
 sock = socket.socket()
@@ -128,8 +134,17 @@ sock.settimeout(1)
 sock.connect(("127.0.0.1", 18084))
 sock.close()
 PY
+then
+    cat "$tmp_dir/broker.log" "$tmp_dir/proxy.log"
+    exit 1
+fi
 
-connector_pid=$(ps -o pid= --ppid "$proxy_pid" | awk 'NF {print $1; exit}')
+connector_pid=
+for _ in $(seq 1 100); do
+    connector_pid=$(ps -o pid= --ppid "$proxy_pid" | awk 'NF {print $1; exit}')
+    [ -n "$connector_pid" ] && break
+    sleep 0.1
+done
 [ -n "$connector_pid" ]
 kill "$connector_pid"
 
