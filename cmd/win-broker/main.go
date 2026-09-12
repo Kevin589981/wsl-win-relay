@@ -19,6 +19,7 @@ type options struct {
 	tokenHex      string
 	upstreamProxy string
 	worker        bool
+	socketHost    bool
 }
 
 func main() {
@@ -27,6 +28,13 @@ func main() {
 	if err != nil {
 		logger.Printf("configuration: %v", err)
 		os.Exit(2)
+	}
+	if opts.socketHost {
+		if err := runSocketHost(opts, logger); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Printf("stopped: %v", err)
+			os.Exit(1)
+		}
+		return
 	}
 	if opts.worker {
 		if err := runWorker(opts, logger); err != nil && !errors.Is(err, context.Canceled) {
@@ -49,6 +57,7 @@ func parseOptions(args []string) (options, error) {
 	set.StringVar(&opts.tokenHex, "token-hex", opts.tokenHex, "attach token in hexadecimal (prefer WSL_WIN_RELAY_ATTACH_TOKEN)")
 	set.StringVar(&opts.upstreamProxy, "upstream-proxy", opts.upstreamProxy, "optional HTTP CONNECT or SOCKS5 proxy URL")
 	set.BoolVar(&opts.worker, "worker", false, "internal socket-owning worker mode")
+	set.BoolVar(&opts.socketHost, "socket-host", false, "internal durable socket-host mode")
 	if err := set.Parse(args); err != nil {
 		return options{}, err
 	}

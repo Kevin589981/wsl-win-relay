@@ -57,10 +57,10 @@ preserves in-flight TCP streams. `scripts/test-broker-reconnect.sh` verifies
 this with a delayed HTTP response and a broker-owned reverse listener that
 accepts a new stream after replacement. The same test covers a reverse-UDP
 echo flow after replacement. The broker executable now uses a replaceable
-frontend and a socket-owning worker: a frontend crash leaves worker-owned
-sockets and established streams alive, while a worker crash still ends them.
-When the worker itself restarts, the WSL proxy detects its new instance and
-rebuilds explicit and automatic mappings after it returns.
+frontend, a bridge worker, and a durable socket host. Frontend or bridge-worker
+crashes leave socket-host-owned sockets and established streams alive; a
+socket-host crash still ends them. When a bridge worker restarts, it reuses the
+same socket host and the WSL proxy rebuilds any registrations that need it.
 
 `scripts/test-broker-auto-rebind.sh` separately verifies that a procfs-discovered
 WSL listener remains reachable through its automatically created Windows port
@@ -81,11 +81,13 @@ mounted Windows `wsl-win-broker.exe` path and run
 `./scripts/install-broker-user-service.sh`. It creates a mode-0600
 `broker.env`, generates the attach token once, and enables
 `wsl-win-relay-broker.service` with a bounded restart policy. The broker
-executable keeps socket ownership in a child worker, so a frontend crash does
-not close established kernel sockets; a worker crash still does. The normal
+executable keeps socket ownership in a separate child socket host, so frontend
+and bridge-worker crashes do not close established kernel sockets; a socket-host
+crash still does. The normal
 proxy service wrapper loads the same env file for connector children and
-selects broker mode when `WSL_WIN_RELAY_BROKER_MODE=1`. After a worker restart,
-the running proxy reconstructs explicit and automatic mappings.
+selects broker mode when `WSL_WIN_RELAY_BROKER_MODE=1`. After a bridge-worker
+restart, the running proxy reconnects through the same socket host and
+reconstructs explicit and automatic mappings when needed.
 The broker unit uses `KillMode=process` so systemd frontend restarts do not
 terminate the worker; a normal stop still shuts it down through the private
 control endpoint.
@@ -94,7 +96,7 @@ control endpoint.
 
 - The WSL listener binds to `127.0.0.1` by default.
 - The stdio relay reads commands only from its parent process pipes. Broker
-  frontend, worker, and control endpoints use same-user local IPC with no LAN
+  frontend, bridge-worker, socket-host, and control endpoints use same-user local IPC with no LAN
   listener.
 - The WSL-facing SOCKS5 and HTTP listeners have no client authentication; do
   not bind them to a LAN address. Upstream proxy credentials, when configured,
@@ -402,9 +404,9 @@ restarts the user service so the new configuration is active immediately.
 
 The service restarts the proxy after a Windows relay crash or broken stdio
 transport; startup handshake and reverse registrations are recreated on each
-restart. With `broker_mode` enabled, connector or broker-frontend restarts
-preserve worker-owned TCP/UDP sockets; a worker process crash still loses those
-sockets. The strict control socket remains
+restart. With `broker_mode` enabled, connector, broker-frontend, or bridge-worker
+restarts preserve socket-host-owned TCP/UDP sockets. A socket-host process
+crash still loses those sockets. The strict control socket remains
 available across relay sessions,
 and live leases are rebound and recommitted when the replacement child is
 ready. The proxy also retries a relay-only EOF on its own

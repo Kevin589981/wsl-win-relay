@@ -238,6 +238,128 @@ func bridgeConnections(a, b net.Conn) {
 }
 
 func runWorker(opts options, logger *log.Logger) error {
+	service, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	hostEndpoint := deriveEndpoint(opts.endpoint, "host")
+	hostCmd, hostDone, err := ensureSocketHost(service, opts, hostEndpoint, logger)
+	if err != nil {
+		return err
+	}
+	if hostCmd != nil {
+		go func() {
+			select {
+			case <-hostDone:
+				stop()
+			case <-service.Done():
+			}
+		}()
+		defer func() {
+			requestWorkerStop(hostEndpoint)
+			_ = hostCmd.Process.Kill()
+			select {
+			case <-hostDone:
+			case <-time.After(time.Second):
+			}
+		}()
+	}
+	listener, err := localipc.Listen(opts.endpoint)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", opts.endpoint, err)
+	}
+	defer listener.Close()
+	controlListener, err := localipc.Listen(deriveEndpoint(opts.endpoint, "control"))
+	if err != nil {
+		return fmt.Errorf("listen worker control: %w", err)
+	}
+	defer controlListener.Close()
+	go func() {
+		<-service.Done()
+		_ = listener.Close()
+		_ = controlListener.Close()
+	}()
+	go serveWorkerControl(service, controlListener, stop)
+	logger.Printf("broker bridge worker listening on %s (socket host %s)", opts.endpoint, hostEndpoint)
+	for {
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			if service.Err() != nil {
+				return service.Err()
+			}
+			if networkErr, ok := acceptErr.(net.Error); ok && networkErr.Temporary() {
+				continue
+			}
+			return acceptErr
+		}
+		go bridgeWorkerConnection(service, conn, hostEndpoint, stop)
+	}
+}
+
+func bridgeWorkerConnection(ctx context.Context, client net.Conn, endpoint string, stop context.CancelFunc) {
+	defer client.Close()
+	dialCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	host, err := localipc.Dial(dialCtx, endpoint)
+	cancel()
+	if err != nil {
+		stop()
+		return
+	}
+	defer host.Close()
+	bridgeConnections(client, host)
+}
+
+func ensureSocketHost(ctx context.Context, opts options, endpoint string, logger *log.Logger) (*exec.Cmd, <-chan struct{}, error) {
+	probeCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	conn, err := localipc.Dial(probeCtx, endpoint)
+	cancel()
+	if err == nil {
+		_ = conn.Close()
+		logger.Printf("reusing broker socket host on %s", endpoint)
+		return nil, nil, nil
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return nil, nil, fmt.Errorf("locate broker executable: %w", err)
+	}
+	args := []string{"-socket-host", "-endpoint", endpoint, "-token-hex", opts.tokenHex}
+	if opts.upstreamProxy != "" {
+		args = append(args, "-upstream-proxy", opts.upstreamProxy)
+	}
+	host := exec.Command(executable, args...)
+	host.Stdout = io.Discard
+	host.Stderr = os.Stderr
+	if err := host.Start(); err != nil {
+		return nil, nil, fmt.Errorf("start broker socket host: %w", err)
+	}
+	done := make(chan struct{})
+	go func() {
+		_, _ = host.Process.Wait()
+		close(done)
+	}()
+	deadline := time.NewTimer(workerStartupTimeout)
+	defer deadline.Stop()
+	for {
+		probeCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+		conn, dialErr := localipc.Dial(probeCtx, endpoint)
+		cancel()
+		if dialErr == nil {
+			_ = conn.Close()
+			return host, done, nil
+		}
+		select {
+		case <-ctx.Done():
+			_ = host.Process.Kill()
+			return nil, nil, ctx.Err()
+		case <-done:
+			return nil, nil, errors.New("broker socket host exited before becoming ready")
+		case <-deadline.C:
+			_ = host.Process.Kill()
+			return nil, nil, errors.New("broker socket host did not become ready")
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
+func runSocketHost(opts options, logger *log.Logger) error {
 	token, err := hex.DecodeString(opts.tokenHex)
 	if err != nil || len(token) == 0 {
 		return errors.New("attach token must be non-empty hexadecimal")
@@ -268,7 +390,7 @@ func runWorker(opts options, logger *log.Logger) error {
 	server := relay.NewServerWithLink(link, upstreamDialer.DialContext, upstreamDialer.OpenPacketContext)
 	serverDone := make(chan error, 1)
 	go func() { serverDone <- server.ServeAttached(service) }()
-	logger.Printf("broker worker listening on %s", opts.endpoint)
+	logger.Printf("broker socket host listening on %s", opts.endpoint)
 	serveErr := b.ServeAttachedWith(service, listener, link, func(session *broker.Session) {
 		server.SetPeerInstanceID(session.InstanceID())
 	})
