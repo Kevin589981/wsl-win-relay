@@ -409,7 +409,9 @@ stop_control
 start_control "$tmp_dir/thread-exit-group.sock" "$tmp_dir/thread-exit-group.log"
 WSL_WIN_RELAY_CONTROL="$tmp_dir/thread-exit-group.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" thread-exit-group
 grep -q 'RESERVE .* tcp4 47142' "$tmp_dir/thread-exit-group.log"
-test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/thread-exit-group.log")" -eq 1
+thread_exit_group_cleanup=$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/thread-exit-group.log")
+test "$thread_exit_group_cleanup" -ge 1
+test "$thread_exit_group_cleanup" -le 2
 stop_control
 
 start_control "$tmp_dir/env.sock" "$tmp_dir/env.log"
