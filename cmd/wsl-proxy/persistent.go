@@ -29,6 +29,7 @@ func runPersistent(parent context.Context, opts options, logger *log.Logger, dia
 	var reverseForwards *forward.Set
 	var reverseDatagramForwards *forward.Set
 	initialized := false
+	var peerInstanceID uint64
 	defer func() {
 		if reverseForwards != nil {
 			_ = reverseForwards.Close()
@@ -41,11 +42,11 @@ func runPersistent(parent context.Context, opts options, logger *log.Logger, dia
 		_ = link.Close()
 	}()
 	return supervise(ctx, opts, logger, func(sessionCtx context.Context, sessionOpts options, sessionLogger *log.Logger) error {
-		return runPersistentConnector(sessionCtx, ctx, sessionOpts, sessionLogger, dialer, link, client, relayDone, &initialized, &reverseForwards, &reverseDatagramForwards, control)
+		return runPersistentConnector(sessionCtx, ctx, sessionOpts, sessionLogger, dialer, link, client, relayDone, &initialized, &peerInstanceID, &reverseForwards, &reverseDatagramForwards, control)
 	}, relayRestartDelay)
 }
 
-func runPersistentConnector(parent, mappingCtx context.Context, opts options, logger *log.Logger, dialer *sessionDialer, link *framed.Link, client *relay.Client, relayDone <-chan error, initialized *bool, reverseForwards **forward.Set, reverseDatagramForwards **forward.Set, control *listencontrol.Server) error {
+func runPersistentConnector(parent, mappingCtx context.Context, opts options, logger *log.Logger, dialer *sessionDialer, link *framed.Link, client *relay.Client, relayDone <-chan error, initialized *bool, peerInstanceID *uint64, reverseForwards **forward.Set, reverseDatagramForwards **forward.Set, control *listencontrol.Server) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, opts.relayExe, relayArguments(opts)...)
@@ -117,6 +118,24 @@ func runPersistentConnector(parent, mappingCtx context.Context, opts options, lo
 			}
 		}
 		return classifyHandshakeError(err)
+	}
+	instanceID := client.PeerInstanceID()
+	if *initialized && instanceID != 0 && *peerInstanceID != 0 && instanceID != *peerInstanceID {
+		logger.Printf("Windows broker instance changed; rebuilding peer-owned mappings")
+		client.ResetPeerState(relay.ErrPeerRestarted)
+		if *reverseForwards != nil {
+			_ = (*reverseForwards).Close()
+			*reverseForwards = nil
+		}
+		if *reverseDatagramForwards != nil {
+			_ = (*reverseDatagramForwards).Close()
+			*reverseDatagramForwards = nil
+		}
+		dialer.clear(client)
+		*initialized = false
+	}
+	if instanceID != 0 {
+		*peerInstanceID = instanceID
 	}
 	if !*initialized {
 		dialer.set(client)

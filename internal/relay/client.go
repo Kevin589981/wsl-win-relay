@@ -18,6 +18,7 @@ import (
 var ErrClientClosed = errors.New("relay client is closed")
 var ErrClientAlreadyRunning = errors.New("relay client is already running")
 var ErrMissingCapabilities = errors.New("Windows relay is missing required capabilities")
+var ErrPeerRestarted = errors.New("relay peer broker restarted")
 
 type Client struct {
 	rw                io.ReadWriter
@@ -39,11 +40,13 @@ type Client struct {
 	handshakeMu       sync.Mutex
 	helloMu           sync.Mutex
 	peerCapabilities  uint64
+	peerInstanceID    atomic.Uint64
 	handshakeComplete bool
 }
 
 type helloResult struct {
 	capabilities uint64
+	instanceID   uint64
 	err          error
 }
 
@@ -80,6 +83,7 @@ func (c *Client) Handshake(ctx context.Context, required uint64) (uint64, error)
 			return 0, result.err
 		}
 		c.peerCapabilities, c.handshakeComplete = result.capabilities, true
+		c.peerInstanceID.Store(result.instanceID)
 		if result.capabilities&required != required {
 			return result.capabilities, fmt.Errorf("%w: required 0x%x, peer 0x%x", ErrMissingCapabilities, required, result.capabilities)
 		}
@@ -99,11 +103,59 @@ func (c *Client) Rehandshake(ctx context.Context, required uint64) (uint64, erro
 	c.helloMu.Lock()
 	c.handshakeComplete = false
 	c.peerCapabilities = 0
+	c.peerInstanceID.Store(0)
 	c.helloDone = make(chan helloResult, 1)
 	c.helloOnce = sync.Once{}
 	c.helloMu.Unlock()
 	c.handshakeMu.Unlock()
 	return c.Handshake(ctx, required)
+}
+
+// PeerInstanceID returns the broker identity advertised by the most recent
+// HELLO_OK. Legacy stdio peers return zero.
+func (c *Client) PeerInstanceID() uint64 { return c.peerInstanceID.Load() }
+
+// ResetPeerState invalidates state that belonged to a broker process which is
+// no longer alive. The client itself remains usable; callers can re-register
+// mappings on the new peer afterwards.
+func (c *Client) ResetPeerState(cause error) {
+	if cause == nil {
+		cause = ErrPeerRestarted
+	}
+	c.mu.Lock()
+	streams := make([]*clientStream, 0, len(c.streams))
+	for _, stream := range c.streams {
+		streams = append(streams, stream)
+	}
+	c.streams = make(map[uint32]*clientStream)
+	listeners := make([]*clientListener, 0, len(c.listeners))
+	for _, listener := range c.listeners {
+		listeners = append(listeners, listener)
+	}
+	c.listeners = make(map[uint32]*clientListener)
+	datagrams := make([]*clientPacketConn, 0, len(c.datagrams))
+	for _, datagram := range c.datagrams {
+		datagrams = append(datagrams, datagram)
+	}
+	c.datagrams = make(map[uint32]*clientPacketConn)
+	reverseDatagrams := make([]*clientReverseDatagram, 0, len(c.reverseDatagrams))
+	for _, datagram := range c.reverseDatagrams {
+		reverseDatagrams = append(reverseDatagrams, datagram)
+	}
+	c.reverseDatagrams = make(map[uint32]*clientReverseDatagram)
+	c.mu.Unlock()
+	for _, stream := range streams {
+		stream.fail(cause)
+	}
+	for _, listener := range listeners {
+		listener.invalidate()
+	}
+	for _, datagram := range datagrams {
+		datagram.fail(cause)
+	}
+	for _, datagram := range reverseDatagrams {
+		datagram.fail(cause)
+	}
 }
 
 func (c *Client) OpenPacketContext(ctx context.Context) (net.PacketConn, error) {
@@ -391,8 +443,9 @@ func (c *Client) helloChannel() <-chan helloResult {
 
 func (c *Client) dispatch(frame protocol.Frame) {
 	if frame.Type == protocol.TypeHelloOK {
+		capabilities, instanceID, err := protocol.DecodeHelloOK(frame.Payload)
 		c.helloMu.Lock()
-		c.helloOnce.Do(func() { c.helloDone <- helloResult{capabilities: protocol.DecodeCapabilities(frame.Payload)} })
+		c.helloOnce.Do(func() { c.helloDone <- helloResult{capabilities: capabilities, instanceID: instanceID, err: err} })
 		c.helloMu.Unlock()
 		return
 	}
@@ -498,7 +551,7 @@ func (c *Client) fail(err error) {
 			s.fail(err)
 		}
 		for _, listener := range listeners {
-			listener.cancel()
+			listener.invalidate()
 		}
 		for _, packet := range datagrams {
 			packet.fail(err)
@@ -887,6 +940,13 @@ type clientListener struct {
 	cancel context.CancelFunc
 	ready  chan error
 	once   sync.Once
+}
+
+func (l *clientListener) invalidate() {
+	l.once.Do(func() {
+		l.cancel()
+		l.client.removeListener(l.id)
+	})
 }
 
 func (l *clientListener) Close() error {

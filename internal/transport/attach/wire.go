@@ -55,8 +55,8 @@ func (m Message) validate() error {
 			return err
 		}
 	case MessageAttachOK:
-		if len(m.Payload) != 16 {
-			return errors.New("attach ok payload must contain epoch and capabilities")
+		if len(m.Payload) != 16 && len(m.Payload) != 24 {
+			return errors.New("attach ok payload must contain epoch, capabilities, and optional instance id")
 		}
 	case MessageAttachError:
 		if len(m.Payload) == 0 || len(m.Payload) > maxWireError {
@@ -164,11 +164,32 @@ func EncodeAttachOK(epoch, capabilities uint64) []byte {
 	return payload
 }
 
+// EncodeAttachOKWithInstance extends ATTACH_OK with the broker instance ID.
+// The original 16-byte form remains valid for older peers.
+func EncodeAttachOKWithInstance(epoch, capabilities, instanceID uint64) []byte {
+	payload := make([]byte, 24)
+	binary.BigEndian.PutUint64(payload, epoch)
+	binary.BigEndian.PutUint64(payload[8:], capabilities)
+	binary.BigEndian.PutUint64(payload[16:], instanceID)
+	return payload
+}
+
 func DecodeAttachOK(payload []byte) (uint64, uint64, error) {
-	if len(payload) != 16 {
-		return 0, 0, errors.New("attach ok payload must contain 16 bytes")
+	if len(payload) != 16 && len(payload) != 24 {
+		return 0, 0, errors.New("attach ok payload must contain 16 or 24 bytes")
 	}
 	return binary.BigEndian.Uint64(payload), binary.BigEndian.Uint64(payload[8:]), nil
+}
+
+func DecodeAttachOKWithInstance(payload []byte) (uint64, uint64, uint64, error) {
+	epoch, capabilities, err := DecodeAttachOK(payload)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	if len(payload) != 24 {
+		return epoch, capabilities, 0, nil
+	}
+	return epoch, capabilities, binary.BigEndian.Uint64(payload[16:]), nil
 }
 
 type EntryKind byte
@@ -335,125 +356,144 @@ func validateResumeAck(summary Summary, epoch uint64, ids []uint64) error {
 // ClientResumeHandshake performs attach negotiation, receives a registry
 // summary, and acknowledges every entry currently advertised by the broker.
 func ClientResumeHandshake(rw io.ReadWriter, token []byte, capabilities, lastEpoch uint64) (uint64, uint64, Summary, error) {
-	epoch, peerCapabilities, err := ClientHandshake(rw, token, capabilities, lastEpoch)
+	epoch, peerCapabilities, _, summary, err := ClientResumeHandshakeWithInstance(rw, token, capabilities, lastEpoch)
+	return epoch, peerCapabilities, summary, err
+}
+
+func ClientResumeHandshakeWithInstance(rw io.ReadWriter, token []byte, capabilities, lastEpoch uint64) (uint64, uint64, uint64, Summary, error) {
+	epoch, peerCapabilities, instanceID, err := ClientHandshakeWithInstance(rw, token, capabilities, lastEpoch)
 	if err != nil {
-		return 0, 0, Summary{}, err
+		return 0, 0, 0, Summary{}, err
 	}
 	message, err := Read(rw)
 	if err != nil {
-		return 0, 0, Summary{}, err
+		return 0, 0, 0, Summary{}, err
 	}
 	if message.Type != MessageRegistrySummary {
-		return 0, 0, Summary{}, fmt.Errorf("expected registry summary, got %d", message.Type)
+		return 0, 0, 0, Summary{}, fmt.Errorf("expected registry summary, got %d", message.Type)
 	}
 	summary, err := DecodeSummary(message.Payload)
 	if err != nil {
-		return 0, 0, Summary{}, err
+		return 0, 0, 0, Summary{}, err
 	}
 	if err := validateResumeAck(summary, epoch, summary.IDs()); err != nil {
-		return 0, 0, Summary{}, err
+		return 0, 0, 0, Summary{}, err
 	}
 	payload, err := EncodeResumeAck(epoch, summary.IDs())
 	if err != nil {
-		return 0, 0, Summary{}, err
+		return 0, 0, 0, Summary{}, err
 	}
 	if err := Write(rw, Message{Type: MessageResumeAck, Payload: payload}); err != nil {
-		return 0, 0, Summary{}, err
+		return 0, 0, 0, Summary{}, err
 	}
-	return epoch, peerCapabilities, summary, nil
+	return epoch, peerCapabilities, instanceID, summary, nil
 }
 
 // ServerResumeHandshake completes attach negotiation and waits for the
 // connector to acknowledge the exact summary advertised for this epoch.
 func ServerResumeHandshake(rw io.ReadWriter, registry *Registry, capabilities uint64, summary Summary) (*Attachment, uint64, uint64, error) {
-	attachment, peerCapabilities, lastEpoch, err := ServerHandshake(rw, registry, capabilities)
+	attachment, peerCapabilities, lastEpoch, _, err := ServerResumeHandshakeWithInstance(rw, registry, capabilities, summary)
+	return attachment, peerCapabilities, lastEpoch, err
+}
+
+func ServerResumeHandshakeWithInstance(rw io.ReadWriter, registry *Registry, capabilities uint64, summary Summary) (*Attachment, uint64, uint64, uint64, error) {
+	attachment, peerCapabilities, lastEpoch, instanceID, err := ServerHandshakeWithInstance(rw, registry, capabilities)
 	if err != nil {
-		return nil, peerCapabilities, lastEpoch, err
+		return nil, peerCapabilities, lastEpoch, 0, err
 	}
 	summary.Epoch = attachment.Epoch()
 	payload, err := EncodeSummary(summary)
 	if err != nil {
 		_ = attachment.Detach()
-		return nil, peerCapabilities, lastEpoch, err
+		return nil, peerCapabilities, lastEpoch, instanceID, err
 	}
 	if err := Write(rw, Message{Type: MessageRegistrySummary, Payload: payload}); err != nil {
 		_ = attachment.Detach()
-		return nil, peerCapabilities, lastEpoch, err
+		return nil, peerCapabilities, lastEpoch, instanceID, err
 	}
 	message, err := Read(rw)
 	if err != nil {
 		_ = attachment.Detach()
-		return nil, peerCapabilities, lastEpoch, err
+		return nil, peerCapabilities, lastEpoch, instanceID, err
 	}
 	if message.Type != MessageResumeAck {
 		_ = attachment.Detach()
-		return nil, peerCapabilities, lastEpoch, fmt.Errorf("expected resume acknowledgement, got %d", message.Type)
+		return nil, peerCapabilities, lastEpoch, instanceID, fmt.Errorf("expected resume acknowledgement, got %d", message.Type)
 	}
 	ackEpoch, ids, err := DecodeResumeAck(message.Payload)
 	if err != nil {
 		_ = attachment.Detach()
-		return nil, peerCapabilities, lastEpoch, err
+		return nil, peerCapabilities, lastEpoch, instanceID, err
 	}
 	if err := validateResumeAck(summary, ackEpoch, ids); err != nil {
 		_ = attachment.Detach()
-		return nil, peerCapabilities, lastEpoch, err
+		return nil, peerCapabilities, lastEpoch, instanceID, err
 	}
-	return attachment, peerCapabilities, lastEpoch, nil
+	return attachment, peerCapabilities, lastEpoch, instanceID, nil
 }
 
 // ClientHandshake performs HELLO -> ATTACH and waits for ATTACH_OK.
 func ClientHandshake(rw io.ReadWriter, token []byte, capabilities, lastEpoch uint64) (uint64, uint64, error) {
+	epoch, peerCapabilities, _, err := ClientHandshakeWithInstance(rw, token, capabilities, lastEpoch)
+	return epoch, peerCapabilities, err
+}
+
+func ClientHandshakeWithInstance(rw io.ReadWriter, token []byte, capabilities, lastEpoch uint64) (uint64, uint64, uint64, error) {
 	payload, err := EncodeAttach(token, lastEpoch)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	if err := Write(rw, Message{Type: MessageHello, Payload: EncodeCapabilities(capabilities)}); err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	if err := Write(rw, Message{Type: MessageAttach, Payload: payload}); err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	response, err := Read(rw)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	if response.Type == MessageAttachError {
-		return 0, 0, fmt.Errorf("%w: %s", ErrRemoteAttach, response.Payload)
+		return 0, 0, 0, fmt.Errorf("%w: %s", ErrRemoteAttach, response.Payload)
 	}
 	if response.Type != MessageAttachOK {
-		return 0, 0, fmt.Errorf("unexpected attach response %d", response.Type)
+		return 0, 0, 0, fmt.Errorf("unexpected attach response %d", response.Type)
 	}
-	epoch, peerCapabilities, err := DecodeAttachOK(response.Payload)
-	return epoch, peerCapabilities, err
+	return DecodeAttachOKWithInstance(response.Payload)
 }
 
 // ServerHandshake authenticates one connector and installs a new registry
 // generation. On authentication failure it sends a bounded error response.
 func ServerHandshake(rw io.ReadWriter, registry *Registry, capabilities uint64) (*Attachment, uint64, uint64, error) {
+	attachment, peerCapabilities, lastEpoch, _, err := ServerHandshakeWithInstance(rw, registry, capabilities)
+	return attachment, peerCapabilities, lastEpoch, err
+}
+
+func ServerHandshakeWithInstance(rw io.ReadWriter, registry *Registry, capabilities uint64) (*Attachment, uint64, uint64, uint64, error) {
 	if registry == nil {
-		return nil, 0, 0, errors.New("attach registry is nil")
+		return nil, 0, 0, 0, errors.New("attach registry is nil")
 	}
 	hello, err := Read(rw)
 	if err != nil {
-		return nil, 0, 0, err
+		return nil, 0, 0, 0, err
 	}
 	if hello.Type != MessageHello {
-		return nil, 0, 0, fmt.Errorf("expected hello, got %d", hello.Type)
+		return nil, 0, 0, 0, fmt.Errorf("expected hello, got %d", hello.Type)
 	}
 	peerCapabilities, err := DecodeCapabilities(hello.Payload)
 	if err != nil {
-		return nil, 0, 0, err
+		return nil, 0, 0, 0, err
 	}
 	attachMessage, err := Read(rw)
 	if err != nil {
-		return nil, 0, 0, err
+		return nil, 0, 0, 0, err
 	}
 	if attachMessage.Type != MessageAttach {
-		return nil, 0, 0, fmt.Errorf("expected attach, got %d", attachMessage.Type)
+		return nil, 0, 0, 0, fmt.Errorf("expected attach, got %d", attachMessage.Type)
 	}
 	token, lastEpoch, err := DecodeAttach(attachMessage.Payload)
 	if err != nil {
-		return nil, 0, 0, err
+		return nil, 0, 0, 0, err
 	}
 	attachment, err := registry.Attach(token)
 	if err != nil {
@@ -462,13 +502,13 @@ func ServerHandshake(rw io.ReadWriter, registry *Registry, capabilities uint64) 
 			message = message[:maxWireError]
 		}
 		_ = Write(rw, Message{Type: MessageAttachError, Payload: []byte(message)})
-		return nil, peerCapabilities, lastEpoch, err
+		return nil, peerCapabilities, lastEpoch, 0, err
 	}
-	if err := Write(rw, Message{Type: MessageAttachOK, Payload: EncodeAttachOK(attachment.Epoch(), capabilities)}); err != nil {
+	if err := Write(rw, Message{Type: MessageAttachOK, Payload: EncodeAttachOKWithInstance(attachment.Epoch(), capabilities, registry.InstanceID())}); err != nil {
 		_ = attachment.Detach()
-		return nil, peerCapabilities, lastEpoch, err
+		return nil, peerCapabilities, lastEpoch, 0, err
 	}
-	return attachment, peerCapabilities, lastEpoch, nil
+	return attachment, peerCapabilities, lastEpoch, registry.InstanceID(), nil
 }
 
 func writeFull(w io.Writer, p []byte) error {

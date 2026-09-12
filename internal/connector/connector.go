@@ -24,6 +24,7 @@ type Config struct {
 type Session struct {
 	Conn             net.Conn
 	Epoch            uint64
+	InstanceID       uint64
 	PeerCapabilities uint64
 	Summary          attach.Summary
 }
@@ -54,7 +55,7 @@ func Connect(ctx context.Context, config Config) (*Session, error) {
 		case <-stopClose:
 		}
 	}()
-	epoch, peerCapabilities, summary, err := attach.ClientResumeHandshake(conn, config.Token, config.Capabilities, config.LastEpoch)
+	epoch, peerCapabilities, instanceID, summary, err := attach.ClientResumeHandshakeWithInstance(conn, config.Token, config.Capabilities, config.LastEpoch)
 	close(stopClose)
 	if err != nil {
 		_ = conn.Close()
@@ -63,7 +64,7 @@ func Connect(ctx context.Context, config Config) (*Session, error) {
 		}
 		return nil, err
 	}
-	return &Session{Conn: conn, Epoch: epoch, PeerCapabilities: peerCapabilities, Summary: summary}, nil
+	return &Session{Conn: conn, Epoch: epoch, InstanceID: instanceID, PeerCapabilities: peerCapabilities, Summary: summary}, nil
 }
 
 func (s *Session) Close() error {

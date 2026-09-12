@@ -7,10 +7,11 @@ transport-independent broker session core, and server-side transport
 replacement are implemented. Opt-in broker mode now retains the relay client
 registry and preserves in-flight TCP streams, reverse TCP listeners, and
 reverse-UDP flows across connector replacement. Automatic polling mappings are
-rebound by the long-lived WSL watcher after a connector replacement.
-Broker-process crash recovery and making
-broker mode the default service remain pending because a broker crash destroys
-its kernel socket ownership.
+rebound by the long-lived WSL watcher after a connector replacement. A broker
+instance ID now lets the WSL proxy detect a broker process restart and rebuild
+stale peer state plus mappings without restarting the proxy. Established
+sockets still end when the broker process crashes, and broker mode remains
+opt-in pending operational rollout.
 
 ## Context
 
@@ -108,5 +109,5 @@ alive and makes the connector retry with bounded backoff.
 5. Make broker mode opt-in, run real HNS-failure and connector-restart tests.
 6. Add a bounded broker supervisor and explicit service startup contract before
    making broker mode the long-running-service default. The optional systemd
-   broker unit now supplies the supervisor; proxy restart after broker failure
-   remains explicit until epoch-loss detection is implemented.
+   broker unit now supplies the supervisor, and instance-loss detection rebuilds
+   mappings after restart; established broker-owned sockets remain unrecoverable.

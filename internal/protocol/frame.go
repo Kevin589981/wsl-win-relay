@@ -95,8 +95,11 @@ func (f Frame) Validate() error {
 	if f.Type == TypeWindowUpdate && len(f.Payload) != 4 {
 		return errors.New("window update must contain a byte count")
 	}
-	if (f.Type == TypeHello || f.Type == TypeHelloOK) && len(f.Payload) != 8 {
+	if f.Type == TypeHello && len(f.Payload) != 8 {
 		return errors.New("hello frame must contain capabilities")
+	}
+	if f.Type == TypeHelloOK && len(f.Payload) != 8 && len(f.Payload) != 16 {
+		return errors.New("hello response must contain 8 or 16 bytes")
 	}
 	return nil
 }

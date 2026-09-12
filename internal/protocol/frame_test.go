@@ -35,6 +35,22 @@ func TestReverseDatagramFrameRoundTrip(t *testing.T) {
 	}
 }
 
+func TestHelloOKCarriesOptionalInstanceID(t *testing.T) {
+	legacy := EncodeHelloOK(AllCapabilities, 0)
+	capabilities, instanceID, err := DecodeHelloOK(legacy)
+	if err != nil || capabilities != AllCapabilities || instanceID != 0 {
+		t.Fatalf("legacy hello capabilities=%x instance=%x err=%v", capabilities, instanceID, err)
+	}
+	current := EncodeHelloOK(AllCapabilities, 42)
+	capabilities, instanceID, err = DecodeHelloOK(current)
+	if err != nil || capabilities != AllCapabilities || instanceID != 42 {
+		t.Fatalf("extended hello capabilities=%x instance=%x err=%v", capabilities, instanceID, err)
+	}
+	if err := (Frame{Type: TypeHelloOK, Payload: current}).Validate(); err != nil {
+		t.Fatalf("extended hello frame rejected: %v", err)
+	}
+}
+
 func TestReadRejectsOversizedPayload(t *testing.T) {
 	var b bytes.Buffer
 	header := make([]byte, HeaderSize)

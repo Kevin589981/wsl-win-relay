@@ -32,6 +32,7 @@ type Server struct {
 	datagrams        map[uint32]*serverDatagram
 	reverseDatagrams map[uint32]*serverReverseDatagram
 	nextStream       atomic.Uint32
+	peerInstanceID   atomic.Uint64
 	ctx              context.Context
 	cancel           context.CancelFunc
 	serveOnce        sync.Once
@@ -93,6 +94,12 @@ func NewServerWithLink(link *framed.Link, dial DialContextFunc, packetDial Packe
 	server := NewServerWithPacketDialer(nil, dial, packetDial)
 	server.transport = link
 	return server
+}
+
+// SetPeerInstanceID publishes the broker process identity in the next
+// capability response. A zero value keeps the legacy HELLO_OK form.
+func (s *Server) SetPeerInstanceID(instanceID uint64) {
+	s.peerInstanceID.Store(instanceID)
 }
 
 func (s *Server) Serve(ctx context.Context) error {
@@ -175,7 +182,7 @@ func (s *Server) ServeAttached(ctx context.Context) error {
 func (s *Server) handle(frame protocol.Frame) {
 	switch frame.Type {
 	case protocol.TypeHello:
-		_ = s.send(protocol.Frame{Type: protocol.TypeHelloOK, Payload: protocol.EncodeCapabilities(protocol.AllCapabilities)})
+		_ = s.send(protocol.Frame{Type: protocol.TypeHelloOK, Payload: protocol.EncodeHelloOK(protocol.AllCapabilities, s.peerInstanceID.Load())})
 	case protocol.TypeOpen:
 		go s.open(frame.StreamID, string(frame.Payload))
 	case protocol.TypeListenOpen:

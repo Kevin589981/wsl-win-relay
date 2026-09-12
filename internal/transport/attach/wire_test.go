@@ -134,6 +134,35 @@ func TestHandshakeInstallsGenerationAndReturnsPeerState(t *testing.T) {
 	}
 }
 
+func TestHandshakeWithInstanceReturnsStableBrokerIdentity(t *testing.T) {
+	registry, err := NewWithToken([]byte("secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+	serverResult := make(chan uint64, 1)
+	go func() {
+		attachment, _, _, instanceID, err := ServerHandshakeWithInstance(right, registry, 0)
+		if attachment != nil {
+			defer attachment.Detach()
+		}
+		if err != nil {
+			serverResult <- 0
+			return
+		}
+		serverResult <- instanceID
+	}()
+	_, _, instanceID, err := ClientHandshakeWithInstance(left, []byte("secret"), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if instanceID == 0 || instanceID != <-serverResult || instanceID != registry.InstanceID() {
+		t.Fatalf("instance id=%d registry=%d", instanceID, registry.InstanceID())
+	}
+}
+
 func TestResumeHandshakeExchangesSummaryAndAcknowledgement(t *testing.T) {
 	registry, err := NewWithToken([]byte("secret"))
 	if err != nil {

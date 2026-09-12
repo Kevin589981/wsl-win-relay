@@ -65,7 +65,9 @@ func main() {
 	serverDone := make(chan error, 1)
 	go func() { serverDone <- server.ServeAttached(service) }()
 	logger.Printf("broker listening on %s", opts.endpoint)
-	err = b.ServeAttached(service, listener, link)
+	err = b.ServeAttachedWith(service, listener, link, func(session *broker.Session) {
+		server.SetPeerInstanceID(session.InstanceID())
+	})
 	_ = link.Close()
 	serverErr := <-serverDone
 	if err == nil && serverErr != nil && !errors.Is(serverErr, context.Canceled) && !errors.Is(serverErr, framed.ErrClosed) {

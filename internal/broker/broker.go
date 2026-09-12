@@ -139,7 +139,7 @@ func (b *Broker) Accept(rw io.ReadWriter) (*Session, error) {
 	sort.Slice(entries, func(i, j int) bool { return entries[i].ID < entries[j].ID })
 	b.mu.Unlock()
 	summary := attach.Summary{Entries: entries}
-	attachment, peerCapabilities, lastEpoch, err := attach.ServerResumeHandshake(rw, b.registry, capabilities, summary)
+	attachment, peerCapabilities, lastEpoch, instanceID, err := attach.ServerResumeHandshakeWithInstance(rw, b.registry, capabilities, summary)
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +150,7 @@ func (b *Broker) Accept(rw io.ReadWriter) (*Session, error) {
 		_ = attachment.Detach()
 		return nil, ErrBrokerClosed
 	}
-	return &Session{broker: b, attachment: attachment, peerCapabilities: peerCapabilities, lastEpoch: lastEpoch}, nil
+	return &Session{broker: b, attachment: attachment, peerCapabilities: peerCapabilities, lastEpoch: lastEpoch, instanceID: instanceID}, nil
 }
 
 // Serve accepts connector transports until ctx is canceled or the listener
@@ -199,6 +199,12 @@ func (b *Broker) Serve(ctx context.Context, listener net.Listener, handler func(
 // relay.Server.ServeAttached loop, so replacing a connector does not shut down
 // broker-owned sockets.
 func (b *Broker) ServeAttached(ctx context.Context, listener net.Listener, link *framed.Link) error {
+	return b.ServeAttachedWith(ctx, listener, link, nil)
+}
+
+// ServeAttachedWith is ServeAttached with an optional callback invoked after
+// the attach handshake and before the connector transport is installed.
+func (b *Broker) ServeAttachedWith(ctx context.Context, listener net.Listener, link *framed.Link, onAttach func(*Session)) error {
 	if listener == nil {
 		return errors.New("broker listener is nil")
 	}
@@ -231,9 +237,13 @@ func (b *Broker) ServeAttached(ctx context.Context, listener net.Listener, link 
 			}
 			return err
 		}
-		if _, err := b.Accept(conn); err != nil {
+		session, err := b.Accept(conn)
+		if err != nil {
 			_ = conn.Close()
 			continue
+		}
+		if onAttach != nil {
+			onAttach(session)
 		}
 		if _, err := link.Attach(conn); err != nil {
 			_ = conn.Close()
@@ -305,6 +315,7 @@ type Session struct {
 	attachment       *attach.Attachment
 	peerCapabilities uint64
 	lastEpoch        uint64
+	instanceID       uint64
 	closeOnce        sync.Once
 	closeErr         error
 }
@@ -314,6 +325,8 @@ func (s *Session) Epoch() uint64 { return s.attachment.Epoch() }
 func (s *Session) PeerCapabilities() uint64 { return s.peerCapabilities }
 
 func (s *Session) LastEpoch() uint64 { return s.lastEpoch }
+
+func (s *Session) InstanceID() uint64 { return s.instanceID }
 
 func (s *Session) Current() bool { return s.attachment.Current() }
 

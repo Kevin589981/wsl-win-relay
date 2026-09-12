@@ -19,6 +19,9 @@ func TestNewRegistryCreatesPrivateToken(t *testing.T) {
 	if len(first.Token()) != tokenSize || bytes.Equal(first.Token(), second.Token()) {
 		t.Fatal("registry tokens were not independently generated")
 	}
+	if first.InstanceID() == 0 || first.InstanceID() == second.InstanceID() {
+		t.Fatal("registries were not assigned independent instance IDs")
+	}
 	value := first.Token()
 	value[0] ^= 0xff
 	if bytes.Equal(value, first.Token()) {

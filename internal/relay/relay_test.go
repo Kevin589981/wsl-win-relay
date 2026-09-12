@@ -79,6 +79,7 @@ func TestAttachedClientAndServerPreserveStreamAcrossReplacement(t *testing.T) {
 		}()
 		return local, nil
 	}, nil)
+	server.SetPeerInstanceID(42)
 	client := NewClientWithLink(clientLink)
 	serverDone := make(chan error, 1)
 	clientDone := make(chan error, 1)
@@ -94,6 +95,9 @@ func TestAttachedClientAndServerPreserveStreamAcrossReplacement(t *testing.T) {
 	}
 	if _, err := client.Handshake(ctx, protocol.CapabilityTCP); err != nil {
 		t.Fatal(err)
+	}
+	if client.PeerInstanceID() != 42 {
+		t.Fatalf("peer instance id=%d", client.PeerInstanceID())
 	}
 	stream, err := client.DialContext(ctx, "attached.example:443")
 	if err != nil {

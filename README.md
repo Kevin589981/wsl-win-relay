@@ -55,12 +55,15 @@ relay client and stream registry, rehandshakes the replacement connector, and
 preserves in-flight TCP streams. `scripts/test-broker-reconnect.sh` verifies
 this with a delayed HTTP response and a broker-owned reverse listener that
 accepts a new stream after replacement. The same test covers a reverse-UDP
-echo flow after replacement. A crash of the broker process itself still loses
-kernel socket ownership and is a separate recovery problem.
+echo flow after replacement. A broker process crash still ends sockets that
+were owned by that process, but the WSL proxy detects the new broker instance
+and rebuilds explicit and automatic mappings after it returns.
 
 `scripts/test-broker-auto-rebind.sh` separately verifies that a procfs-discovered
 WSL listener remains reachable through its automatically created Windows port
-after the connector is replaced.
+after the connector is replaced. `scripts/test-broker-restart.sh` also verifies
+that a broker process restart is detected and both automatic and explicit
+Windows mappings are reconstructed by the still-running WSL proxy.
 
 Set `"broker_mode": true` in the JSON configuration to persist this mode for
 the systemd user service. Keep `WSL_WIN_RELAY_ATTACH_TOKEN` and
@@ -73,8 +76,8 @@ mounted Windows `wsl-win-broker.exe` path and run
 `broker.env`, generates the attach token once, and enables
 `wsl-win-relay-broker.service` with a bounded restart policy. The normal proxy
 service wrapper loads the same env file for connector children. A broker crash
-still loses kernel socket ownership; after such a crash, restart the proxy
-service so explicit and automatic mappings are reconstructed.
+still loses already-established kernel sockets, while the running proxy
+reconstructs explicit and automatic mappings after the broker restarts.
 
 ## Security model
 

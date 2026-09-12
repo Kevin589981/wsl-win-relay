@@ -6,6 +6,7 @@ package attach
 import (
 	"crypto/hmac"
 	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"sync"
 )
@@ -23,11 +24,12 @@ var (
 // attachment. Replacing an attachment invalidates the old generation without
 // allowing a delayed cleanup from that generation to affect the new one.
 type Registry struct {
-	mu      sync.Mutex
-	token   []byte
-	epoch   uint64
-	current *Attachment
-	closed  bool
+	mu         sync.Mutex
+	token      []byte
+	instanceID uint64
+	epoch      uint64
+	current    *Attachment
+	closed     bool
 }
 
 // New creates a registry with a cryptographically random per-instance token.
@@ -45,7 +47,15 @@ func NewWithToken(token []byte) (*Registry, error) {
 	if len(token) == 0 {
 		return nil, ErrEmptyAttachToken
 	}
-	return &Registry{token: append([]byte(nil), token...)}, nil
+	var identity [8]byte
+	if _, err := rand.Read(identity[:]); err != nil {
+		return nil, err
+	}
+	instanceID := binary.BigEndian.Uint64(identity[:])
+	if instanceID == 0 {
+		instanceID = 1
+	}
+	return &Registry{token: append([]byte(nil), token...), instanceID: instanceID}, nil
 }
 
 // Token returns a copy of the registry token for the broker's attach
@@ -54,6 +64,15 @@ func (r *Registry) Token() []byte {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]byte(nil), r.token...)
+}
+
+// InstanceID identifies one broker process lifetime. It remains stable while
+// connectors are replaced and changes when a new registry is created after a
+// broker restart.
+func (r *Registry) InstanceID() uint64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.instanceID
 }
 
 // Attach authenticates token and installs a new current generation.
