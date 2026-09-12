@@ -36,9 +36,16 @@ func TestParseProcNetFindsListeningPorts(t *testing.T) {
 	}
 }
 
-func TestNormalizeListenersPrefersIPv4(t *testing.T) {
+func TestNormalizeListenersKeepsBothFamilies(t *testing.T) {
 	got := normalizeListeners([]Listener{{Network: "tcp6", Host: "::", Port: 8000}, {Network: "tcp4", Host: "0.0.0.0", Port: 8000}, {Network: "tcp6", Host: "::1", Port: 9000}})
-	if len(got) != 2 || got[0].Network != "tcp4" || got[1].Port != 9000 {
+	if len(got) != 3 || got[0].Network != "tcp4" || got[1].Network != "tcp6" || got[2].Port != 9000 {
+		t.Fatalf("got %#v", got)
+	}
+}
+
+func TestNormalizeListenersPrefersWildcardWithinFamily(t *testing.T) {
+	got := normalizeListeners([]Listener{{Network: "tcp4", Host: "127.0.0.1", Port: 8000}, {Network: "tcp4", Host: "0.0.0.0", Port: 8000}})
+	if len(got) != 1 || got[0].Host != "0.0.0.0" {
 		t.Fatalf("got %#v", got)
 	}
 }

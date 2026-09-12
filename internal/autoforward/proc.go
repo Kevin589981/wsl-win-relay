@@ -106,20 +106,40 @@ func decodeProcAddress(encoded, network string) (string, error) {
 	return net.IP(decoded).String(), nil
 }
 
-// Prefer IPv4 when both families listen on the same port. A wildcard IPv6
-// listener is commonly dual-stack and does not need a second Windows socket.
+// Keep one representative listener per address family and port. A wildcard
+// listener is preferred within a family because it covers more destinations;
+// IPv4 and IPv6 are kept separately because Windows can bind both loopback
+// families to the same port.
 func normalizeListeners(in []Listener) []Listener {
-	byPort := make(map[uint16]Listener)
+	type key struct {
+		network string
+		port    uint16
+	}
+	byKey := make(map[key]Listener)
 	for _, listener := range in {
-		current, exists := byPort[listener.Port]
-		if !exists || (current.Network == "tcp6" && listener.Network == "tcp4") {
-			byPort[listener.Port] = listener
+		current, exists := byKey[key{network: listener.Network, port: listener.Port}]
+		if !exists || preferredListener(listener, current) {
+			byKey[key{network: listener.Network, port: listener.Port}] = listener
 		}
 	}
-	result := make([]Listener, 0, len(byPort))
-	for _, listener := range byPort {
+	result := make([]Listener, 0, len(byKey))
+	for _, listener := range byKey {
 		result = append(result, listener)
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Port < result[j].Port })
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Port != result[j].Port {
+			return result[i].Port < result[j].Port
+		}
+		return result[i].Network < result[j].Network
+	})
 	return result
+}
+
+func preferredListener(candidate, current Listener) bool {
+	candidateWildcard := candidate.Host == "" || candidate.Host == "0.0.0.0" || candidate.Host == "::"
+	currentWildcard := current.Host == "" || current.Host == "0.0.0.0" || current.Host == "::"
+	if candidateWildcard != currentWildcard {
+		return candidateWildcard
+	}
+	return candidate.Host < current.Host
 }

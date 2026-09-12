@@ -83,12 +83,35 @@ func TestWatcherUsesIPv6WindowsHostForIPv6Listeners(t *testing.T) {
 	}
 }
 
+func TestWatcherMapsBothFamiliesOnSamePort(t *testing.T) {
+	scanner := &sequenceScanner{values: [][]Listener{
+		{{Network: "tcp4", Host: "127.0.0.1", Port: 8000}, {Network: "tcp6", Host: "::1", Port: 8000}},
+		{},
+	}}
+	opener := &recordingOpener{closed: make(chan string, 2)}
+	w := &Watcher{Scanner: scanner, Opener: opener, WindowsHost: "127.0.0.1", WindowsHost6: "::1", Interval: time.Millisecond}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := w.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, value := range opener.opened {
+		got[value] = true
+	}
+	for _, want := range []string{"127.0.0.1:8000=127.0.0.1:8000", "[::1]:8000=[::1]:8000"} {
+		if !got[want] {
+			t.Fatalf("mapping %q missing from %#v", want, opener.opened)
+		}
+	}
+}
+
 func TestWatcherDoesNotHoldStateLockWhileClosing(t *testing.T) {
 	closeStarted := make(chan struct{})
 	allowClose := make(chan struct{})
 	opener := &blockingCloseOpener{started: closeStarted, allow: allowClose}
-	w := &Watcher{Scanner: opener, Opener: opener, Logger: log.New(io.Discard, "", 0), active: map[uint16]activeMapping{
-		8000: {listener: Listener{Network: "tcp4", Port: 8000}, closer: opener},
+	w := &Watcher{Scanner: opener, Opener: opener, Logger: log.New(io.Discard, "", 0), active: map[listenerKey]activeMapping{
+		{network: "tcp4", port: 8000}: {listener: Listener{Network: "tcp4", Port: 8000}, closer: opener},
 	}}
 
 	done := make(chan error, 1)
@@ -99,7 +122,7 @@ func TestWatcherDoesNotHoldStateLockWhileClosing(t *testing.T) {
 		t.Fatal("close was not started")
 	}
 	w.mu.Lock()
-	_, stillActive := w.active[8000]
+	_, stillActive := w.active[listenerKey{network: "tcp4", port: 8000}]
 	w.mu.Unlock()
 	if stillActive {
 		t.Fatal("removed mapping remained active while close was blocked")
@@ -114,7 +137,7 @@ func TestWatcherLogsRejectionOnceAndRestoration(t *testing.T) {
 	scanner := &sequenceScanner{values: [][]Listener{{{Network: "tcp4", Port: 8000}}, {{Network: "tcp4", Port: 8000}}, {{Network: "tcp4", Port: 8000}}}}
 	opener := &recordingOpener{failures: 1, err: errors.New("address in use"), closed: make(chan string, 1)}
 	var logs bytes.Buffer
-	w := &Watcher{Scanner: scanner, Opener: opener, Logger: log.New(&logs, "", 0), active: make(map[uint16]activeMapping)}
+	w := &Watcher{Scanner: scanner, Opener: opener, Logger: log.New(&logs, "", 0), active: make(map[listenerKey]activeMapping)}
 	for i := 0; i < 3; i++ {
 		if err := w.sync(context.Background()); err != nil {
 			t.Fatal(err)

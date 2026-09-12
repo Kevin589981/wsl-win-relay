@@ -26,8 +26,13 @@ type Watcher struct {
 	Excluded     map[uint16]bool
 	Logger       *log.Logger
 	mu           sync.Mutex
-	active       map[uint16]activeMapping
-	rejected     map[uint16]bool
+	active       map[listenerKey]activeMapping
+	rejected     map[listenerKey]bool
+}
+
+type listenerKey struct {
+	network string
+	port    uint16
 }
 
 type activeMapping struct {
@@ -52,8 +57,8 @@ func (w *Watcher) Run(ctx context.Context) error {
 		w.Logger = log.New(io.Discard, "", 0)
 	}
 	w.mu.Lock()
-	w.active = make(map[uint16]activeMapping)
-	w.rejected = make(map[uint16]bool)
+	w.active = make(map[listenerKey]activeMapping)
+	w.rejected = make(map[listenerKey]bool)
 	w.mu.Unlock()
 	defer w.closeAll()
 	ticker := time.NewTicker(w.Interval)
@@ -75,7 +80,7 @@ func (w *Watcher) sync(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	desired := make(map[uint16]Listener)
+	desired := make(map[listenerKey]Listener)
 	for _, listener := range listeners {
 		if len(w.Included) > 0 && !w.Included[listener.Port] {
 			continue
@@ -83,29 +88,30 @@ func (w *Watcher) sync(ctx context.Context) error {
 		if w.Excluded[listener.Port] {
 			continue
 		}
-		desired[listener.Port] = listener
+		key := listenerKey{network: listener.Network, port: listener.Port}
+		desired[key] = listener
 	}
 	w.mu.Lock()
 	if w.rejected == nil {
-		w.rejected = make(map[uint16]bool)
+		w.rejected = make(map[listenerKey]bool)
 	}
 	var removed []activeMapping
-	for port, mapping := range w.active {
-		desiredListener, ok := desired[port]
+	for key, mapping := range w.active {
+		desiredListener, ok := desired[key]
 		if !ok || desiredListener != mapping.listener {
 			removed = append(removed, mapping)
-			delete(w.active, port)
-			delete(w.rejected, port)
-			w.Logger.Printf("auto-forward removed Windows port %d", port)
+			delete(w.active, key)
+			delete(w.rejected, key)
+			w.Logger.Printf("auto-forward removed Windows port %d (%s)", mapping.listener.Port, mapping.listener.Network)
 		}
 	}
 	w.mu.Unlock()
 	for _, mapping := range removed {
 		w.closeMapping(mapping.closer)
 	}
-	for port, listener := range desired {
+	for key, listener := range desired {
 		w.mu.Lock()
-		active, exists := w.active[port]
+		active, exists := w.active[key]
 		w.mu.Unlock()
 		if exists && active.listener == listener {
 			continue
@@ -121,13 +127,13 @@ func (w *Watcher) sync(ctx context.Context) error {
 		if listener.Network == "tcp6" && (wslHost == "" || wslHost == "::") {
 			wslHost = "::1"
 		}
-		windowsAddr := net.JoinHostPort(windowsHost, strconv.Itoa(int(port)))
-		wslTarget := net.JoinHostPort(wslHost, strconv.Itoa(int(port)))
+		windowsAddr := net.JoinHostPort(windowsHost, strconv.Itoa(int(listener.Port)))
+		wslTarget := net.JoinHostPort(wslHost, strconv.Itoa(int(listener.Port)))
 		closer, openErr := w.Opener.ReverseForward(ctx, windowsAddr, wslTarget)
 		if openErr != nil {
 			w.mu.Lock()
-			firstRejection := !w.rejected[port]
-			w.rejected[port] = true
+			firstRejection := !w.rejected[key]
+			w.rejected[key] = true
 			w.mu.Unlock()
 			if firstRejection {
 				w.Logger.Printf("auto-forward rejected %s -> %s: %v", windowsAddr, wslTarget, openErr)
@@ -135,16 +141,16 @@ func (w *Watcher) sync(ctx context.Context) error {
 			continue
 		}
 		w.mu.Lock()
-		wasRejected := w.rejected[port]
-		delete(w.rejected, port)
+		wasRejected := w.rejected[key]
+		delete(w.rejected, key)
 		w.mu.Unlock()
 		if wasRejected {
 			w.Logger.Printf("auto-forward restored %s -> %s", windowsAddr, wslTarget)
 		}
 		var closeAfterUnlock io.Closer
 		w.mu.Lock()
-		if _, stillDesired := desired[port]; stillDesired {
-			w.active[port] = activeMapping{listener: listener, closer: closer}
+		if _, stillDesired := desired[key]; stillDesired {
+			w.active[key] = activeMapping{listener: listener, closer: closer}
 		} else {
 			closeAfterUnlock = closer
 		}
@@ -160,7 +166,7 @@ func (w *Watcher) sync(ctx context.Context) error {
 func (w *Watcher) closeAll() {
 	w.mu.Lock()
 	active := w.active
-	w.active = make(map[uint16]activeMapping)
+	w.active = make(map[listenerKey]activeMapping)
 	w.mu.Unlock()
 	for _, mapping := range active {
 		w.closeMapping(mapping.closer)
