@@ -29,7 +29,10 @@ work follows the same model:
   semantics.
 - Process-style `clone(CLONE_FILES)` children also share the group fd table.
   They do not receive a second lease owner because a close in either task is a
-  close in the shared Linux descriptor table.
+  close in the shared Linux descriptor table. If that child performs `exec`,
+  Linux first gives it a private descriptor table; the supervisor splits the
+  child into a new group, adopts the inherited leases for that owner, and only
+  then retires its `FD_CLOEXEC` descriptors.
 - Descriptor lifecycle also covers `fcntl(F_DUPFD*)` and `close_range()` so
   static applications do not leave Windows mappings behind after bulk or
   libc-level descriptor cleanup. `SOCK_CLOEXEC` and `CLOSE_RANGE_CLOEXEC`
