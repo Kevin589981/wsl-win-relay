@@ -51,3 +51,4 @@ jobs:
       - run: sh -n scripts/*.sh scripts/wsl-win-relay-run
       - run: ./scripts/test-interposer.sh
       - run: GOPROXY=off ./scripts/test-broker-connector.sh
+      - run: GOPROXY=off ./scripts/test-broker-reconnect.sh

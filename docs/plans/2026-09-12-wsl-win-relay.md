@@ -65,8 +65,11 @@
 - [ ] Kernel-level coverage for static binaries and `vfork()` ownership
       patterns; ordinary pthread/`CLONE_THREAD` listeners are covered by the
       native lifecycle smoke test, while unusual thread-group teardown remains.
-- [ ] In-process hot reconnect that preserves existing connections across a
-      broken stdio session.
+- [x] Opt-in broker-mode hot reconnect preserves existing TCP streams across
+      connector/stdio replacement; a real delayed HTTP stream test covers the
+      connector process boundary.
+- [ ] Broker-process crash recovery and making broker-mode the service default;
+      a broker crash necessarily destroys its kernel socket ownership.
 
 The hot-reconnect item is intentionally staged behind [ADR-0015](../adr/0015-persistent-windows-ownership-and-attach.md): it requires moving socket ownership into a persistent Windows broker before a connector can safely resume protocol state.
 

@@ -6,7 +6,9 @@ In progress: attach registry, resume wire contract, local IPC abstraction,
 transport-independent broker session core, and server-side transport
 replacement are implemented. The relay client can now retain its registry and
 rehandshake over a replacement Link, but `wsl-proxy` integration and full
-socket/registry resume are still pending.
+socket/registry resume are still pending. Opt-in broker mode now exercises
+connector replacement with in-flight TCP stream preservation; broker-process
+crash recovery remains out of scope for this stage.
 
 ## Context
 

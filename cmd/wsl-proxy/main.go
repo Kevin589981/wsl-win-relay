@@ -32,6 +32,7 @@ type options struct {
 	socksListen           string
 	httpListen            string
 	relayExe              string
+	brokerMode            bool
 	upstreamProxy         string
 	reverse               forward.Mappings
 	reverseUDP            forward.Mappings
@@ -177,6 +178,7 @@ func parseOptions(args []string) (options, error) {
 	set.StringVar(&opts.socksListen, "listen", opts.socksListen, "SOCKS5 listen address")
 	set.StringVar(&opts.httpListen, "http-listen", opts.httpListen, "optional HTTP CONNECT proxy listen address")
 	set.StringVar(&opts.relayExe, "relay-exe", opts.relayExe, "Windows relay executable")
+	set.BoolVar(&opts.brokerMode, "broker-mode", false, "reuse one relay client across reconnecting broker connector processes")
 	set.StringVar(&opts.upstreamProxy, "upstream-proxy", opts.upstreamProxy, "optional Windows-side HTTP CONNECT or SOCKS5 proxy URL")
 	set.Var(&opts.reverse, "reverse", "reverse mapping WINDOWS_ADDR=WSL_TARGET (repeatable)")
 	set.Var(&opts.reverseUDP, "reverse-udp", "reverse UDP mapping WINDOWS_ADDR=WSL_TARGET (repeatable)")
@@ -377,6 +379,10 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 	}
 	sessionDone := make(chan error, 1)
 	go func() {
+		if opts.brokerMode {
+			sessionDone <- runPersistent(ctx, opts, logger, dialer, control)
+			return
+		}
 		sessionDone <- supervise(ctx, opts, logger, func(sessionCtx context.Context, sessionOpts options, sessionLogger *log.Logger) error {
 			return runSession(sessionCtx, sessionOpts, sessionLogger, dialer, control)
 		}, relayRestartDelay)

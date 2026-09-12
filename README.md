@@ -50,9 +50,11 @@ An opt-in broker transport is available for integration testing. Build with
 `wsl-win-connector.exe`. The connector performs attach/resume before forwarding
 the existing relay byte stream. The broker now keeps one relay server alive and
 swaps the attached connector transport, so a connector break no longer tears
-down broker-side sockets immediately. The WSL-side client registry and protocol
-resume are still pending, so existing WSL connections are not yet restored
-after a connector restart; that is the next socket-ownership milestone.
+down broker-side sockets immediately. In `-broker-mode`, WSL also keeps one
+relay client and stream registry, rehandshakes the replacement connector, and
+preserves in-flight TCP streams. `scripts/test-broker-reconnect.sh` verifies
+this with a delayed HTTP response. A crash of the broker process itself still
+loses kernel socket ownership and is a separate recovery problem.
 
 ## Security model
 

@@ -172,6 +172,16 @@ func TestParseOptionsSupportsRepeatedMappings(t *testing.T) {
 	}
 }
 
+func TestParseOptionsSupportsBrokerMode(t *testing.T) {
+	opts, err := parseOptions([]string{"-broker-mode", "-relay-exe", "wsl-win-connector.exe"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opts.brokerMode || opts.relayExe != "wsl-win-connector.exe" {
+		t.Fatalf("options: %#v", opts)
+	}
+}
+
 func TestParseOptionsSupportsRepeatedUDPMappings(t *testing.T) {
 	opts, err := parseOptions([]string{"-reverse-udp", "127.0.0.1:5353=127.0.0.1:5353", "-reverse-udp", "127.0.0.1:5354=127.0.0.1:5354"})
 	if err != nil {

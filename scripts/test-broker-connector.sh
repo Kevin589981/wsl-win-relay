@@ -39,7 +39,7 @@ done
 
 WSL_WIN_RELAY_ATTACH_TOKEN=$token \
 WSL_WIN_RELAY_BROKER_ENDPOINT="$tmp_dir/broker.sock" \
-    "$tmp_dir/wsl-proxy" -relay-exe "$tmp_dir/win-connector" \
+    "$tmp_dir/wsl-proxy" -broker-mode -relay-exe "$tmp_dir/win-connector" \
     -listen 127.0.0.1:18080 -control-socket "$tmp_dir/control.sock" \
     >"$tmp_dir/proxy.log" 2>&1 &
 proxy_pid=$!

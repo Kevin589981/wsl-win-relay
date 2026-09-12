@@ -4,6 +4,7 @@
 package framed
 
 import (
+	"context"
 	"errors"
 	"io"
 	"sync"
@@ -84,6 +85,13 @@ func (l *Link) ReadFrame() (protocol.Frame, error) {
 }
 
 func (l *Link) WriteFrame(frame protocol.Frame) error {
+	return l.WriteFrameContext(context.Background(), frame)
+}
+
+func (l *Link) WriteFrameContext(ctx context.Context, frame protocol.Frame) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	l.writeMu.Lock()
 	defer l.writeMu.Unlock()
 	for {
@@ -97,6 +105,8 @@ func (l *Link) WriteFrame(frame protocol.Frame) error {
 				continue
 			case <-l.closed:
 				return ErrClosed
+			case <-ctx.Done():
+				return ctx.Err()
 			}
 		}
 		if err := protocol.Write(a.rw, frame); err != nil {

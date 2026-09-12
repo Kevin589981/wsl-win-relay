@@ -2,10 +2,12 @@ package framed
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"net"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Kevin589981/wsl-win-relay/internal/protocol"
 )
@@ -134,4 +136,23 @@ func TestCloseUnblocksReadersAndRejectsAttach(t *testing.T) {
 	if _, err := link.Attach(&bytes.Buffer{}); !errors.Is(err, ErrClosed) {
 		t.Fatalf("attach after close err=%v", err)
 	}
+}
+
+func TestWriteFrameContextHonorsCancellationWhileDetached(t *testing.T) {
+	link := New()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- link.WriteFrameContext(ctx, protocol.Frame{Type: protocol.TypeData, Payload: []byte("blocked")})
+	}()
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("write err=%v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("context cancellation did not unblock write")
+	}
+	_ = link.Close()
 }

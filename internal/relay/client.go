@@ -71,7 +71,7 @@ func (c *Client) Handshake(ctx context.Context, required uint64) (uint64, error)
 		}
 		return c.peerCapabilities, nil
 	}
-	if err := c.write(protocol.Frame{Type: protocol.TypeHello, Payload: protocol.EncodeCapabilities(required)}); err != nil {
+	if err := c.writeContext(ctx, protocol.Frame{Type: protocol.TypeHello, Payload: protocol.EncodeCapabilities(required)}); err != nil {
 		return 0, err
 	}
 	select {
@@ -341,17 +341,30 @@ func (c *Client) closeTransport() {
 }
 
 func (c *Client) write(frame protocol.Frame) error {
+	return c.writeContext(context.Background(), frame)
+}
+
+func (c *Client) writeContext(ctx context.Context, frame protocol.Frame) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 	if c.transport != nil {
 		for {
-			err := c.transport.WriteFrame(frame)
+			var err error
+			if contextTransport, ok := c.transport.(interface {
+				WriteFrameContext(context.Context, protocol.Frame) error
+			}); ok {
+				err = contextTransport.WriteFrameContext(ctx, frame)
+			} else {
+				err = c.transport.WriteFrame(frame)
+			}
 			if !errors.Is(err, framed.ErrDetached) {
 				return err
 			}
 			select {
 			case <-c.closed:
 				return ErrClientClosed
+			case <-ctx.Done():
+				return ctx.Err()
 			default:
 			}
 		}
