@@ -188,21 +188,6 @@ int main(void) {
         return 21;
     }
 #endif
-    pid_t vforked = vfork();
-    if (vforked < 0) {
-        if (errno != ENOSYS && errno != EPERM && errno != EINVAL) {
-            close_range((unsigned int)fd, (unsigned int)fd, 0);
-            return 25;
-        }
-    } else {
-        if (vforked == 0) {
-            _exit(0);
-        }
-        if (waitpid(vforked, NULL, 0) != vforked) {
-            close_range((unsigned int)fd, (unsigned int)fd, 0);
-            return 26;
-        }
-    }
     int thread_result = -1;
     pthread_t thread;
     if (pthread_create(&thread, NULL, thread_child, &thread_result) != 0 ||
@@ -217,7 +202,23 @@ int main(void) {
     }
     if (child > 0) {
         close_range((unsigned int)fd, (unsigned int)fd, 0);
-        return waitpid(child, NULL, 0) == child ? 0 : 4;
+        if (waitpid(child, NULL, 0) != child) {
+            return 4;
+        }
+        pid_t vforked = vfork();
+        if (vforked < 0) {
+            if (errno != ENOSYS && errno != EPERM && errno != EINVAL) {
+                return 25;
+            }
+        } else {
+            if (vforked == 0) {
+                _exit(0);
+            }
+            if (waitpid(vforked, NULL, 0) != vforked) {
+                return 26;
+            }
+        }
+        return 0;
     }
     usleep(100000);
     close_range((unsigned int)fd, (unsigned int)fd, 0);
