@@ -13,6 +13,7 @@ http3_pid=
 delayed_pid=
 delayed_curl_pid=
 worker_delayed_curl_pid=
+host_delayed_curl_pid=
 service_port=$(python3 -c 'import socket
 while True:
     s=socket.socket(); s.bind(("127.0.0.1", 0)); p=s.getsockname()[1]; s.close()
@@ -36,6 +37,7 @@ cleanup() {
     [ -z "${delayed_pid:-}" ] || kill "$delayed_pid" 2>/dev/null || true
     [ -z "${delayed_curl_pid:-}" ] || kill "$delayed_curl_pid" 2>/dev/null || true
     [ -z "${worker_delayed_curl_pid:-}" ] || kill "$worker_delayed_curl_pid" 2>/dev/null || true
+    [ -z "${host_delayed_curl_pid:-}" ] || kill "$host_delayed_curl_pid" 2>/dev/null || true
     [ -z "${proxy_pid:-}" ] || wait "$proxy_pid" 2>/dev/null || true
     [ -z "${broker_pid:-}" ] || wait "$broker_pid" 2>/dev/null || true
     [ -z "${worker_pid:-}" ] || wait "$worker_pid" 2>/dev/null || true
@@ -46,6 +48,7 @@ cleanup() {
     [ -z "${delayed_pid:-}" ] || wait "$delayed_pid" 2>/dev/null || true
     [ -z "${delayed_curl_pid:-}" ] || wait "$delayed_curl_pid" 2>/dev/null || true
     [ -z "${worker_delayed_curl_pid:-}" ] || wait "$worker_delayed_curl_pid" 2>/dev/null || true
+    [ -z "${host_delayed_curl_pid:-}" ] || wait "$host_delayed_curl_pid" 2>/dev/null || true
     rm -rf "$tmp_dir"
 }
 trap cleanup EXIT INT TERM
@@ -79,6 +82,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path == "/worker":
             print("worker-delayed-request", flush=True)
             body = b"broker-worker-crash-ok\n"
+        elif self.path == "/host":
+            print("host-delayed-request", flush=True)
+            body = b"broker-socket-host-crash-ok\n"
         else:
             print("delayed-request", flush=True)
             body = b"broker-frontend-crash-ok\n"
@@ -315,9 +321,26 @@ if [ -z "$host_pid" ]; then
     cat "$tmp_dir/broker.log" "$tmp_dir/proxy.log"
     exit 1
 fi
+curl --noproxy '*' --silent --show-error --fail --max-time 20 \
+    "http://127.0.0.2:$delayed_port/host" >"$tmp_dir/host-delayed.out" 2>"$tmp_dir/host-delayed.err" &
+host_delayed_curl_pid=$!
+for _ in $(seq 1 150); do
+    grep -q host-delayed-request "$tmp_dir/delayed.log" && break
+    sleep 0.1
+done
+if ! grep -q host-delayed-request "$tmp_dir/delayed.log"; then
+    cat "$tmp_dir/broker.log" "$tmp_dir/proxy.log" "$tmp_dir/host-delayed.err" "$tmp_dir/delayed.log"
+    exit 1
+fi
 kill -9 "$host_pid"
 wait "$host_pid" 2>/dev/null || true
 host_pid=
+if ! wait "$host_delayed_curl_pid"; then
+    cat "$tmp_dir/broker.log" "$tmp_dir/proxy.log" "$tmp_dir/host-delayed.err"
+    exit 1
+fi
+host_delayed_curl_pid=
+grep -qx "broker-socket-host-crash-ok" "$tmp_dir/host-delayed.out"
 for _ in $(seq 1 450); do
     if probe >"$tmp_dir/host-restart.out" 2>"$tmp_dir/host-restart.err"; then
         break
@@ -328,4 +351,4 @@ if ! grep -qx "broker-restart-ok" "$tmp_dir/host-restart.out"; then
     cat "$tmp_dir/broker.log" "$tmp_dir/proxy.log" "$tmp_dir/host-restart.err"
     exit 1
 fi
-echo "frontend and bridge-worker crashes preserved streams; worker and socket-host restarts rebuilt mappings"
+echo "frontend, bridge-worker, and socket-host bridge crashes preserved streams; socket-owner state rebuilt mappings"

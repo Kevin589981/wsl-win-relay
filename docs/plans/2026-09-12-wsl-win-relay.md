@@ -2,7 +2,7 @@
 
 **Goal:** Build a durable emergency network relay that exposes a SOCKS5 proxy in WSL while a Windows process performs outbound TCP connections.
 
-**Architecture:** A versioned multiplexed frame protocol runs over the Windows process stdin/stdout pipes. The WSL process owns the local proxy listener and relay client; stdio mode keeps relay state in the Windows child, while broker mode moves it into a persistent socket host behind replaceable frontend and bridge-worker processes. Protocol, transport, relay, and proxy layers are separate so later transparent TCP/UDP adapters can reuse the relay.
+**Architecture:** A versioned multiplexed frame protocol runs over the Windows process stdin/stdout pipes. The WSL process owns the local proxy listener and relay client; stdio mode keeps relay state in the Windows child, while broker mode moves it into a persistent socket owner behind replaceable frontend, bridge-worker, and socket-host bridge processes. Protocol, transport, relay, and proxy layers are separate so later transparent TCP/UDP adapters can reuse the relay.
 
 **Tech Stack:** Go standard library, cross-compiled Windows/Linux binaries, `go test`.
 
@@ -84,7 +84,7 @@
 - [x] Broker-mode can be selected from the persistent JSON configuration while
       attach credentials remain environment-only.
 - [x] Optional systemd user broker unit, private token file, and bounded broker
-      process restart wrapper are available; socket-host crashes remain the
+      process restart wrapper are available; socket-owner crashes remain the
       documented established-socket failure boundary.
 - [x] Broker instance identity detects a broker process restart and rebuilds
       stale peer state plus explicit/automatic mappings without restarting the
@@ -92,20 +92,21 @@
 - [x] Broker-mode becomes the proxy service default when the broker installer
       provisions `WSL_WIN_RELAY_BROKER_MODE=1` in the private environment; JSON
       and command-line configuration remain available for explicit control.
-- [x] Process-isolated broker frontend/bridge-worker/socket-host design is
-      documented in ADR-0016; only the socket host owns relay state.
-- [x] Frontend and bridge-worker crash recovery preserves established
-      socket-host-owned sockets and automatic/explicit/strict mappings; the
-      integration test covers live delayed streams across both force-kills.
+- [x] Process-isolated broker frontend/bridge-worker/socket-host/socket-owner
+      design is documented in ADR-0016; only the socket owner owns relay state.
+- [x] Frontend, bridge-worker, and socket-host bridge crash recovery preserves
+      established socket-owner-owned sockets and automatic/explicit/strict
+      mappings; the integration test covers live delayed streams across all
+      outer bridge force-kills.
 - [x] Broker systemd unit uses `KillMode=process` so frontend restart does not
-      terminate the bridge worker or socket host; normal stop uses cascading
+      terminate the bridge worker, socket-host bridge, or socket owner; normal stop uses cascading
       private control endpoints.
 - [x] Frontend and bridge-worker supervisors continuously reap children they
       start and keep externally-owned roles reusable without claiming their
       lifecycle.
-- [x] Socket-host health probes detect a dead reused host and rebuild the host
-      plus automatic/explicit/strict mappings; established streams end at the
-      socket-host crash boundary.
+- [x] Socket-owner health probes detect a dead reused owner and rebuild the
+      owner plus automatic/explicit/strict mappings; established streams end at
+      the socket-owner crash boundary.
 - [x] Broker connector credentials are propagated through a normalized,
       flag-free `WSLENV` entry; the contract is documented in ADR-0017.
 - [x] Private worker/socket-host health probes are token-bound and reject stale
@@ -114,11 +115,12 @@
       reuse, while transient probe failures leave externally-owned roles alone.
 - [x] Windows broker interop smoke can route through a Windows-side upstream
       proxy without requiring WSL to reach that proxy endpoint.
-- [ ] Socket-host crash recovery still requires a separate host-level recovery
-      boundary to preserve already-established streams because the socket host
-      owns the kernel sockets.
+- [x] Socket-host bridge crash recovery preserves already-established streams
+      because the socket owner, rather than the bridge, owns the kernel sockets.
+- [ ] Socket-owner crash recovery still requires a separate host-level recovery
+      boundary because the socket owner owns the kernel sockets.
 
-The hot-reconnect item is intentionally staged behind [ADR-0015](../adr/0015-persistent-windows-ownership-and-attach.md): it requires moving socket ownership into a persistent Windows broker before a connector can safely resume protocol state.
+The hot-reconnect implementation follows [ADR-0015](../adr/0015-persistent-windows-ownership-and-attach.md) and [ADR-0016](../adr/0016-process-isolated-socket-owner.md): relay state and socket ownership now live in an independent socket owner behind replaceable connector bridges.
 
 ---
 

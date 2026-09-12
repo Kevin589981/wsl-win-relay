@@ -30,8 +30,9 @@ const workerStartupTimeout = 10 * time.Second
 
 const (
 	roleWorker       = "worker"
-	roleSocketHost   = "socket-host"
+	roleSocketHost   = "socket-host-v2"
 	roleSocketBridge = "socket-bridge"
+	roleSocketOwner  = "socket-owner"
 )
 
 var errRoleTokenMismatch = errors.New("broker role token mismatch")
@@ -254,9 +255,22 @@ func bridgeConnections(a, b net.Conn) {
 func runWorker(opts options, logger *log.Logger) error {
 	service, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	ownerEndpoint := deriveEndpoint(opts.endpoint, "owner")
 	hostEndpoint := deriveEndpoint(opts.endpoint, "host")
-	hostCmd, hostDone, err := ensureSocketHost(service, opts, hostEndpoint, logger)
+	ownerCmd, ownerDone, err := ensureSocketOwner(service, opts, ownerEndpoint, logger)
 	if err != nil {
+		return err
+	}
+	hostCmd, hostDone, err := ensureSocketHost(service, opts, hostEndpoint, ownerEndpoint, logger)
+	if err != nil {
+		if ownerCmd != nil {
+			requestWorkerStop(ownerEndpoint)
+			_ = ownerCmd.Process.Kill()
+			select {
+			case <-ownerDone:
+			case <-time.After(time.Second):
+			}
+		}
 		return err
 	}
 	if hostCmd != nil {
@@ -267,12 +281,40 @@ func runWorker(opts options, logger *log.Logger) error {
 			case <-service.Done():
 			}
 		}()
-		defer func() {
+	}
+	if ownerCmd != nil {
+		go func() {
+			select {
+			case <-ownerDone:
+				stop()
+			case <-service.Done():
+			}
+		}()
+	}
+	defer func() {
+		if hostCmd != nil {
 			requestWorkerStop(hostEndpoint)
 			_ = hostCmd.Process.Kill()
 			select {
 			case <-hostDone:
 			case <-time.After(time.Second):
+			}
+		}
+		if ownerCmd != nil {
+			requestWorkerStop(ownerEndpoint)
+			_ = ownerCmd.Process.Kill()
+			select {
+			case <-ownerDone:
+			case <-time.After(time.Second):
+			}
+		}
+	}()
+	if hostCmd != nil {
+		go func() {
+			select {
+			case <-hostDone:
+				stop()
+			case <-service.Done():
 			}
 		}()
 	}
@@ -293,7 +335,7 @@ func runWorker(opts options, logger *log.Logger) error {
 		_ = controlListener.Close()
 	}()
 	go serveWorkerControl(service, controlListener, stop, opts.tokenHex, roleWorker)
-	logger.Printf("broker bridge worker listening on %s (socket host %s)", opts.endpoint, hostEndpoint)
+	logger.Printf("broker bridge worker listening on %s (socket host bridge %s, socket owner %s)", opts.endpoint, hostEndpoint, ownerEndpoint)
 	for {
 		conn, acceptErr := listener.Accept()
 		if acceptErr != nil {
@@ -341,15 +383,15 @@ func bridgeWorkerConnection(ctx context.Context, client net.Conn, endpoint strin
 	bridgeConnections(client, host)
 }
 
-func ensureSocketHost(ctx context.Context, opts options, endpoint string, logger *log.Logger) (*exec.Cmd, <-chan struct{}, error) {
+func ensureSocketOwner(ctx context.Context, opts options, endpoint string, logger *log.Logger) (*exec.Cmd, <-chan struct{}, error) {
 	probeCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
-	err := probeRole(probeCtx, endpoint, opts.tokenHex, roleSocketHost)
+	err := probeRole(probeCtx, endpoint, opts.tokenHex, roleSocketOwner)
 	cancel()
 	if err == nil {
-		logger.Printf("reusing broker socket host on %s", endpoint)
+		logger.Printf("reusing broker socket owner on %s", endpoint)
 		return nil, nil, nil
 	}
-	logger.Printf("socket host probe failed on %s: %v", endpoint, err)
+	logger.Printf("socket owner probe failed on %s: %v", endpoint, err)
 	if errors.Is(err, errRoleTokenMismatch) {
 		if stopErr := stopConflictingRole(ctx, endpoint, logger); stopErr != nil {
 			return nil, nil, stopErr
@@ -359,21 +401,77 @@ func ensureSocketHost(ctx context.Context, opts options, endpoint string, logger
 	if err != nil {
 		return nil, nil, fmt.Errorf("locate broker executable: %w", err)
 	}
-	args := []string{"-socket-host", "-endpoint", endpoint, "-token-hex", opts.tokenHex}
+	args := []string{"-socket-owner", "-endpoint", endpoint, "-token-hex", opts.tokenHex}
 	if opts.upstreamProxy != "" {
 		args = append(args, "-upstream-proxy", opts.upstreamProxy)
 	}
 	host := exec.Command(executable, args...)
 	host.Stdout = io.Discard
 	host.Stderr = os.Stderr
-	logger.Printf("starting broker socket host on %s", endpoint)
+	logger.Printf("starting broker socket owner on %s", endpoint)
 	if err := host.Start(); err != nil {
-		return nil, nil, fmt.Errorf("start broker socket host: %w", err)
+		return nil, nil, fmt.Errorf("start broker socket owner: %w", err)
 	}
 	done := make(chan struct{})
 	go func() {
 		if _, waitErr := host.Process.Wait(); waitErr != nil {
-			logger.Printf("broker socket host exited: %v", waitErr)
+			logger.Printf("broker socket owner exited: %v", waitErr)
+		}
+		close(done)
+	}()
+	deadline := time.NewTimer(workerStartupTimeout)
+	defer deadline.Stop()
+	for {
+		probeCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+		dialErr := probeRole(probeCtx, endpoint, opts.tokenHex, roleSocketOwner)
+		cancel()
+		if dialErr == nil {
+			return host, done, nil
+		}
+		select {
+		case <-ctx.Done():
+			_ = host.Process.Kill()
+			return nil, nil, ctx.Err()
+		case <-done:
+			return nil, nil, errors.New("broker socket owner exited before becoming ready")
+		case <-deadline.C:
+			_ = host.Process.Kill()
+			return nil, nil, errors.New("broker socket owner did not become ready")
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
+func ensureSocketHost(ctx context.Context, opts options, endpoint, ownerEndpoint string, logger *log.Logger) (*exec.Cmd, <-chan struct{}, error) {
+	probeCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	err := probeRole(probeCtx, endpoint, opts.tokenHex, roleSocketHost)
+	cancel()
+	if err == nil {
+		logger.Printf("reusing broker socket host bridge on %s", endpoint)
+		return nil, nil, nil
+	}
+	logger.Printf("socket host bridge probe failed on %s: %v", endpoint, err)
+	if errors.Is(err, errRoleTokenMismatch) {
+		if stopErr := stopConflictingRole(ctx, endpoint, logger); stopErr != nil {
+			return nil, nil, stopErr
+		}
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return nil, nil, fmt.Errorf("locate broker executable: %w", err)
+	}
+	args := []string{"-socket-host", "-endpoint", endpoint, "-owner-endpoint", ownerEndpoint, "-token-hex", opts.tokenHex}
+	bridge := exec.Command(executable, args...)
+	bridge.Stdout = io.Discard
+	bridge.Stderr = os.Stderr
+	logger.Printf("starting broker socket host bridge on %s (owner %s)", endpoint, ownerEndpoint)
+	if err := bridge.Start(); err != nil {
+		return nil, nil, fmt.Errorf("start broker socket host bridge: %w", err)
+	}
+	done := make(chan struct{})
+	go func() {
+		if _, waitErr := bridge.Process.Wait(); waitErr != nil {
+			logger.Printf("broker socket host bridge exited: %v", waitErr)
 		}
 		close(done)
 	}()
@@ -384,23 +482,23 @@ func ensureSocketHost(ctx context.Context, opts options, endpoint string, logger
 		dialErr := probeRole(probeCtx, endpoint, opts.tokenHex, roleSocketHost)
 		cancel()
 		if dialErr == nil {
-			return host, done, nil
+			return bridge, done, nil
 		}
 		select {
 		case <-ctx.Done():
-			_ = host.Process.Kill()
+			_ = bridge.Process.Kill()
 			return nil, nil, ctx.Err()
 		case <-done:
-			return nil, nil, errors.New("broker socket host exited before becoming ready")
+			return nil, nil, errors.New("broker socket host bridge exited before becoming ready")
 		case <-deadline.C:
-			_ = host.Process.Kill()
-			return nil, nil, errors.New("broker socket host did not become ready")
+			_ = bridge.Process.Kill()
+			return nil, nil, errors.New("broker socket host bridge did not become ready")
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
 }
 
-func runSocketHost(opts options, logger *log.Logger) error {
+func runSocketOwner(opts options, logger *log.Logger) error {
 	token, err := hex.DecodeString(opts.tokenHex)
 	if err != nil || len(token) == 0 {
 		return errors.New("attach token must be non-empty hexadecimal")
@@ -425,13 +523,13 @@ func runSocketHost(opts options, logger *log.Logger) error {
 	defer controlListener.Close()
 	service, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	go serveWorkerControl(service, controlListener, stop, opts.tokenHex, roleSocketHost)
+	go serveWorkerControl(service, controlListener, stop, opts.tokenHex, roleSocketOwner)
 	b := broker.NewWithRegistry(registry, 0)
 	link := framed.New()
 	server := relay.NewServerWithLink(link, upstreamDialer.DialContext, upstreamDialer.OpenPacketContext)
 	serverDone := make(chan error, 1)
 	go func() { serverDone <- server.ServeAttached(service) }()
-	logger.Printf("broker socket host listening on %s", opts.endpoint)
+	logger.Printf("broker socket owner listening on %s", opts.endpoint)
 	serveErr := b.ServeAttachedWith(service, listener, link, func(session *broker.Session) {
 		server.SetPeerInstanceID(session.InstanceID())
 	})
@@ -441,6 +539,58 @@ func runSocketHost(opts options, logger *log.Logger) error {
 		serveErr = serverErr
 	}
 	return serveErr
+}
+
+func runSocketBridge(opts options, logger *log.Logger, role string) error {
+	if opts.ownerEndpoint == "" {
+		return errors.New("socket bridge owner endpoint is required")
+	}
+	service, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	listener, err := localipc.Listen(opts.endpoint)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", opts.endpoint, err)
+	}
+	defer listener.Close()
+	controlListener, err := localipc.Listen(deriveEndpoint(opts.endpoint, "control"))
+	if err != nil {
+		return fmt.Errorf("listen socket bridge control: %w", err)
+	}
+	defer controlListener.Close()
+	go func() {
+		<-service.Done()
+		_ = listener.Close()
+		_ = controlListener.Close()
+	}()
+	go serveWorkerControl(service, controlListener, stop, opts.tokenHex, role)
+	go monitorSocketHost(service, opts.ownerEndpoint, opts.tokenHex, roleSocketOwner, stop)
+	logger.Printf("broker socket bridge listening on %s (role %s, socket owner %s)", opts.endpoint, role, opts.ownerEndpoint)
+	for {
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			if service.Err() != nil {
+				return service.Err()
+			}
+			if networkErr, ok := acceptErr.(net.Error); ok && networkErr.Temporary() {
+				continue
+			}
+			return acceptErr
+		}
+		go bridgeSocketConnection(service, conn, opts.ownerEndpoint, stop)
+	}
+}
+
+func bridgeSocketConnection(ctx context.Context, client net.Conn, ownerEndpoint string, stop context.CancelFunc) {
+	defer client.Close()
+	dialCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	owner, err := localipc.Dial(dialCtx, ownerEndpoint)
+	cancel()
+	if err != nil {
+		stop()
+		return
+	}
+	defer owner.Close()
+	bridgeConnections(client, owner)
 }
 
 func serveWorkerControl(ctx context.Context, listener net.Listener, stop context.CancelFunc, tokenHex, role string) {

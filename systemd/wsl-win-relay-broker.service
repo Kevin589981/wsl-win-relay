@@ -7,7 +7,7 @@ Type=simple
 ExecStart=%h/bin/wsl-win-relay-broker-service
 Restart=on-failure
 RestartSec=2s
-# Keep the bridge worker and socket host alive when systemd restarts a crashed frontend.
+# Keep the bridge worker, socket-host bridge, and socket owner alive when systemd restarts a crashed frontend.
 # A normal stop cascades STOP through their private control endpoints.
 KillMode=process
 TimeoutStopSec=10s

@@ -20,6 +20,9 @@ type options struct {
 	upstreamProxy string
 	worker        bool
 	socketHost    bool
+	socketBridge  bool
+	socketOwner   bool
+	ownerEndpoint string
 }
 
 func main() {
@@ -30,7 +33,21 @@ func main() {
 		os.Exit(2)
 	}
 	if opts.socketHost {
-		if err := runSocketHost(opts, logger); err != nil && !errors.Is(err, context.Canceled) {
+		if err := runSocketBridge(opts, logger, roleSocketHost); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Printf("stopped: %v", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if opts.socketBridge {
+		if err := runSocketBridge(opts, logger, roleSocketBridge); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Printf("stopped: %v", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if opts.socketOwner {
+		if err := runSocketOwner(opts, logger); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Printf("stopped: %v", err)
 			os.Exit(1)
 		}
@@ -58,6 +75,9 @@ func parseOptions(args []string) (options, error) {
 	set.StringVar(&opts.upstreamProxy, "upstream-proxy", opts.upstreamProxy, "optional HTTP CONNECT or SOCKS5 proxy URL")
 	set.BoolVar(&opts.worker, "worker", false, "internal socket-owning worker mode")
 	set.BoolVar(&opts.socketHost, "socket-host", false, "internal durable socket-host mode")
+	set.BoolVar(&opts.socketBridge, "socket-bridge", false, "internal connector bridge mode")
+	set.BoolVar(&opts.socketOwner, "socket-owner", false, "internal durable socket-owner mode")
+	set.StringVar(&opts.ownerEndpoint, "owner-endpoint", "", "internal socket-owner endpoint")
 	if err := set.Parse(args); err != nil {
 		return options{}, err
 	}
@@ -66,6 +86,28 @@ func parseOptions(args []string) (options, error) {
 	}
 	if opts.endpoint == "" || opts.tokenHex == "" {
 		return options{}, errors.New("endpoint and token-hex are required")
+	}
+	roleCount := 0
+	if opts.worker {
+		roleCount++
+	}
+	if opts.socketHost {
+		roleCount++
+		if opts.ownerEndpoint == "" {
+			return options{}, errors.New("owner-endpoint is required for socket-host mode")
+		}
+	}
+	if opts.socketBridge {
+		roleCount++
+		if opts.ownerEndpoint == "" {
+			return options{}, errors.New("owner-endpoint is required for socket-bridge mode")
+		}
+	}
+	if opts.socketOwner {
+		roleCount++
+	}
+	if roleCount > 1 {
+		return options{}, errors.New("worker, socket-host, socket-bridge, and socket-owner modes are mutually exclusive")
 	}
 	if _, err := hex.DecodeString(opts.tokenHex); err != nil {
 		return options{}, fmt.Errorf("token-hex: %w", err)
