@@ -17,6 +17,37 @@ func (echoDialer) DialContext(context.Context, string) (net.Conn, error) {
 	return local, nil
 }
 
+func TestConnectTimesOutWaitingForRelay(t *testing.T) {
+	client, server := net.Pipe()
+	done := make(chan error, 1)
+	go func() {
+		done <- (&Server{Dialer: blockingHTTPDialer{}, DialTimeout: 20 * time.Millisecond}).ServeConn(context.Background(), server)
+	}()
+	_ = client.SetDeadline(time.Now().Add(time.Second))
+	if _, err := io.WriteString(client, "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	response := make([]byte, 64)
+	count, err := client.Read(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(response[:count]), "HTTP/1.1 502") {
+		t.Fatalf("response %q", response[:count])
+	}
+	_ = client.Close()
+	if err := <-done; err == nil {
+		t.Fatal("expected relay timeout error")
+	}
+}
+
+type blockingHTTPDialer struct{}
+
+func (blockingHTTPDialer) DialContext(ctx context.Context, _ string) (net.Conn, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
 func TestConnectPreservesBufferedTunnelData(t *testing.T) {
 	client, server := net.Pipe()
 	done := make(chan error, 1)

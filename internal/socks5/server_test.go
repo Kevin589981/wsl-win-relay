@@ -35,6 +35,43 @@ func (c *resolvingPacketConn) WriteTo(data []byte, address net.Addr) (int, error
 	return c.WriteToUDP(data, target)
 }
 
+func TestServeConnTimesOutWaitingForRelay(t *testing.T) {
+	client, serverConn := net.Pipe()
+	s := &Server{Dialer: blockingDialer{}, DialTimeout: 20 * time.Millisecond}
+	done := make(chan error, 1)
+	go func() { done <- s.ServeConn(context.Background(), serverConn) }()
+	_ = client.SetDeadline(time.Now().Add(time.Second))
+	if _, err := client.Write([]byte{5, 1, 0}); err != nil {
+		t.Fatal(err)
+	}
+	method := make([]byte, 2)
+	if _, err := io.ReadFull(client, method); err != nil {
+		t.Fatal(err)
+	}
+	request := []byte{5, 1, 0, 1, 127, 0, 0, 1, 0, 80}
+	if _, err := client.Write(request); err != nil {
+		t.Fatal(err)
+	}
+	reply := make([]byte, 10)
+	if _, err := io.ReadFull(client, reply); err != nil {
+		t.Fatal(err)
+	}
+	if reply[1] != replyHostUnreachable {
+		t.Fatalf("reply: %v", reply)
+	}
+	_ = client.Close()
+	if err := <-done; err == nil {
+		t.Fatal("expected relay timeout error")
+	}
+}
+
+type blockingDialer struct{}
+
+func (blockingDialer) DialContext(ctx context.Context, _ string) (net.Conn, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
 func TestServeConnConnectsDomainAndProxies(t *testing.T) {
 	client, serverConn := net.Pipe()
 	s := &Server{Dialer: &echoDialer{}}
