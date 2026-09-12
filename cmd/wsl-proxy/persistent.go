@@ -139,6 +139,9 @@ func runPersistentConnector(parent, mappingCtx context.Context, opts options, lo
 	}
 	if !*initialized {
 		dialer.set(client)
+		if *peerInstanceID != 0 {
+			rebindControl(mappingCtx, opts.relayDialTimeout, logger, client, control)
+		}
 		*reverseForwards, *reverseDatagramForwards, err = registerMappings(mappingCtx, opts, logger, client, control)
 		if err != nil {
 			return err

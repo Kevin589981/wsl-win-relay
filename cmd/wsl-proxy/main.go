@@ -504,23 +504,7 @@ func runSession(parent context.Context, opts options, logger *log.Logger, dialer
 		logger.Printf("reverse UDP forwarding %s -> %s", mapping.Windows, mapping.WSL)
 	}
 	if control != nil {
-		rebindCtx, rebindCancel := context.WithTimeout(ctx, opts.relayDialTimeout)
-		rebindErr := control.Rebind(rebindCtx,
-			func(reserveCtx context.Context, windows, wsl string) (listencontrol.Reservation, error) {
-				return client.ReserveReverseForward(reserveCtx, windows, wsl)
-			},
-			func(reserveCtx context.Context, windows, wsl string) (listencontrol.Reservation, error) {
-				closer, err := client.ReverseDatagramForward(reserveCtx, windows, wsl)
-				if err != nil {
-					return nil, err
-				}
-				return noCommitReservation{Closer: closer}, nil
-			},
-		)
-		rebindCancel()
-		if rebindErr != nil {
-			logger.Printf("strict-listen lease rebind: %v", rebindErr)
-		}
+		rebindControl(ctx, opts.relayDialTimeout, logger, client, control)
 	}
 
 	select {
@@ -540,6 +524,29 @@ func runSession(parent context.Context, opts options, logger *log.Logger, dialer
 		return err
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+}
+
+func rebindControl(ctx context.Context, timeout time.Duration, logger *log.Logger, client *relay.Client, control *listencontrol.Server) {
+	if control == nil {
+		return
+	}
+	rebindCtx, rebindCancel := context.WithTimeout(ctx, timeout)
+	defer rebindCancel()
+	rebindErr := control.Rebind(rebindCtx,
+		func(reserveCtx context.Context, windows, wsl string) (listencontrol.Reservation, error) {
+			return client.ReserveReverseForward(reserveCtx, windows, wsl)
+		},
+		func(reserveCtx context.Context, windows, wsl string) (listencontrol.Reservation, error) {
+			closer, err := client.ReverseDatagramForward(reserveCtx, windows, wsl)
+			if err != nil {
+				return nil, err
+			}
+			return noCommitReservation{Closer: closer}, nil
+		},
+	)
+	if rebindErr != nil {
+		logger.Printf("strict-listen lease rebind: %v", rebindErr)
 	}
 }
 
