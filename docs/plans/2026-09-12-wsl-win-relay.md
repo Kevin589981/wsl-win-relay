@@ -45,6 +45,8 @@
 - [ ] In-process hot reconnect that preserves existing connections across a
       broken stdio session.
 
+The hot-reconnect item is intentionally staged behind [ADR-0015](../adr/0015-persistent-windows-ownership-and-attach.md): it requires moving socket ownership into a persistent Windows broker before a connector can safely resume protocol state.
+
 ---
 
 ### Task 1: Establish repository and design contracts
