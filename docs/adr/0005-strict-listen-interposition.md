@@ -29,8 +29,10 @@ Provide `libwsl_win_relay_listen.so` and a `wsl-win-relay-run` launcher. The int
    intercepts `close_range()` when it actually closes descriptors; the Windows
    mapping is released only after the final alias in a process is closed.
 7. Registers inherited leases for ordinary `fork()` and process-style
-   `clone()` and `clone3()` process children and releases a mapping only after
-   every process owner has gone away.
+   `clone()` and `clone3()` process children. Ordinary pthread/
+   `CLONE_THREAD` children share the thread-group PID and therefore share the
+   existing process owner. A mapping is released only after every process
+   owner has gone away.
 8. Releases abandoned mappings through the control daemon's process-identity
    lease reaper when an owner exits without callbacks.
 9. Retries only transient control-socket availability errors for a bounded
@@ -52,10 +54,10 @@ Provide `libwsl_win_relay_listen.so` and a `wsl-win-relay-run` launcher. The int
   covered for dynamically linked programs, but a statically linked program
   still requires a kernel-aware adapter.
 - Descriptor duplication through the standard `dup*()` calls,
-  `fcntl(F_DUPFD*)`, ordinary `fork()`, and process-style `clone()`/`clone3()`
-  are covered. `CLONE_THREAD` and `vfork()` ownership semantics remain outside
-  the interposer contract. The current native build is Linux amd64, matching
-  the supported WSL binary target.
+  `fcntl(F_DUPFD*)`, ordinary `fork()`, process-style `clone()`/`clone3()`,
+  and ordinary pthread/`CLONE_THREAD` listeners are covered. `vfork()`
+  ownership semantics remain outside the interposer contract. The current
+  native build is Linux amd64, matching the supported WSL binary target.
 - Crash cleanup depends on daemon-side lease reaping rather than a `close()`
   callback.
 - A `listen()` call can wait up to two seconds when the relay control service
