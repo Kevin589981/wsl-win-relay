@@ -40,6 +40,8 @@
 - [x] Generation-safe attach registry with per-instance token authentication
       and stale connector teardown isolation (transport foundation for the
       persistent Windows broker).
+- [x] Versioned attach-control wire handshake with bounded framing,
+      capability exchange, token authentication, and generation acknowledgements.
 - [x] Non-zero normal Windows relay exit status is classified as fatal instead
       of causing an unbounded restart loop.
 - [ ] Kernel-level coverage for static binaries and `vfork()` ownership
