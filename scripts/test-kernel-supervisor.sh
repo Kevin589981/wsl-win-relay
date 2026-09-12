@@ -150,6 +150,17 @@ printf '%s\n' \
     '    if (waitpid((pid_t)child, NULL, 0) != (pid_t)child) return 5;' \
     '    return close(fd) < 0 && errno == EBADF ? 0 : 6;' \
     '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "clone-rollback") == 0) {' \
+    '    int first = socket(AF_INET, SOCK_STREAM, 0); int second = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0};' \
+    '    address.sin_family = AF_INET; address.sin_addr.s_addr = htonl(INADDR_LOOPBACK); address.sin_port = htons(47143);' \
+    '    if (first < 0 || second < 0 || bind(first, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(first, 4) < 0) return 2;' \
+    '    address.sin_port = htons(47144);' \
+    '    if (bind(second, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(second, 4) < 0) return 3;' \
+    '    long child = syscall(SYS_clone, (unsigned long)SIGCHLD, 0, NULL, NULL, NULL);' \
+    '    if (child == 0) { close(first); close(second); _exit(0); }' \
+    '    if (child < 0) return 4;' \
+    '    return waitpid((pid_t)child, NULL, 0) == (pid_t)child ? 0 : 5;' \
+    '  }' \
     '  int duplicate = argc > 1 && strcmp(argv[1], "dup") == 0;' \
     '  int udp = argc > 1 && strcmp(argv[1], "udp") == 0;' \
     '  int ipv6 = argc > 1 && strcmp(argv[1], "tcp6") == 0;' \
@@ -305,6 +316,25 @@ if [ "$clone_files_status" -eq 0 ]; then
     ! grep -q '^ADOPT ' "$tmp_dir/clone-files.log"
     test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/clone-files.log")" -eq 1
 fi
+stop_control
+
+export WWR_TEST_REJECT_ADOPT_AFTER=1
+start_control "$tmp_dir/clone-rollback.sock" "$tmp_dir/clone-rollback.log"
+set +e
+WSL_WIN_RELAY_CONTROL="$tmp_dir/clone-rollback.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" clone-rollback
+clone_rollback_status=$?
+set -e
+unset WWR_TEST_REJECT_ADOPT_AFTER
+if [ "$clone_rollback_status" -eq 0 ]; then
+    echo "clone rollback target unexpectedly succeeded after forced ADOPT failure" >&2
+    exit 1
+fi
+grep -q 'RESERVE .* tcp4 47143' "$tmp_dir/clone-rollback.log"
+grep -q 'RESERVE .* tcp4 47144' "$tmp_dir/clone-rollback.log"
+test "$(grep -Ec '^ADOPT ' "$tmp_dir/clone-rollback.log")" -ge 2
+rollback_owner=$(sed -n 's/^ADOPT \([0-9][0-9]*\) .*/\1/p' "$tmp_dir/clone-rollback.log" | head -n 1)
+test -n "$rollback_owner"
+grep -q "^RELEASE $rollback_owner " "$tmp_dir/clone-rollback.log"
 stop_control
 
 start_control "$tmp_dir/leader-sys-exit.sock" "$tmp_dir/leader-sys-exit.log"

@@ -55,6 +55,9 @@ work follows the same model:
 - Signal termination and `exit_group` teardown use the same per-task exit
   bookkeeping; the final group cleanup releases each lease exactly once even
   when no task reaches an ordinary return path.
+- Owner migration and process-group cloning roll back previously successful
+  `ADOPT` operations when a later owner update fails, so a partial control
+  response cannot leave a child holding only part of the inherited lease set.
 - `vfork()` child-side libc behavior remains outside the contract; direct
   syscall-safe operations through `_exit` are the supported pattern.
 - The adapter remains opt-in. Unsupported architectures and unrecognized

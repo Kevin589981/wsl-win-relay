@@ -91,6 +91,8 @@ static struct task *tasks;
 static struct task *active_task;
 #define pending_call (active_task->pending)
 
+static void release_group_owner(struct task_group *group, pid_t owner);
+
 static int debug_enabled(void) {
     const char *value = getenv("WSL_WIN_RELAY_DEBUG");
     return value != NULL && value[0] != '\0' && strcmp(value, "0") != 0;
@@ -320,6 +322,7 @@ static struct task_group *clone_group(struct task_group *parent, pid_t owner_pid
     for (struct binding *source = parent->bindings; source != NULL; source = source->next) {
         struct binding *copy = calloc(1, sizeof(*copy));
         if (copy == NULL) {
+            release_group_owner(group, owner_pid);
             free(group);
             return NULL;
         }
@@ -337,6 +340,7 @@ static struct task_group *clone_group(struct task_group *parent, pid_t owner_pid
             continue;
         }
         if (owner_lease_operation("ADOPT", owner_pid, source->lease) < 0) {
+            release_group_owner(group, owner_pid);
             while (group->bindings != NULL) {
                 struct binding *next = group->bindings->next;
                 free(group->bindings);
@@ -386,6 +390,9 @@ static int migrate_group_owner(struct task_group *group, pid_t new_owner) {
             }
         }
         if (!seen && owner_lease_operation("ADOPT", new_owner, binding->lease) < 0) {
+            /* ADOPT is a batch operation. Roll back successful entries so a
+             * partial owner migration cannot leave leases split across tasks. */
+            release_group_owner(group, new_owner);
             return -1;
         }
     }

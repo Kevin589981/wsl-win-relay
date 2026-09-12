@@ -96,6 +96,9 @@
 - [x] Signal-terminated roots and thread-triggered `exit_group` teardown are
       covered by static supervisor smoke cases; lease cleanup remains
       single-shot when the group has no ordinary return path.
+- [x] Kernel owner migration and cloned process groups compensate partial
+      `ADOPT` failures with owner-scoped `RELEASE`, covered by a two-lease
+      forced-failure supervisor smoke case.
 - [x] `FD_CLOEXEC`, `dup3(O_CLOEXEC)`, and `close_range(..., CLOEXEC)` state is
       retired on `PTRACE_EVENT_EXEC`, so exec does not leave stale Windows
       listener reservations behind.
