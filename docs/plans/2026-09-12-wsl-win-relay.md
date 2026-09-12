@@ -37,6 +37,9 @@
       replacement session.
 - [x] Automatic TCP and allowlisted UDP mappings are process-scoped and
       rebound through the session-aware dialer after relay child replacement.
+- [x] Generation-safe attach registry with per-instance token authentication
+      and stale connector teardown isolation (transport foundation for the
+      persistent Windows broker).
 - [x] Non-zero normal Windows relay exit status is classified as fatal instead
       of causing an unbounded restart loop.
 - [ ] Kernel-level coverage for static binaries and `vfork()` ownership
