@@ -68,6 +68,37 @@ while True:
 PY
 udp_pid=$!
 
+for _ in $(seq 1 300); do
+    if python3 - <<'PY'
+import socket
+
+sock = socket.socket()
+sock.settimeout(0.2)
+try:
+    sock.connect(("127.0.0.1", 18082))
+except OSError:
+    raise SystemExit(1)
+finally:
+    sock.close()
+PY
+    then
+        break
+    fi
+    sleep 0.1
+done
+if ! python3 - <<'PY'
+import socket
+
+sock = socket.socket()
+sock.settimeout(1)
+sock.connect(("127.0.0.1", 18082))
+sock.close()
+PY
+then
+    cat "$tmp_dir/http.log"
+    exit 1
+fi
+
 token=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
 WSL_WIN_RELAY_ATTACH_TOKEN=$token \
 WSL_WIN_RELAY_BROKER_ENDPOINT="$tmp_dir/broker.sock" \
