@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted, phase one
+Superseded by ADR-0025
 
 ## Context
 
@@ -22,12 +22,10 @@ the target syscall's errno before the syscall executes. TCP reservations are
 committed only after Linux `listen()` succeeds; UDP reservations are rolled
 back if Linux `bind()` fails.
 
-Phase one intentionally supports a directly executed single-process amd64
-target. The supervisor rejects `fork()`, `vfork()`, `clone()`, and `clone3()`
-with `ENOTSUP` rather than allowing a child to create an uncoordinated
-listener. It does not yet claim complete fork/clone/thread-group inheritance,
-inherited descriptors, or other architectures. The original interposer remains
-the default because it has broader low-overhead lifecycle coverage.
+The phase-one release intentionally supported a directly executed single-
+process amd64 target and rejected process creation. Process-tree ownership is
+now being extended under ADR-0025; the original interposer remains the default
+because it has broader low-overhead lifecycle coverage.
 
 ## Consequences
 

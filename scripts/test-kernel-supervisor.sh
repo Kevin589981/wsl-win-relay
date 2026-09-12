@@ -29,9 +29,13 @@ printf '%s\n' \
     'int main(int argc, char **argv) {' \
     '  if (argc > 1 && strcmp(argv[1], "env") == 0) return getenv("LD_PRELOAD") == NULL ? 0 : 8;' \
     '  if (argc > 1 && strcmp(argv[1], "fork") == 0) {' \
+    '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0};' \
+    '    address.sin_family = AF_INET; address.sin_port = htons(47128); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
+    '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 2;' \
     '    pid_t child = fork();' \
-    '    if (child >= 0) { if (child == 0) _exit(9); waitpid(child, 0, 0); return 8; }' \
-    '    return errno == ENOTSUP ? 0 : 7;' \
+    '    if (child < 0) return errno == ENOTSUP ? 0 : 7;' \
+    '    if (child == 0) { usleep(100000); close(fd); _exit(0); }' \
+    '    close(fd); return waitpid(child, 0, 0) == child ? 0 : 6;' \
     '  }' \
     '  int duplicate = argc > 1 && strcmp(argv[1], "dup") == 0;' \
     '  int udp = argc > 1 && strcmp(argv[1], "udp") == 0;' \
@@ -78,25 +82,25 @@ start_control "$tmp_dir/tcp.sock" "$tmp_dir/tcp.log"
 WSL_WIN_RELAY_CONTROL="$tmp_dir/tcp.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target"
 grep -q 'RESERVE .* tcp4 47125' "$tmp_dir/tcp.log"
 grep -q '^COMMIT ' "$tmp_dir/tcp.log"
-grep -q '^CLOSE ' "$tmp_dir/tcp.log"
+grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/tcp.log"
 stop_control
 
 start_control "$tmp_dir/udp.sock" "$tmp_dir/udp.log"
 WSL_WIN_RELAY_CONTROL="$tmp_dir/udp.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" udp
 grep -q 'RESERVE .* udp4 47126' "$tmp_dir/udp.log"
-grep -q '^CLOSE ' "$tmp_dir/udp.log"
+grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/udp.log"
 stop_control
 
 start_control "$tmp_dir/tcp6.sock" "$tmp_dir/tcp6.log"
 WSL_WIN_RELAY_CONTROL="$tmp_dir/tcp6.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" tcp6
 grep -q 'RESERVE .* tcp6 47127' "$tmp_dir/tcp6.log"
 grep -q '^COMMIT ' "$tmp_dir/tcp6.log"
-grep -q '^CLOSE ' "$tmp_dir/tcp6.log"
+grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/tcp6.log"
 stop_control
 
 start_control "$tmp_dir/dup.sock" "$tmp_dir/dup.log"
 WSL_WIN_RELAY_CONTROL="$tmp_dir/dup.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" dup
-test "$(grep -c '^CLOSE ' "$tmp_dir/dup.log")" -eq 1
+test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/dup.log")" -eq 1
 stop_control
 
 start_control "$tmp_dir/reject.sock" "$tmp_dir/reject.log" 47125
@@ -113,10 +117,8 @@ stop_control
 
 start_control "$tmp_dir/fork.sock" "$tmp_dir/fork.log"
 WSL_WIN_RELAY_CONTROL="$tmp_dir/fork.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" fork
-if [ -s "$tmp_dir/fork.log" ]; then
-    echo "fork rejection unexpectedly touched the lease control protocol" >&2
-    cat "$tmp_dir/fork.log" >&2
-    exit 1
-fi
+grep -q 'RESERVE .* tcp4 47128' "$tmp_dir/fork.log"
+grep -q '^ADOPT ' "$tmp_dir/fork.log"
+test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/fork.log")" -eq 2
 stop_control
 echo "kernel supervisor coordinated static TCP/UDP and propagated rejection"

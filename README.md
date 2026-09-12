@@ -373,18 +373,19 @@ It also rejects directly executed static ELF and setuid/setgid targets before
 launch. Those targets cannot load `LD_PRELOAD`, so allowing them through would
 silently disable the Windows-before-WSL bind contract. Scripts and other
 non-ELF entrypoints remain allowed; true static-binary coverage requires a
-broader kernel-aware lifecycle adapter. A phase-one opt-in ptrace adapter is now available
-for direct single-process Linux amd64 targets:
+broader kernel-aware lifecycle adapter. An opt-in ptrace adapter is now available
+for Linux amd64 targets, including process-style `fork()` children:
 
 ```bash
 ./scripts/wsl-win-relay-run --kernel ./static-service 8000
 ```
 
 It coordinates direct TCP/UDP `bind()` and TCP `listen()` syscalls through the
-same control socket. The kernel adapter is deliberately opt-in and currently
-rejects `fork()`, `vfork()`, `clone()`, and `clone3()` with `ENOTSUP` so a child
-cannot create an uncoordinated listener. It does not cover thread-group
-descriptor inheritance or non-amd64 targets; use the default interposer for
+same control socket. Process-style `fork()` and `clone(SIGCHLD)` children are
+attached and inherit lease ownership with `ADOPT`/`RELEASE`. The kernel adapter
+is deliberately opt-in and currently rejects `vfork()`, `clone3()`, and
+`CLONE_THREAD` with `ENOTSUP`; thread-group descriptor inheritance and
+non-amd64 targets remain unsupported. Use the default interposer for
 dynamically linked applications.
 
 Before the application's libc `listen()` succeeds, the wrapper reserves

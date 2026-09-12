@@ -3,6 +3,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/sched.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -53,9 +54,18 @@ struct pending {
 };
 
 static const char *control_path;
-static pid_t tracee_pid;
-static struct binding *bindings;
-static struct pending pending_call;
+struct task {
+    pid_t pid;
+    int entering;
+    struct binding *bindings;
+    struct pending pending;
+    struct task *next;
+};
+
+static pid_t root_pid;
+static struct task *tasks;
+static struct task *active_task;
+#define pending_call (active_task->pending)
 
 static int debug_enabled(void) {
     const char *value = getenv("WSL_WIN_RELAY_DEBUG");
@@ -184,7 +194,7 @@ static int parse_response(const char *response, unsigned long long *value) {
 static int reserve_lease(const char *network, const char *host, uint16_t port, uint64_t *lease) {
     char request[256];
     char response[512];
-    snprintf(request, sizeof(request), "RESERVE %ld %s %u %s\n", (long)tracee_pid, network, (unsigned)port, host);
+    snprintf(request, sizeof(request), "RESERVE %ld %s %u %s\n", (long)active_task->pid, network, (unsigned)port, host);
     unsigned long long value;
     if (control_request(request, response, sizeof(response)) < 0 || parse_response(response, &value) < 0) {
         return -1;
@@ -203,8 +213,18 @@ static int lease_operation(const char *operation, uint64_t lease) {
     return parse_response(response, NULL);
 }
 
+static int owner_lease_operation(const char *operation, pid_t pid, uint64_t lease) {
+    char request[160];
+    char response[512];
+    snprintf(request, sizeof(request), "%s %ld %llu\n", operation, (long)pid, (unsigned long long)lease);
+    if (control_request(request, response, sizeof(response)) < 0) {
+        return -1;
+    }
+    return parse_response(response, NULL);
+}
+
 static struct binding *find_binding(int fd) {
-    for (struct binding *binding = bindings; binding != NULL; binding = binding->next) {
+    for (struct binding *binding = active_task->bindings; binding != NULL; binding = binding->next) {
         if (binding->fd == fd) {
             return binding;
         }
@@ -221,13 +241,13 @@ static struct binding *add_binding(int fd, int type, int family) {
     binding->type = type;
     binding->family = family;
     binding->refs = 1;
-    binding->next = bindings;
-    bindings = binding;
+    binding->next = active_task->bindings;
+    active_task->bindings = binding;
     return binding;
 }
 
 static int lease_is_referenced(uint64_t lease) {
-    for (struct binding *binding = bindings; binding != NULL; binding = binding->next) {
+    for (struct binding *binding = active_task->bindings; binding != NULL; binding = binding->next) {
         if (binding->lease == lease) {
             return 1;
         }
@@ -235,14 +255,102 @@ static int lease_is_referenced(uint64_t lease) {
     return 0;
 }
 
+static struct task *find_task(pid_t pid) {
+    for (struct task *task = tasks; task != NULL; task = task->next) {
+        if (task->pid == pid) {
+            return task;
+        }
+    }
+    return NULL;
+}
+
+static struct task *add_task(pid_t pid) {
+    struct task *task = calloc(1, sizeof(*task));
+    if (task == NULL) {
+        return NULL;
+    }
+    task->pid = pid;
+    task->entering = 1;
+    task->next = tasks;
+    tasks = task;
+    return task;
+}
+
+static int adopt_task_bindings(struct task *parent, struct task *child) {
+    for (struct binding *source = parent->bindings; source != NULL; source = source->next) {
+        struct binding *copy = calloc(1, sizeof(*copy));
+        if (copy == NULL) {
+            return -1;
+        }
+        *copy = *source;
+        copy->next = child->bindings;
+        child->bindings = copy;
+        int seen = 0;
+        for (struct binding *prior = parent->bindings; prior != source; prior = prior->next) {
+            if (prior->lease == source->lease) {
+                seen = 1;
+                break;
+            }
+        }
+        if (source->lease == 0 || seen) {
+            continue;
+        }
+        if (owner_lease_operation("ADOPT", child->pid, source->lease) < 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static void release_task(struct task *task) {
+    active_task = task;
+    while (task->bindings != NULL) {
+        struct binding *next = task->bindings->next;
+        uint64_t lease = task->bindings->lease;
+        int seen = 0;
+        for (struct binding *prior = task->bindings->next; prior != NULL; prior = prior->next) {
+            if (prior->lease == lease) {
+                seen = 1;
+                break;
+            }
+        }
+        if (lease != 0 && !seen) {
+            (void)owner_lease_operation("RELEASE", task->pid, lease);
+        }
+        free(task->bindings);
+        task->bindings = next;
+    }
+}
+
+static void remove_task(struct task *task) {
+    struct task **cursor = &tasks;
+    while (*cursor != NULL) {
+        if (*cursor == task) {
+            *cursor = task->next;
+            release_task(task);
+            free(task);
+            active_task = NULL;
+            return;
+        }
+        cursor = &(*cursor)->next;
+    }
+}
+
+static void cleanup_tasks(void) {
+    while (tasks != NULL) {
+        remove_task(tasks);
+    }
+    active_task = NULL;
+}
+
 static void remove_binding(int fd) {
-    struct binding **cursor = &bindings;
+    struct binding **cursor = &active_task->bindings;
     while (*cursor != NULL) {
         if ((*cursor)->fd == fd) {
             struct binding *removed = *cursor;
             *cursor = removed->next;
             if (removed->lease != 0 && !lease_is_referenced(removed->lease)) {
-                (void)lease_operation("CLOSE", removed->lease);
+                (void)owner_lease_operation("RELEASE", active_task->pid, removed->lease);
             }
             free(removed);
             return;
@@ -254,7 +362,7 @@ static void remove_binding(int fd) {
 static int read_target_memory(unsigned long address, void *buffer, size_t length) {
     struct iovec local = {.iov_base = buffer, .iov_len = length};
     struct iovec remote = {.iov_base = (void *)address, .iov_len = length};
-    ssize_t copied = process_vm_readv(tracee_pid, &local, 1, &remote, 1, 0);
+    ssize_t copied = process_vm_readv(active_task->pid, &local, 1, &remote, 1, 0);
     if (copied < 0) {
         return -1;
     }
@@ -306,7 +414,7 @@ static const char *network_name(int family, int type) {
 
 static int stop_syscall(struct user_regs_struct *regs, int error) {
     regs->orig_rax = (unsigned long)-1;
-    if (ptrace(PTRACE_SETREGS, tracee_pid, 0, regs) < 0) {
+    if (ptrace(PTRACE_SETREGS, active_task->pid, 0, regs) < 0) {
         return -1;
     }
     pending_call.kind = PENDING_DENY;
@@ -316,7 +424,7 @@ static int stop_syscall(struct user_regs_struct *regs, int error) {
 
 static int apply_return_error(struct user_regs_struct *regs) {
     regs->rax = (unsigned long)-(long)pending_call.lease;
-    if (ptrace(PTRACE_SETREGS, tracee_pid, 0, regs) < 0) {
+    if (ptrace(PTRACE_SETREGS, active_task->pid, 0, regs) < 0) {
         return -1;
     }
     pending_call.kind = PENDING_NONE;
@@ -329,11 +437,14 @@ static int handle_entry(struct user_regs_struct *regs) {
     if (debug_enabled()) {
         fprintf(stderr, "strict-supervisor: syscall %lu\n", syscall_number);
     }
-    if (syscall_number == SYS_fork || syscall_number == SYS_vfork || syscall_number == SYS_clone
+    if (syscall_number == SYS_vfork
 #ifdef SYS_clone3
         || syscall_number == SYS_clone3
 #endif
     ) {
+        return stop_syscall(regs, ENOTSUP);
+    }
+    if (syscall_number == SYS_clone && ((unsigned long)regs->rdi & CLONE_THREAD) != 0) {
         return stop_syscall(regs, ENOTSUP);
     }
     if (syscall_number == SYS_socket) {
@@ -455,7 +566,7 @@ static int handle_exit(struct user_regs_struct *regs) {
             /* A committed listener cannot be rolled back atomically after the
              * target syscall. Terminate the target rather than leave a
              * listener whose Windows half is unknown. */
-            kill(tracee_pid, SIGTERM);
+            kill(active_task->pid, SIGTERM);
         } else if (binding != NULL) {
             binding->lease = pending_call.lease;
         }
@@ -491,35 +602,79 @@ static int handle_exit(struct user_regs_struct *regs) {
 
 static int trace_target(void) {
     int status;
-    if (waitpid(tracee_pid, &status, 0) < 0 || !WIFSTOPPED(status)) {
+    if (waitpid(root_pid, &status, 0) < 0 || !WIFSTOPPED(status)) {
         return -1;
     }
-    if (ptrace(PTRACE_SETOPTIONS, tracee_pid, 0, PTRACE_O_EXITKILL | PTRACE_O_TRACESYSGOOD) < 0 ||
-        ptrace(PTRACE_SYSCALL, tracee_pid, 0, 0) < 0) {
+    struct task *root = add_task(root_pid);
+    if (root == NULL) {
         return -1;
     }
-    int entering = 1;
+    active_task = root;
+    long options = PTRACE_O_EXITKILL | PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEFORK | PTRACE_O_TRACECLONE;
+    if (ptrace(PTRACE_SETOPTIONS, root_pid, 0, options) < 0 ||
+        ptrace(PTRACE_SYSCALL, root_pid, 0, 0) < 0) {
+        return -1;
+    }
+    int root_status = 1;
+    int root_done = 0;
     for (;;) {
-        if (waitpid(tracee_pid, &status, 0) < 0) {
+        pid_t pid = waitpid(-1, &status, __WALL);
+        if (pid < 0) {
             if (errno == EINTR) continue;
+            if (errno == ECHILD) break;
             return -1;
         }
-        if (WIFEXITED(status)) return WEXITSTATUS(status);
-        if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
+        struct task *task = find_task(pid);
+        if (task == NULL) {
+            continue;
+        }
+        active_task = task;
+        if (WIFEXITED(status)) {
+            if (pid == root_pid) {
+                root_status = WEXITSTATUS(status);
+                root_done = 1;
+            }
+            remove_task(task);
+            if (root_done && tasks == NULL) break;
+            continue;
+        }
+        if (WIFSIGNALED(status)) {
+            if (pid == root_pid) {
+                root_status = 128 + WTERMSIG(status);
+                root_done = 1;
+            }
+            remove_task(task);
+            if (root_done && tasks == NULL) break;
+            continue;
+        }
         if (!WIFSTOPPED(status)) continue;
         int signal_number = WSTOPSIG(status);
+        unsigned event = (unsigned)status >> 16;
+        if (signal_number == SIGTRAP && (event == PTRACE_EVENT_FORK || event == PTRACE_EVENT_CLONE)) {
+            unsigned long child_value = 0;
+            if (ptrace(PTRACE_GETEVENTMSG, pid, 0, &child_value) < 0) return -1;
+            struct task *child = add_task((pid_t)child_value);
+            if (child == NULL) return -1;
+            if (adopt_task_bindings(task, child) < 0) return -1;
+            if (ptrace(PTRACE_SETOPTIONS, child->pid, 0, options) < 0 ||
+                ptrace(PTRACE_SYSCALL, child->pid, 0, 0) < 0) return -1;
+            if (ptrace(PTRACE_SYSCALL, pid, 0, 0) < 0) return -1;
+            continue;
+        }
         if (signal_number == (SIGTRAP | 0x80)) {
             struct user_regs_struct regs;
-            if (ptrace(PTRACE_GETREGS, tracee_pid, 0, &regs) < 0) return -1;
-            int error = entering ? handle_entry(&regs) : handle_exit(&regs);
+            if (ptrace(PTRACE_GETREGS, pid, 0, &regs) < 0) return -1;
+            int error = task->entering ? handle_entry(&regs) : handle_exit(&regs);
             if (error < 0) return -1;
-            entering = !entering;
-            if (ptrace(PTRACE_SYSCALL, tracee_pid, 0, 0) < 0) return -1;
+            task->entering = !task->entering;
+            if (ptrace(PTRACE_SYSCALL, pid, 0, 0) < 0) return -1;
         } else {
             int deliver = signal_number == SIGTRAP ? 0 : signal_number;
-            if (ptrace(PTRACE_SYSCALL, tracee_pid, 0, deliver) < 0) return -1;
+            if (ptrace(PTRACE_SYSCALL, pid, 0, deliver) < 0) return -1;
         }
     }
+    active_task = NULL;
+    return root_status;
 }
 
 int main(int argc, char **argv) {
@@ -532,23 +687,18 @@ int main(int argc, char **argv) {
         fprintf(stderr, "WSL_WIN_RELAY_CONTROL is required\n");
         return 2;
     }
-    tracee_pid = fork();
-    if (tracee_pid < 0) {
+    root_pid = fork();
+    if (root_pid < 0) {
         perror("fork");
         return 1;
     }
-    if (tracee_pid == 0) {
+    if (root_pid == 0) {
         if (ptrace(PTRACE_TRACEME, 0, 0, 0) < 0) _exit(127);
         raise(SIGSTOP);
         execvp(argv[1], &argv[1]);
         _exit(127);
     }
     int status = trace_target();
-    while (bindings != NULL) {
-        struct binding *next = bindings->next;
-        if (bindings->lease != 0) (void)lease_operation("CLOSE", bindings->lease);
-        free(bindings);
-        bindings = next;
-    }
+    cleanup_tasks();
     return status < 0 ? 1 : status;
 }

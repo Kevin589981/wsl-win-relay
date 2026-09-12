@@ -2,12 +2,12 @@
 
 ## Status
 
-Accepted, implementation staged
+Accepted, fork support implemented; clone/thread-group follow-up
 
 ## Context
 
-The phase-one ptrace supervisor coordinates direct static amd64 listeners, but
-it deliberately rejects process creation. A full static-binary adapter must
+The phase-one ptrace supervisor coordinated direct static amd64 listeners, but
+it deliberately rejected process creation. A full static-binary adapter must
 preserve the same Windows-before-WSL contract when a service forks workers,
 creates process-style `clone()` children, or creates ordinary threads. The
 current implementation has one tracee, one pending syscall record, and an fd
@@ -17,14 +17,17 @@ the lease owner known to the control server.
 
 ## Decision
 
-Phase two will introduce an explicit supervisor process table:
+Phase two introduces an explicit supervisor process table. The first increment
+implements process-style `fork()`/`clone(SIGCHLD)` children; the remaining
+thread-group work follows the same model:
 
 - Every traced task has its own pid/tid, syscall-entry state, pending record,
   and fd table keyed by `(task id, fd)`.
-- `PTRACE_O_TRACEFORK`, `PTRACE_O_TRACEVFORK`, and `PTRACE_O_TRACECLONE` will
-  attach children before they can execute another syscall. The event handler
-  will clone inherited fd state and issue `ADOPT child-pid lease` once per
-  inherited lease.
+- `PTRACE_O_TRACEFORK` and `PTRACE_O_TRACECLONE` attach process-style children
+  before they can execute another syscall. The event handler clones inherited
+  fd state and issues `ADOPT child-pid lease` once per inherited lease.
+- `CLONE_THREAD`, `vfork()`, and `clone3()` remain fail-closed until their
+  distinct lifecycle semantics are implemented.
 - Lease teardown will use owner-scoped `RELEASE pid lease`; a lease is closed
   by the control server only after its final owner disappears. `CLOSE` remains
   reserved for a lease with no child owner.
@@ -79,4 +82,3 @@ in one task could release another task's descriptor.
 
 Deferred: it can reduce per-syscall stops but requires a privileged listener,
 more deployment machinery, and equivalent process-tree bookkeeping.
-

@@ -77,8 +77,11 @@
       coverage remains follow-up work.
 - [x] Phase-two process-tree ownership model is documented in ADR-0025:
       per-task fd state, ptrace fork/clone events, and owner-scoped
-      `ADOPT`/`RELEASE` semantics are required before static child processes
-      can be enabled.
+      `ADOPT`/`RELEASE` semantics define the implementation baseline for
+      static child-process support.
+- [x] Static process-style `fork()`/`clone(SIGCHLD)` children are now traced,
+      inherit fd state, and adopt/release Windows lease ownership; vfork,
+      clone3, and `CLONE_THREAD` remain fail-closed follow-up boundaries.
 - [x] The strict launcher now fails closed for directly executed static ELF
       and setuid/setgid targets instead of silently implying interposition;
       true kernel-level coverage remains a separate adapter boundary.
