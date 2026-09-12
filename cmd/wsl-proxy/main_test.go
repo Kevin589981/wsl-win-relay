@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -105,6 +106,33 @@ func TestHandshakeTransportExitClassification(t *testing.T) {
 			t.Fatalf("%v should trigger relay restart", err)
 		}
 	}
+}
+
+func TestClassifyRelayProcessExit(t *testing.T) {
+	command := exec.Command(os.Args[0], "-test.run=TestRelayExitHelper")
+	command.Env = append(os.Environ(), "WSL_WIN_RELAY_EXIT_HELPER=1", "WSL_WIN_RELAY_EXIT_CODE=2")
+	if err := command.Run(); err == nil {
+		t.Fatal("helper should exit non-zero")
+	} else if fatal := classifyRelayProcessExit(err); fatal == nil {
+		t.Fatal("non-zero relay exit should be fatal")
+	}
+	command = exec.Command(os.Args[0], "-test.run=TestRelayExitHelper")
+	command.Env = append(os.Environ(), "WSL_WIN_RELAY_EXIT_HELPER=1", "WSL_WIN_RELAY_EXIT_CODE=0")
+	if err := command.Run(); err != nil {
+		t.Fatal(err)
+	} else if fatal := classifyRelayProcessExit(err); fatal != nil {
+		t.Fatalf("clean relay exit should remain recoverable: %v", fatal)
+	}
+}
+
+func TestRelayExitHelper(t *testing.T) {
+	if os.Getenv("WSL_WIN_RELAY_EXIT_HELPER") != "1" {
+		return
+	}
+	if os.Getenv("WSL_WIN_RELAY_EXIT_CODE") == "2" {
+		os.Exit(2)
+	}
+	os.Exit(0)
 }
 
 func TestSessionCompletionPrefersContextCancellation(t *testing.T) {

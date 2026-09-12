@@ -27,6 +27,9 @@ again and recreates configured reverse mappings and control state.
 Treat local bind errors, invalid configuration, capability mismatches, and
 reverse registration failures during a healthy session as fatal. The existing
 systemd user unit may additionally restart the whole proxy after a fatal exit.
+If the Windows child has already exited normally with a non-zero status, treat
+that status as fatal as well; otherwise a malformed Windows-side configuration
+would look like an EOF and trigger an infinite supervisor loop.
 
 ## Consequences
 
@@ -52,6 +55,8 @@ systemd user unit may additionally restart the whole proxy after a fatal exit.
 - True in-process hot reconnect would require a session-independent dialer,
   replayable mapping registry, and explicit handling for in-flight requests;
   it remains a future enhancement.
+- A child terminated by an external signal is still considered a transient
+  transport failure; only a normal non-zero exit is classified as fatal.
 
 ## Alternatives Considered
 

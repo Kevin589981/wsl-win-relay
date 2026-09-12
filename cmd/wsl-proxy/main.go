@@ -326,6 +326,33 @@ func runSession(parent context.Context, opts options, logger *log.Logger, socksL
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start relay %q: %w", opts.relayExe, err)
 	}
+	processDone := make(chan error, 1)
+	go func() { processDone <- cmd.Wait() }()
+	processWaited := false
+	var processErr error
+	waitProcess := func(timeout time.Duration) bool {
+		if processWaited {
+			return true
+		}
+		if timeout <= 0 {
+			select {
+			case processErr = <-processDone:
+				processWaited = true
+				return true
+			default:
+				return false
+			}
+		}
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		select {
+		case processErr = <-processDone:
+			processWaited = true
+			return true
+		case <-timer.C:
+			return false
+		}
+	}
 	endpoint := stdio.New(stdout, stdin, func() error { _ = stdin.Close(); _ = stdout.Close(); return nil })
 	client := relay.NewClient(endpoint)
 	var reverseForwards *forward.Set
@@ -340,14 +367,10 @@ func runSession(parent context.Context, opts options, logger *log.Logger, socksL
 		_ = client.Close()
 		_ = endpoint.Close()
 		cancel()
-		if cmd.Process != nil {
+		if cmd.Process != nil && !processWaited {
 			_ = cmd.Process.Kill()
 		}
-		waitDone := make(chan struct{})
-		go func() { _ = cmd.Wait(); close(waitDone) }()
-		select {
-		case <-waitDone:
-		case <-time.After(2 * time.Second):
+		if !waitProcess(2 * time.Second) {
 			logger.Printf("relay process did not exit promptly")
 		}
 	}()
@@ -358,6 +381,11 @@ func runSession(parent context.Context, opts options, logger *log.Logger, socksL
 	capabilities, err := client.Handshake(handshakeCtx, protocol.AllCapabilities)
 	handshakeCancel()
 	if err != nil {
+		if waitProcess(100 * time.Millisecond) {
+			if fatal := classifyRelayProcessExit(processErr); fatal != nil {
+				return fatal
+			}
+		}
 		return classifyHandshakeError(err)
 	}
 	dialer.set(client)
@@ -427,6 +455,11 @@ func runSession(parent context.Context, opts options, logger *log.Logger, socksL
 		if ctx.Err() != nil {
 			return err
 		}
+		if waitProcess(100 * time.Millisecond) {
+			if fatal := classifyRelayProcessExit(processErr); fatal != nil {
+				return fatal
+			}
+		}
 		if isRelayTransportExit(err) {
 			return errRelayExited
 		}
@@ -444,6 +477,14 @@ func runSession(parent context.Context, opts options, logger *log.Logger, socksL
 
 func isRelayTransportExit(err error) bool {
 	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.ErrClosedPipe)
+}
+
+func classifyRelayProcessExit(err error) error {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ProcessState == nil || !exitErr.ProcessState.Exited() || exitErr.ExitCode() == 0 {
+		return nil
+	}
+	return fmt.Errorf("Windows relay exited with status %d: %w", exitErr.ExitCode(), err)
 }
 
 func sessionCompletion(ctx context.Context, err error) error {
