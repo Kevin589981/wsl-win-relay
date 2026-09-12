@@ -15,6 +15,51 @@ type Scanner interface{ Scan() ([]Listener, error) }
 type Opener interface {
 	ReverseForward(context.Context, string, string) (io.Closer, error)
 }
+type DatagramScanner interface{ ScanDatagrams() ([]Listener, error) }
+type DatagramOpener interface {
+	ReverseDatagramForward(context.Context, string, string) (io.Closer, error)
+}
+
+// DatagramWatcher reuses the TCP mapping lifecycle with a UDP-specific procfs
+// scanner and opener. It is intentionally a separate opt-in adapter because
+// procfs cannot prove that an unconnected UDP socket is a server.
+type DatagramWatcher struct {
+	Scanner      DatagramScanner
+	Opener       DatagramOpener
+	WindowsHost  string
+	WindowsHost6 string
+	Interval     time.Duration
+	Included     map[uint16]bool
+	Excluded     map[uint16]bool
+	Logger       *log.Logger
+}
+
+type datagramScannerAdapter struct{ scanner DatagramScanner }
+
+func (a datagramScannerAdapter) Scan() ([]Listener, error) { return a.scanner.ScanDatagrams() }
+
+type datagramOpenerAdapter struct{ opener DatagramOpener }
+
+func (a datagramOpenerAdapter) ReverseForward(ctx context.Context, windows, wsl string) (io.Closer, error) {
+	return a.opener.ReverseDatagramForward(ctx, windows, wsl)
+}
+
+func (w *DatagramWatcher) Run(ctx context.Context) error {
+	if w.Scanner == nil || w.Opener == nil {
+		return fmt.Errorf("datagram scanner and opener are required")
+	}
+	runner := &Watcher{
+		Scanner: w.datagramScanner(), Opener: w.datagramOpener(), WindowsHost: w.WindowsHost,
+		WindowsHost6: w.WindowsHost6, Interval: w.Interval, Included: w.Included,
+		Excluded: w.Excluded, Logger: w.Logger, Label: "auto-forward UDP",
+	}
+	return runner.Run(ctx)
+}
+
+func (w *DatagramWatcher) datagramScanner() Scanner {
+	return datagramScannerAdapter{scanner: w.Scanner}
+}
+func (w *DatagramWatcher) datagramOpener() Opener { return datagramOpenerAdapter{opener: w.Opener} }
 
 type Watcher struct {
 	Scanner      Scanner
@@ -25,6 +70,7 @@ type Watcher struct {
 	Included     map[uint16]bool
 	Excluded     map[uint16]bool
 	Logger       *log.Logger
+	Label        string
 	mu           sync.Mutex
 	active       map[listenerKey]activeMapping
 	rejected     map[listenerKey]bool
@@ -56,6 +102,9 @@ func (w *Watcher) Run(ctx context.Context) error {
 	if w.Logger == nil {
 		w.Logger = log.New(io.Discard, "", 0)
 	}
+	if w.Label == "" {
+		w.Label = "auto-forward"
+	}
 	w.mu.Lock()
 	w.active = make(map[listenerKey]activeMapping)
 	w.rejected = make(map[listenerKey]bool)
@@ -76,6 +125,9 @@ func (w *Watcher) Run(ctx context.Context) error {
 }
 
 func (w *Watcher) sync(ctx context.Context) error {
+	if w.Label == "" {
+		w.Label = "auto-forward"
+	}
 	listeners, err := w.Scanner.Scan()
 	if err != nil {
 		return err
@@ -102,7 +154,7 @@ func (w *Watcher) sync(ctx context.Context) error {
 			removed = append(removed, mapping)
 			delete(w.active, key)
 			delete(w.rejected, key)
-			w.Logger.Printf("auto-forward removed Windows port %d (%s)", mapping.listener.Port, mapping.listener.Network)
+			w.Logger.Printf("%s removed Windows port %d (%s)", w.Label, mapping.listener.Port, mapping.listener.Network)
 		}
 	}
 	w.mu.Unlock()
@@ -136,7 +188,7 @@ func (w *Watcher) sync(ctx context.Context) error {
 			w.rejected[key] = true
 			w.mu.Unlock()
 			if firstRejection {
-				w.Logger.Printf("auto-forward rejected %s -> %s: %v", windowsAddr, wslTarget, openErr)
+				w.Logger.Printf("%s rejected %s -> %s: %v", w.Label, windowsAddr, wslTarget, openErr)
 			}
 			continue
 		}
@@ -145,7 +197,7 @@ func (w *Watcher) sync(ctx context.Context) error {
 		delete(w.rejected, key)
 		w.mu.Unlock()
 		if wasRejected {
-			w.Logger.Printf("auto-forward restored %s -> %s", windowsAddr, wslTarget)
+			w.Logger.Printf("%s restored %s -> %s", w.Label, windowsAddr, wslTarget)
 		}
 		var closeAfterUnlock io.Closer
 		w.mu.Lock()
@@ -158,7 +210,7 @@ func (w *Watcher) sync(ctx context.Context) error {
 		if closeAfterUnlock != nil {
 			w.closeMapping(closeAfterUnlock)
 		}
-		w.Logger.Printf("auto-forward added %s -> %s", windowsAddr, wslTarget)
+		w.Logger.Printf("%s added %s -> %s", w.Label, windowsAddr, wslTarget)
 	}
 	return nil
 }
@@ -175,6 +227,6 @@ func (w *Watcher) closeAll() {
 
 func (w *Watcher) closeMapping(closer io.Closer) {
 	if err := closer.Close(); err != nil {
-		w.Logger.Printf("auto-forward close: %v", err)
+		w.Logger.Printf("%s close: %v", w.Label, err)
 	}
 }

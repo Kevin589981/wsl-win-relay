@@ -14,10 +14,12 @@
   "reverse_udp": [],
   "auto_forward": {
     "enabled": false,
+    "udp_enabled": false,
     "windows_host": "127.0.0.1",
     "windows_host6": "::1",
     "interval": "1s",
     "include": [],
+    "udp_include": [],
     "exclude": [22, 53]
   }
 }

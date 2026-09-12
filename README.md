@@ -159,9 +159,28 @@ WSL target through an isolated local flow. Responses return to the original
 Windows source. A bind conflict is reported while the mapping starts. Each
 mapping caps active source flows at 1024; idle flows are reclaimed after five
 minutes and new sources are dropped while the cap is reached.
-Automatic listener discovery currently remains TCP-only because
+Unrestricted automatic listener discovery remains TCP-only because
 `/proc/net/udp` cannot safely distinguish a UDP server socket from an
-ephemeral client socket.
+ephemeral client socket; the allowlisted UDP mode below is deliberately
+conservative and opt-in.
+
+An explicitly allowlisted UDP discovery mode is also available for common
+unconnected UDP services:
+
+```bash
+./bin/wsl-proxy-linux \
+  -relay-exe /mnt/d/Code/net/wsl-win-relay/bin/wsl-win-relay.exe \
+  -auto-forward \
+  -auto-forward-udp \
+  -auto-forward-udp-include 5353,8125
+```
+
+This mode scans `/proc/net/udp{,6}` and mirrors only the listed non-zero ports
+whose socket has no connected remote endpoint. Linux procfs does not identify
+UDP server sockets, so a client that happens to bind one of the allowlisted
+ports can still be observed; the mandatory allowlist keeps that ambiguity
+bounded. Use strict launcher UDP `bind()` coordination when Windows rejection
+must be returned to the application before `bind()` succeeds.
 
 To discover WSL listeners dynamically and bind matching Windows loopback ports:
 

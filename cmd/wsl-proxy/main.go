@@ -36,10 +36,12 @@ type options struct {
 	reverse             forward.Mappings
 	reverseUDP          forward.Mappings
 	autoForward         bool
+	autoForwardUDP      bool
 	autoForwardHost     string
 	autoForwardHost6    string
 	autoForwardInterval time.Duration
 	autoInclude         map[uint16]bool
+	autoUDPInclude      map[uint16]bool
 	autoExclude         map[uint16]bool
 	controlSocket       string
 	strictListenHost    string
@@ -162,6 +164,7 @@ func parseOptions(args []string) (options, error) {
 		}
 	}
 	include, exclude := formatPorts(fileConfig.AutoForward.Include), formatPorts(fileConfig.AutoForward.Exclude)
+	udpInclude := formatPorts(fileConfig.AutoForward.UDPInclude)
 	set := flag.NewFlagSet("wsl-proxy", flag.ContinueOnError)
 	set.SetOutput(io.Discard)
 	set.StringVar(&configPath, "config", configPath, "JSON configuration file")
@@ -172,10 +175,12 @@ func parseOptions(args []string) (options, error) {
 	set.Var(&opts.reverse, "reverse", "reverse mapping WINDOWS_ADDR=WSL_TARGET (repeatable)")
 	set.Var(&opts.reverseUDP, "reverse-udp", "reverse UDP mapping WINDOWS_ADDR=WSL_TARGET (repeatable)")
 	set.BoolVar(&opts.autoForward, "auto-forward", opts.autoForward, "automatically mirror WSL TCP listeners to Windows")
+	set.BoolVar(&opts.autoForwardUDP, "auto-forward-udp", fileConfig.AutoForward.UDPEnabled, "opt-in UDP listener mirroring; requires an explicit allowlist")
 	set.StringVar(&opts.autoForwardHost, "auto-forward-host", opts.autoForwardHost, "Windows bind host for automatic mappings")
 	set.StringVar(&opts.autoForwardHost6, "auto-forward-host6", opts.autoForwardHost6, "Windows IPv6 bind host for automatic mappings")
 	set.DurationVar(&opts.autoForwardInterval, "auto-forward-interval", opts.autoForwardInterval, "automatic listener scan interval")
 	set.StringVar(&include, "auto-forward-include", include, "comma-separated allowlist of ports for automatic mapping")
+	set.StringVar(&udpInclude, "auto-forward-udp-include", udpInclude, "comma-separated allowlist of UDP ports for automatic mapping")
 	set.StringVar(&exclude, "auto-forward-exclude", exclude, "comma-separated ports excluded from automatic mapping")
 	set.StringVar(&opts.controlSocket, "control-socket", opts.controlSocket, "Unix socket for strict listener coordination; empty disables")
 	set.StringVar(&opts.strictListenHost, "strict-listen-host", opts.strictListenHost, "Windows bind host for strict listener coordination")
@@ -192,6 +197,10 @@ func parseOptions(args []string) (options, error) {
 	if err != nil {
 		return options{}, fmt.Errorf("auto-forward-include: %w", err)
 	}
+	opts.autoUDPInclude, err = parsePortSet(udpInclude)
+	if err != nil {
+		return options{}, fmt.Errorf("auto-forward-udp-include: %w", err)
+	}
 	opts.autoExclude, err = parsePortSet(exclude)
 	if err != nil {
 		return options{}, fmt.Errorf("auto-forward-exclude: %w", err)
@@ -201,6 +210,14 @@ func parseOptions(args []string) (options, error) {
 	}
 	if opts.relayExe == "" {
 		return options{}, errors.New("relay executable cannot be empty")
+	}
+	if opts.autoForwardUDP {
+		if !opts.autoForward {
+			return options{}, errors.New("-auto-forward-udp requires -auto-forward")
+		}
+		if len(opts.autoUDPInclude) == 0 {
+			return options{}, errors.New("-auto-forward-udp requires a non-empty -auto-forward-udp-include allowlist")
+		}
 	}
 	return opts, nil
 }
@@ -234,6 +251,16 @@ func formatPorts(ports []uint16) string {
 		values[index] = strconv.Itoa(int(port))
 	}
 	return strings.Join(values, ",")
+}
+
+func portsFromSet(ports map[uint16]bool) []uint16 {
+	result := make([]uint16, 0, len(ports))
+	for port, enabled := range ports {
+		if enabled {
+			result = append(result, port)
+		}
+	}
+	return result
 }
 
 func run(parent context.Context, opts options, logger *log.Logger) error {
@@ -367,6 +394,7 @@ func runSession(parent context.Context, opts options, logger *log.Logger, socksL
 	}
 
 	var autoDone chan error
+	var autoUDPDone chan error
 	if opts.autoForward {
 		excluded := clonePortSet(opts.autoExclude)
 		addAddressPort(excluded, socksListener.Addr().String())
@@ -385,6 +413,12 @@ func runSession(parent context.Context, opts options, logger *log.Logger, socksL
 		autoDone = make(chan error, 1)
 		go func() { autoDone <- watcher.Run(ctx) }()
 		logger.Printf("automatic forwarding enabled on Windows hosts %s (IPv4), %s (IPv6)", opts.autoForwardHost, opts.autoForwardHost6)
+		if opts.autoForwardUDP {
+			udpWatcher := &autoforward.DatagramWatcher{Scanner: autoforward.DefaultProcScanner(), Opener: client, WindowsHost: opts.autoForwardHost, WindowsHost6: opts.autoForwardHost6, Interval: opts.autoForwardInterval, Included: opts.autoUDPInclude, Excluded: excluded, Logger: logger}
+			autoUDPDone = make(chan error, 1)
+			go func() { autoUDPDone <- udpWatcher.Run(ctx) }()
+			logger.Printf("automatic UDP forwarding enabled for allowlisted ports %s", formatPorts(portsFromSet(opts.autoUDPInclude)))
+		}
 	}
 
 	select {
@@ -398,6 +432,8 @@ func runSession(parent context.Context, opts options, logger *log.Logger, socksL
 		}
 		return err
 	case err := <-autoDone:
+		return sessionCompletion(ctx, err)
+	case err := <-autoUDPDone:
 		return sessionCompletion(ctx, err)
 	case err := <-controlDone:
 		return sessionCompletion(ctx, err)

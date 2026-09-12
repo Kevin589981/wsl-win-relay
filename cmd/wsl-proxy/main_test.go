@@ -154,6 +154,30 @@ func TestParseOptionsSupportsRepeatedUDPMappings(t *testing.T) {
 	}
 }
 
+func TestParseOptionsRequiresExplicitUDPAllowlist(t *testing.T) {
+	if _, err := parseOptions([]string{"-auto-forward", "-auto-forward-udp"}); err == nil {
+		t.Fatal("expected UDP automatic forwarding allowlist error")
+	}
+	if _, err := parseOptions([]string{"-auto-forward-udp", "-auto-forward-udp-include", "5353"}); err == nil {
+		t.Fatal("expected UDP automatic forwarding dependency error")
+	}
+}
+
+func TestParseOptionsSupportsAutomaticUDPConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relay.json")
+	content := `{"auto_forward":{"enabled":true,"udp_enabled":true,"udp_include":[5353]}}`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	opts, err := parseOptions([]string{"-config", path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opts.autoForward || !opts.autoForwardUDP || !opts.autoUDPInclude[5353] {
+		t.Fatalf("options: %#v", opts)
+	}
+}
+
 func TestParseOptionsRejectsUnexpectedArguments(t *testing.T) {
 	if _, err := parseOptions([]string{"unexpected"}); err == nil {
 		t.Fatal("expected argument error")

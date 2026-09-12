@@ -17,6 +17,8 @@
       native launcher/interposer, including descriptor ownership cleanup.
 - [x] Direct `syscall(SYS_listen/SYS_bind)` coordination for dynamically linked
       Linux amd64 applications.
+- [x] Explicitly allowlisted UDP polling for common unconnected services, with
+      a documented procfs ambiguity boundary.
 - [x] Process-boundary recovery that recreates mappings after broken relay
       transports.
 - [x] Opt-in TUN/tun2socks transparent TCP/UDP routing, including real WSL
@@ -26,9 +28,6 @@
       listener mappings.
 - [x] Session-independent local SOCKS5/HTTP listeners with a reconnecting
       dialer for new requests during relay restarts.
-- [ ] Automatic UDP listener discovery. This remains intentionally deferred:
-      `/proc/net/udp` does not safely identify server sockets versus ephemeral
-      client sockets; use explicit `-reverse-udp` or strict UDP `bind()` mode.
 - [ ] Kernel-level coverage for static binaries and all `clone()`/`vfork()`
       ownership patterns.
 - [ ] In-process hot reconnect that preserves existing connections across a

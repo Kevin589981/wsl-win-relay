@@ -36,6 +36,20 @@ func TestParseProcNetFindsListeningPorts(t *testing.T) {
 	}
 }
 
+func TestParseProcNetDatagramFindsOnlyUnconnectedPorts(t *testing.T) {
+	fixture := `   sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt uid timeout inode ref pointer drops
+   0: 0100007F:14E9 00000000:0000 07 00000000:00000000 00:00000000 00000000 0 0 1 2 0000000000000000 0
+   1: 0100007F:14EA 0100007F:0035 07 00000000:00000000 00:00000000 00000000 0 0 2 2 0000000000000000 0
+`
+	got, err := parseProcNetDatagram(strings.NewReader(fixture), "udp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Port != 5353 || got[0].Network != "udp4" || got[0].Host != "127.0.0.1" {
+		t.Fatalf("got %#v", got)
+	}
+}
+
 func TestNormalizeListenersKeepsBothFamilies(t *testing.T) {
 	got := normalizeListeners([]Listener{{Network: "tcp6", Host: "::", Port: 8000}, {Network: "tcp4", Host: "0.0.0.0", Port: 8000}, {Network: "tcp6", Host: "::1", Port: 9000}})
 	if len(got) != 3 || got[0].Network != "tcp4" || got[1].Network != "tcp6" || got[2].Port != 9000 {

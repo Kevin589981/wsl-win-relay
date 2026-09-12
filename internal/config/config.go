@@ -26,10 +26,12 @@ type File struct {
 
 type AutoForwardConfig struct {
 	Enabled      bool     `json:"enabled"`
+	UDPEnabled   bool     `json:"udp_enabled"`
 	WindowsHost  string   `json:"windows_host"`
 	WindowsHost6 string   `json:"windows_host6"`
 	Interval     string   `json:"interval"`
 	Include      []uint16 `json:"include"`
+	UDPInclude   []uint16 `json:"udp_include"`
 	Exclude      []uint16 `json:"exclude"`
 }
 

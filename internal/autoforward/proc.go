@@ -22,23 +22,50 @@ type Listener struct {
 type ProcScanner struct {
 	TCPPath  string
 	TCP6Path string
+	UDPPath  string
+	UDP6Path string
 }
 
 func DefaultProcScanner() ProcScanner {
-	return ProcScanner{TCPPath: "/proc/net/tcp", TCP6Path: "/proc/net/tcp6"}
+	return ProcScanner{TCPPath: "/proc/net/tcp", TCP6Path: "/proc/net/tcp6", UDPPath: "/proc/net/udp", UDP6Path: "/proc/net/udp6"}
 }
 
 func (s ProcScanner) Scan() ([]Listener, error) {
+	return s.scan([]struct {
+		path    string
+		network string
+		state   string
+	}{{s.TCPPath, "tcp4", "0A"}, {s.TCP6Path, "tcp6", "0A"}})
+}
+
+// ScanDatagrams returns unconnected, non-ephemeral UDP sockets. Linux procfs
+// does not expose a server/client bit for UDP; callers must therefore apply a
+// separate explicit port allowlist before opening Windows mappings.
+func (s ProcScanner) ScanDatagrams() ([]Listener, error) {
+	return s.scan([]struct {
+		path    string
+		network string
+		state   string
+	}{{s.UDPPath, "udp4", "07"}, {s.UDP6Path, "udp6", "07"}})
+}
+
+func (s ProcScanner) scan(sources []struct {
+	path    string
+	network string
+	state   string
+}) ([]Listener, error) {
 	var listeners []Listener
-	for _, source := range []struct{ path, network string }{{s.TCPPath, "tcp4"}, {s.TCP6Path, "tcp6"}} {
+	for _, source := range sources {
 		file, err := os.Open(source.path)
 		if err != nil {
-			if source.network == "tcp6" && errors.Is(err, os.ErrNotExist) {
-				continue
+			if source.network == "tcp6" || source.network == "udp6" {
+				if errors.Is(err, os.ErrNotExist) {
+					continue
+				}
 			}
 			return nil, fmt.Errorf("open %s: %w", source.path, err)
 		}
-		got, parseErr := parseProcNet(file, source.network)
+		got, parseErr := parseProcNetState(file, source.network, source.state)
 		_ = file.Close()
 		if parseErr != nil {
 			return nil, fmt.Errorf("parse %s: %w", source.path, parseErr)
@@ -49,6 +76,14 @@ func (s ProcScanner) Scan() ([]Listener, error) {
 }
 
 func parseProcNet(r io.Reader, network string) ([]Listener, error) {
+	return parseProcNetState(r, network, "0A")
+}
+
+func parseProcNetDatagram(r io.Reader, network string) ([]Listener, error) {
+	return parseProcNetState(r, network, "07")
+}
+
+func parseProcNetState(r io.Reader, network, state string) ([]Listener, error) {
 	scanner := bufio.NewScanner(r)
 	var result []Listener
 	line := 0
@@ -58,8 +93,24 @@ func parseProcNet(r io.Reader, network string) ([]Listener, error) {
 			continue
 		}
 		fields := strings.Fields(scanner.Text())
-		if len(fields) < 4 || fields[3] != "0A" {
+		if len(fields) < 4 || fields[3] != state {
 			continue
+		}
+		if network == "udp4" || network == "udp6" {
+			if len(fields) < 5 {
+				return nil, fmt.Errorf("line %d: missing remote address", line)
+			}
+			remote := strings.SplitN(fields[2], ":", 2)
+			if len(remote) != 2 {
+				return nil, fmt.Errorf("line %d: malformed remote address", line)
+			}
+			remotePort, err := strconv.ParseUint(remote[1], 16, 16)
+			if err != nil {
+				return nil, fmt.Errorf("line %d: invalid remote port %q", line, remote[1])
+			}
+			if remotePort != 0 {
+				continue
+			}
 		}
 		address := strings.SplitN(fields[1], ":", 2)
 		if len(address) != 2 {
@@ -86,7 +137,7 @@ func decodeProcAddress(encoded, network string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if network == "tcp4" {
+	if network == "tcp4" || network == "udp4" {
 		if len(decoded) != net.IPv4len {
 			return "", fmt.Errorf("expected 4 bytes")
 		}

@@ -106,6 +106,28 @@ func TestWatcherMapsBothFamiliesOnSamePort(t *testing.T) {
 	}
 }
 
+func TestDatagramWatcherUsesUDPMappingLifecycle(t *testing.T) {
+	scanner := &sequenceDatagramScanner{values: [][]Listener{{{Network: "udp4", Host: "127.0.0.1", Port: 5353}}, {}}}
+	opener := &recordingDatagramOpener{closed: make(chan string, 1)}
+	w := &DatagramWatcher{Scanner: scanner, Opener: opener, Interval: time.Millisecond, Included: map[uint16]bool{5353: true}}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := w.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(opener.opened) != 1 || opener.opened[0] != "127.0.0.1:5353=127.0.0.1:5353" {
+		t.Fatalf("opened: %v", opener.opened)
+	}
+	select {
+	case got := <-opener.closed:
+		if got != opener.opened[0] {
+			t.Fatalf("closed %q", got)
+		}
+	default:
+		t.Fatal("UDP mapping was not closed")
+	}
+}
+
 func TestWatcherDoesNotHoldStateLockWhileClosing(t *testing.T) {
 	closeStarted := make(chan struct{})
 	allowClose := make(chan struct{})
@@ -160,6 +182,23 @@ type sequenceScanner struct {
 	at     int
 }
 
+type sequenceDatagramScanner struct {
+	mu     sync.Mutex
+	values [][]Listener
+	at     int
+}
+
+func (s *sequenceDatagramScanner) ScanDatagrams() ([]Listener, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.at >= len(s.values) {
+		return nil, nil
+	}
+	result := s.values[s.at]
+	s.at++
+	return result, nil
+}
+
 func (s *sequenceScanner) Scan() ([]Listener, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -177,6 +216,28 @@ type recordingOpener struct {
 	closed   chan string
 	failures int
 	err      error
+}
+
+type recordingDatagramOpener struct {
+	mu       sync.Mutex
+	opened   []string
+	closed   chan string
+	failures int
+	err      error
+}
+
+func (o *recordingDatagramOpener) ReverseDatagramForward(_ context.Context, windows, wsl string) (io.Closer, error) {
+	o.mu.Lock()
+	value := windows + "=" + wsl
+	o.opened = append(o.opened, value)
+	if o.failures > 0 {
+		o.failures--
+		err := o.err
+		o.mu.Unlock()
+		return nil, err
+	}
+	o.mu.Unlock()
+	return closeRecorder{value: value, out: o.closed}, nil
 }
 
 func (o *recordingOpener) ReverseForward(_ context.Context, windows, wsl string) (io.Closer, error) {
