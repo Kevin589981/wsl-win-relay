@@ -152,8 +152,8 @@
       user-service shutdown; established streams after a socket-owner crash
       remain intentionally unrecoverable.
 - [x] New systemd broker installations create a protected `attach.token` and
-      pass its path to the Windows broker while retaining legacy environment
-      token compatibility for existing deployments.
+      pass its converted Windows path to the Windows broker while retaining
+      legacy environment token compatibility for existing deployments.
 
 The hot-reconnect implementation follows [ADR-0015](../adr/0015-persistent-windows-ownership-and-attach.md) and [ADR-0016](../adr/0016-process-isolated-socket-owner.md): relay state and socket ownership now live in an independent socket owner behind replaceable connector bridges.
 

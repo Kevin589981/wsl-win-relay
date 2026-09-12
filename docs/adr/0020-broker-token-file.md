@@ -29,7 +29,8 @@ The WSL systemd broker installer creates a mode-0600 `attach.token` beside its
 private environment and passes that file to the Windows broker. The environment
 continues to carry the token value only because WSL connector children need it
 through `WSLENV`; existing installations without the file retain a legacy
-`-token-hex` service fallback.
+`-token-hex` service fallback. The wrapper converts Linux paths to Windows paths
+with `wslpath -w` before starting a Windows executable.
 
 The file path itself is not treated as a secret; deployments must protect the
 file with the host's normal user ACLs. Windows ACL enforcement remains a

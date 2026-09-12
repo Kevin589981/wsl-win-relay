@@ -21,6 +21,34 @@ set +a
 : "${WSL_WIN_RELAY_BROKER_EXE:?WSL_WIN_RELAY_BROKER_EXE is required in $env_file}"
 : "${WSL_WIN_RELAY_ATTACH_TOKEN:?WSL_WIN_RELAY_ATTACH_TOKEN is required in $env_file}"
 broker_endpoint=${WSL_WIN_RELAY_BROKER_ENDPOINT:-wsl-win-relay-broker}
+
+broker_token_path() {
+    token_path=$1
+    case "$WSL_WIN_RELAY_BROKER_EXE" in
+        *.exe|*.EXE|/mnt/*)
+            # WSL paths such as /home/... are not valid Win32 paths. Convert
+            # the private token path before invoking a Windows broker binary.
+            case "$token_path" in
+                [A-Za-z]:\\*|\\\\*) printf '%s\n' "$token_path"; return 0 ;;
+            esac
+            if ! command -v wslpath >/dev/null 2>&1; then
+                echo "wslpath is required to pass a WSL token file to Windows" >&2
+                exit 1
+            fi
+            converted=$(wslpath -w "$token_path") || {
+                echo "cannot convert broker token file path for Windows: $token_path" >&2
+                exit 1
+            }
+            [ -n "$converted" ] || {
+                echo "empty Windows path for broker token file: $token_path" >&2
+                exit 1
+            }
+            printf '%s\n' "$converted"
+            ;;
+        *) printf '%s\n' "$token_path" ;;
+    esac
+}
+
 if [ -n "${WSL_WIN_RELAY_ATTACH_TOKEN_FILE:-}" ]; then
     token_file=$WSL_WIN_RELAY_ATTACH_TOKEN_FILE
     if [ -L "$token_file" ] || [ ! -f "$token_file" ]; then
@@ -31,6 +59,7 @@ if [ -n "${WSL_WIN_RELAY_ATTACH_TOKEN_FILE:-}" ]; then
         600|0600) ;;
         *) echo "broker token file must have mode 0600: $token_file" >&2; exit 1 ;;
     esac
+    broker_token_file=$(broker_token_path "$token_file")
 fi
 
 # Older installations only have the private environment token. Keep the
@@ -45,6 +74,6 @@ fi
 # Keep a Windows-side parent alive so a frontend crash is recoverable without
 # relying on the WSL service manager to notice the child process boundary.
 if [ -n "${WSL_WIN_RELAY_ATTACH_TOKEN_FILE:-}" ]; then
-    exec "$WSL_WIN_RELAY_BROKER_EXE" -supervise -endpoint "$broker_endpoint" -token-file "$token_file"
+    exec "$WSL_WIN_RELAY_BROKER_EXE" -supervise -endpoint "$broker_endpoint" -token-file "$broker_token_file"
 fi
 exec "$WSL_WIN_RELAY_BROKER_EXE" -supervise -endpoint "$broker_endpoint" -token-hex "$WSL_WIN_RELAY_ATTACH_TOKEN"

@@ -95,8 +95,9 @@ roles have separate token-bound health probes, so stale role processes are
 drained before endpoint reuse.
 
 New broker installations also create `attach.token` with mode `0600` and pass
-that path to the Windows broker. The private environment still contains the
-token value for WSL connector propagation through `WSLENV`; older installations
+that path to the Windows broker (the wrapper converts a WSL path with
+`wslpath -w` before invoking a Windows `.exe`). The private environment still
+contains the token value for WSL connector propagation through `WSLENV`; older installations
 without `WSL_WIN_RELAY_ATTACH_TOKEN_FILE` continue to use the legacy
 `-token-hex` fallback until migrated.
 The broker unit uses `KillMode=process` so systemd frontend restarts do not

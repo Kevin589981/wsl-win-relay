@@ -31,6 +31,21 @@ token_output=$(WSL_WIN_RELAY_BROKER_ENV_FILE="$env_path" "$repo_dir/scripts/run-
     exit 1
 }
 
+if command -v wslpath >/dev/null 2>&1; then
+    windows_echo=$tmp_dir/fake.exe
+    ln -s /bin/echo "$windows_echo"
+    windows_env=$tmp_dir/windows.env
+    write_env "$windows_env" windows-path-endpoint
+    printf 'WSL_WIN_RELAY_BROKER_EXE=%s\n' "$windows_echo" >>"$windows_env"
+    printf 'WSL_WIN_RELAY_ATTACH_TOKEN_FILE=%s\n' "$token_path" >>"$windows_env"
+    windows_output=$(WSL_WIN_RELAY_BROKER_ENV_FILE="$windows_env" WSL_WIN_RELAY_BROKER_EXE="$windows_echo" "$repo_dir/scripts/run-broker-user-service.sh")
+    windows_token_path=$(wslpath -w "$token_path")
+    [ "$windows_output" = "-supervise -endpoint windows-path-endpoint -token-file $windows_token_path" ] || {
+        echo "unexpected converted Windows token path: $windows_output" >&2
+        exit 1
+    }
+fi
+
 legacy_env=$tmp_dir/legacy.env
 write_env "$legacy_env" legacy-endpoint
 legacy_output=$(WSL_WIN_RELAY_BROKER_ENV_FILE="$legacy_env" "$repo_dir/scripts/run-broker-user-service.sh")
