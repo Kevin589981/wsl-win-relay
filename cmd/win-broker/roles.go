@@ -28,6 +28,8 @@ import (
 
 const workerStartupTimeout = 10 * time.Second
 
+var errRoleTokenMismatch = errors.New("broker role token mismatch")
+
 func deriveEndpoint(endpoint, suffix string) string {
 	if strings.HasPrefix(endpoint, `\\.\pipe\`) {
 		return endpoint + "-" + suffix
@@ -182,6 +184,11 @@ func ensureWorker(ctx context.Context, opts options, endpoint string, logger *lo
 		return nil, nil
 	}
 	logger.Printf("broker worker probe failed on %s: %v", endpoint, err)
+	if errors.Is(err, errRoleTokenMismatch) {
+		if stopErr := stopConflictingRole(ctx, endpoint, logger); stopErr != nil {
+			return nil, stopErr
+		}
+	}
 	executable, err := os.Executable()
 	if err != nil {
 		return nil, fmt.Errorf("locate broker executable: %w", err)
@@ -337,6 +344,11 @@ func ensureSocketHost(ctx context.Context, opts options, endpoint string, logger
 		return nil, nil, nil
 	}
 	logger.Printf("socket host probe failed on %s: %v", endpoint, err)
+	if errors.Is(err, errRoleTokenMismatch) {
+		if stopErr := stopConflictingRole(ctx, endpoint, logger); stopErr != nil {
+			return nil, nil, stopErr
+		}
+	}
 	executable, err := os.Executable()
 	if err != nil {
 		return nil, nil, fmt.Errorf("locate broker executable: %w", err)
@@ -472,9 +484,34 @@ func probeRole(ctx context.Context, endpoint, tokenHex string) error {
 		return err
 	}
 	if strings.TrimSpace(line) != "PONG" {
+		if strings.TrimSpace(line) == "ERR" {
+			return errRoleTokenMismatch
+		}
 		return fmt.Errorf("unexpected control probe response %q", strings.TrimSpace(line))
 	}
 	return nil
+}
+
+func stopConflictingRole(ctx context.Context, endpoint string, logger *log.Logger) error {
+	logger.Printf("stopping broker role with mismatched token on %s", endpoint)
+	requestWorkerStop(endpoint)
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	for {
+		probeCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+		err := probeRole(probeCtx, endpoint, "conflict-probe")
+		cancel()
+		if !errors.Is(err, errRoleTokenMismatch) && err != nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return fmt.Errorf("broker role with mismatched token did not stop: %s", endpoint)
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
 }
 
 func equalTokenHex(provided, expected string) bool {

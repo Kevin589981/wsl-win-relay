@@ -57,6 +57,10 @@ supervisor can rebuild the host and registrations instead of publishing a
 dead endpoint indefinitely. Role probes include the attach token and are
 validated with a constant-time comparison, so an endpoint left behind by a
 different broker identity is not mistaken for a reusable worker or socket host.
+When a token mismatch is explicit, the supervisor sends the private `STOP`
+request and waits for the old control endpoint to disappear before starting a
+replacement; ordinary connection failures never terminate an externally-owned
+role.
 
 ## Consequences
 

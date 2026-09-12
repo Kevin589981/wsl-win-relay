@@ -8,11 +8,13 @@ connector_exe=${WWR_CONNECTOR_EXE:-"$repo_dir/bin/wsl-win-connector.exe"}
 socks_listen=${WWR_BROKER_INTEROP_LISTEN:-127.0.0.1:11087}
 endpoint=${WWR_BROKER_INTEROP_ENDPOINT:-"wsl-win-relay-interop-$$"}
 upstream_proxy=${WWR_WINDOWS_UPSTREAM_PROXY:-}
+windows_shell=${WWR_WINDOWS_SHELL:-powershell.exe}
 work=$(mktemp -d "${TMPDIR:-/tmp}/wsl-win-relay-broker-interop.XXXXXX")
 broker_pid=
 proxy_pid=
 
 cleanup() {
+	stop_windows_roles || true
 	[ -z "${proxy_pid:-}" ] || kill "$proxy_pid" 2>/dev/null || true
 	[ -z "${broker_pid:-}" ] || kill "$broker_pid" 2>/dev/null || true
 	[ -z "${proxy_pid:-}" ] || wait "$proxy_pid" 2>/dev/null || true
@@ -20,6 +22,17 @@ cleanup() {
 	rm -rf "$work"
 }
 trap cleanup EXIT INT TERM
+
+stop_windows_roles() {
+	if [ ! -x "$windows_shell" ] && ! command -v "$windows_shell" >/dev/null 2>&1; then
+		return 0
+	fi
+	# WSL's kill only reaches the interop shim, not the Windows descendants.
+	# Match the unique endpoint so cleanup cannot terminate another broker.
+	"$windows_shell" -NoProfile -NonInteractive -Command \
+		"\$needle='-endpoint $endpoint'; Get-CimInstance Win32_Process | Where-Object { \$_.Name -eq 'wsl-win-broker.exe' -and \$_.CommandLine -like ('*' + \$needle + '*') } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force -ErrorAction SilentlyContinue }" \
+		>/dev/null 2>&1 || true
+}
 
 if [ ! -x "$proxy_bin" ]; then
 	echo "missing Linux proxy: $proxy_bin (run scripts/build-wsl.sh)" >&2
@@ -31,6 +44,10 @@ if [ ! -f "$broker_exe" ] || [ ! -f "$connector_exe" ]; then
 fi
 if ! command -v curl >/dev/null 2>&1; then
 	echo "curl is required for the Windows broker interop smoke" >&2
+	exit 1
+fi
+if [ ! -x "$windows_shell" ] && ! command -v "$windows_shell" >/dev/null 2>&1; then
+	echo "Windows PowerShell is required for broker cleanup: $windows_shell (set WWR_WINDOWS_SHELL)" >&2
 	exit 1
 fi
 

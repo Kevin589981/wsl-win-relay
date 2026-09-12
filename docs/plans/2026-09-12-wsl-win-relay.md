@@ -110,6 +110,8 @@
       flag-free `WSLENV` entry; the contract is documented in ADR-0017.
 - [x] Private worker/socket-host health probes are token-bound and reject stale
       same-endpoint processes owned by a different broker identity.
+- [x] A confirmed token-mismatched role is stopped and drained before endpoint
+      reuse, while transient probe failures leave externally-owned roles alone.
 - [x] Windows broker interop smoke can route through a Windows-side upstream
       proxy without requiring WSL to reach that proxy endpoint.
 - [ ] Socket-host crash recovery still requires a separate host-level recovery
