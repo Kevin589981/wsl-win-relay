@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -52,6 +53,20 @@ func TestOpenDatagramAllRollsBackOnFailure(t *testing.T) {
 	}
 }
 
+func TestOpenAllRejectsNilCloser(t *testing.T) {
+	_, err := OpenAll(context.Background(), nilOpener{}, []Mapping{{Windows: "a", WSL: "x"}})
+	if err == nil || !strings.Contains(err.Error(), "opener returned nil mapping") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestOpenDatagramAllRejectsNilCloser(t *testing.T) {
+	_, err := OpenDatagramAll(context.Background(), nilDatagramOpener{}, []Mapping{{Windows: "a", WSL: "x"}})
+	if err == nil || !strings.Contains(err.Error(), "opener returned nil mapping") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
 type fakeOpener struct {
 	calls  int
 	failAt int
@@ -62,6 +77,18 @@ type fakeDatagramOpener struct {
 	calls  int
 	failAt int
 	closed []string
+}
+
+type nilOpener struct{}
+
+func (nilOpener) ReverseForward(context.Context, string, string) (io.Closer, error) {
+	return nil, nil
+}
+
+type nilDatagramOpener struct{}
+
+func (nilDatagramOpener) ReverseDatagramForward(context.Context, string, string) (io.Closer, error) {
+	return nil, nil
 }
 
 func (f *fakeDatagramOpener) ReverseDatagramForward(_ context.Context, windows, _ string) (io.Closer, error) {

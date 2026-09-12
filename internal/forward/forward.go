@@ -96,6 +96,10 @@ func openAll(ctx context.Context, mappings []Mapping, open func(Mapping) (io.Clo
 			_ = set.Close()
 			return nil, fmt.Errorf("%s=%s: %w", mapping.Windows, mapping.WSL, err)
 		}
+		if closer == nil {
+			_ = set.Close()
+			return nil, fmt.Errorf("%s=%s: opener returned nil mapping", mapping.Windows, mapping.WSL)
+		}
 		set.closers = append(set.closers, closer)
 	}
 	return set, nil
