@@ -69,6 +69,7 @@ static const char *control_path;
 struct task {
     pid_t pid;
     int entering;
+    int exiting;
     struct task_group *group;
     struct pending pending;
     struct task *next;
@@ -407,7 +408,7 @@ static void maybe_migrate_owner(struct task *task) {
         return;
     }
     for (struct task *candidate = tasks; candidate != NULL; candidate = candidate->next) {
-        if (candidate == task || candidate->group != group) {
+        if (candidate == task || candidate->exiting || candidate->group != group) {
             continue;
         }
         if (migrate_group_owner(group, candidate->pid) == 0) {
@@ -881,6 +882,7 @@ static int trace_target(void) {
             continue;
         }
         if (signal_number == SIGTRAP && event == PTRACE_EVENT_EXIT) {
+            task->exiting = 1;
             maybe_migrate_owner(task);
             if (ptrace(PTRACE_SYSCALL, pid, 0, 0) < 0) return -1;
             continue;

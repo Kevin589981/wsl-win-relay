@@ -228,6 +228,7 @@ start_control "$tmp_dir/leader-sys-exit.sock" "$tmp_dir/leader-sys-exit.log"
 WSL_WIN_RELAY_CONTROL="$tmp_dir/leader-sys-exit.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" leader-sys-exit
 grep -q 'RESERVE .* tcp4 47132' "$tmp_dir/leader-sys-exit.log"
 grep -q '^ADOPT ' "$tmp_dir/leader-sys-exit.log"
+test "$(grep -Ec '^ADOPT ' "$tmp_dir/leader-sys-exit.log")" -eq 1
 test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/leader-sys-exit.log")" -eq 2
 stop_control
 

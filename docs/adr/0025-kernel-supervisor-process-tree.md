@@ -43,6 +43,8 @@ work follows the same model:
 - `CLONE_THREAD` tasks share the process lease owner and fd/binding table but
   keep separate pending-syscall state. Group exit releases the binding table
   only after the final task exits; a leader exit migrates ownership first.
+  Tasks marked by `PTRACE_EVENT_EXIT` are excluded from future owner selection,
+  preventing ownership from migrating back to a thread that is already dying.
 - `vfork()` child-side libc behavior remains outside the contract; direct
   syscall-safe operations through `_exit` are the supported pattern.
 - The adapter remains opt-in. Unsupported architectures and unrecognized
