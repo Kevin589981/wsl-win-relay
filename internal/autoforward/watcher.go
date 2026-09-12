@@ -27,6 +27,7 @@ type Watcher struct {
 	Logger       *log.Logger
 	mu           sync.Mutex
 	active       map[uint16]activeMapping
+	rejected     map[uint16]bool
 }
 
 type activeMapping struct {
@@ -52,6 +53,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 	}
 	w.mu.Lock()
 	w.active = make(map[uint16]activeMapping)
+	w.rejected = make(map[uint16]bool)
 	w.mu.Unlock()
 	defer w.closeAll()
 	ticker := time.NewTicker(w.Interval)
@@ -84,12 +86,16 @@ func (w *Watcher) sync(ctx context.Context) error {
 		desired[listener.Port] = listener
 	}
 	w.mu.Lock()
+	if w.rejected == nil {
+		w.rejected = make(map[uint16]bool)
+	}
 	var removed []activeMapping
 	for port, mapping := range w.active {
 		desiredListener, ok := desired[port]
 		if !ok || desiredListener != mapping.listener {
 			removed = append(removed, mapping)
 			delete(w.active, port)
+			delete(w.rejected, port)
 			w.Logger.Printf("auto-forward removed Windows port %d", port)
 		}
 	}
@@ -119,8 +125,21 @@ func (w *Watcher) sync(ctx context.Context) error {
 		wslTarget := net.JoinHostPort(wslHost, strconv.Itoa(int(port)))
 		closer, openErr := w.Opener.ReverseForward(ctx, windowsAddr, wslTarget)
 		if openErr != nil {
-			w.Logger.Printf("auto-forward rejected %s -> %s: %v", windowsAddr, wslTarget, openErr)
+			w.mu.Lock()
+			firstRejection := !w.rejected[port]
+			w.rejected[port] = true
+			w.mu.Unlock()
+			if firstRejection {
+				w.Logger.Printf("auto-forward rejected %s -> %s: %v", windowsAddr, wslTarget, openErr)
+			}
 			continue
+		}
+		w.mu.Lock()
+		wasRejected := w.rejected[port]
+		delete(w.rejected, port)
+		w.mu.Unlock()
+		if wasRejected {
+			w.Logger.Printf("auto-forward restored %s -> %s", windowsAddr, wslTarget)
 		}
 		var closeAfterUnlock io.Closer
 		w.mu.Lock()

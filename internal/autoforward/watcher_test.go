@@ -1,9 +1,12 @@
 package autoforward
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -107,6 +110,27 @@ func TestWatcherDoesNotHoldStateLockWhileClosing(t *testing.T) {
 	}
 }
 
+func TestWatcherLogsRejectionOnceAndRestoration(t *testing.T) {
+	scanner := &sequenceScanner{values: [][]Listener{{{Network: "tcp4", Port: 8000}}, {{Network: "tcp4", Port: 8000}}, {{Network: "tcp4", Port: 8000}}}}
+	opener := &recordingOpener{failures: 1, err: errors.New("address in use"), closed: make(chan string, 1)}
+	var logs bytes.Buffer
+	w := &Watcher{Scanner: scanner, Opener: opener, Logger: log.New(&logs, "", 0), active: make(map[uint16]activeMapping)}
+	for i := 0; i < 3; i++ {
+		if err := w.sync(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(opener.opened) != 2 {
+		t.Fatalf("opened: %v", opener.opened)
+	}
+	if got := strings.Count(logs.String(), "auto-forward rejected"); got != 1 {
+		t.Fatalf("rejection log count=%d logs=%q", got, logs.String())
+	}
+	if got := strings.Count(logs.String(), "auto-forward restored"); got != 1 {
+		t.Fatalf("restoration log count=%d logs=%q", got, logs.String())
+	}
+}
+
 type sequenceScanner struct {
 	mu     sync.Mutex
 	values [][]Listener
@@ -125,15 +149,23 @@ func (s *sequenceScanner) Scan() ([]Listener, error) {
 }
 
 type recordingOpener struct {
-	mu     sync.Mutex
-	opened []string
-	closed chan string
+	mu       sync.Mutex
+	opened   []string
+	closed   chan string
+	failures int
+	err      error
 }
 
 func (o *recordingOpener) ReverseForward(_ context.Context, windows, wsl string) (io.Closer, error) {
 	o.mu.Lock()
 	value := windows + "=" + wsl
 	o.opened = append(o.opened, value)
+	if o.failures > 0 {
+		o.failures--
+		err := o.err
+		o.mu.Unlock()
+		return nil, err
+	}
 	o.mu.Unlock()
 	return closeRecorder{value: value, out: o.closed}, nil
 }
