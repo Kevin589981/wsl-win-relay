@@ -35,6 +35,8 @@
 - [x] Strict control socket and live listener leases survive relay child
       replacement; Windows reservations are rebound and recommitted for the
       replacement session.
+- [x] Automatic TCP and allowlisted UDP mappings are process-scoped and
+      rebound through the session-aware dialer after relay child replacement.
 - [x] Non-zero normal Windows relay exit status is classified as fatal instead
       of causing an unbounded restart loop.
 - [ ] Kernel-level coverage for static binaries and `vfork()` ownership

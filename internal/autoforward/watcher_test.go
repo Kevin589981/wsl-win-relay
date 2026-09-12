@@ -176,6 +176,32 @@ func TestWatcherLogsRejectionOnceAndRestoration(t *testing.T) {
 	}
 }
 
+func TestWatcherTreatsNilCloserAsRejected(t *testing.T) {
+	scanner := &sequenceScanner{values: [][]Listener{{{Network: "tcp4", Port: 8000}}, {{}}}}
+	w := &Watcher{Scanner: scanner, Opener: nilCloserOpener{}, Interval: time.Millisecond}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := w.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWatcherResetClosesActiveMappings(t *testing.T) {
+	opener := &recordingOpener{closed: make(chan string, 1)}
+	w := &Watcher{Opener: opener, Logger: log.New(io.Discard, "", 0), active: map[listenerKey]activeMapping{
+		{network: "tcp4", port: 8000}: {listener: Listener{Network: "tcp4", Port: 8000}, closer: closeRecorder{value: "mapping", out: opener.closed}},
+	}}
+	w.Reset()
+	select {
+	case got := <-opener.closed:
+		if got != "mapping" {
+			t.Fatalf("closed %q", got)
+		}
+	default:
+		t.Fatal("active mapping was not closed")
+	}
+}
+
 type sequenceScanner struct {
 	mu     sync.Mutex
 	values [][]Listener
@@ -216,6 +242,12 @@ type recordingOpener struct {
 	closed   chan string
 	failures int
 	err      error
+}
+
+type nilCloserOpener struct{}
+
+func (nilCloserOpener) ReverseForward(context.Context, string, string) (io.Closer, error) {
+	return nil, nil
 }
 
 type recordingDatagramOpener struct {

@@ -330,10 +330,55 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 		go func() { httpDone <- httpProxy.Serve(ctx) }()
 		logger.Printf("HTTP CONNECT proxy listening on %s", httpListener.Addr())
 	}
+	var autoDone chan error
+	var autoUDPDone chan error
+	var autoResetDone chan error
+	if opts.autoForward {
+		excluded := clonePortSet(opts.autoExclude)
+		addAddressPort(excluded, socksListener.Addr().String())
+		if httpListener != nil {
+			addAddressPort(excluded, httpListener.Addr().String())
+		}
+		for _, mapping := range opts.reverse {
+			addAddressPort(excluded, mapping.Windows)
+			addAddressPort(excluded, mapping.WSL)
+		}
+		for _, mapping := range opts.reverseUDP {
+			addAddressPort(excluded, mapping.Windows)
+			addAddressPort(excluded, mapping.WSL)
+		}
+		watcher := &autoforward.Watcher{Scanner: autoforward.DefaultProcScanner(), Opener: dialer, WindowsHost: opts.autoForwardHost, WindowsHost6: opts.autoForwardHost6, Interval: opts.autoForwardInterval, Included: opts.autoInclude, Excluded: excluded, Logger: logger}
+		autoDone = make(chan error, 1)
+		go func() { autoDone <- watcher.Run(ctx) }()
+		logger.Printf("automatic forwarding enabled on Windows hosts %s (IPv4), %s (IPv6)", opts.autoForwardHost, opts.autoForwardHost6)
+		var udpWatcher *autoforward.DatagramWatcher
+		if opts.autoForwardUDP {
+			udpWatcher = &autoforward.DatagramWatcher{Scanner: autoforward.DefaultProcScanner(), Opener: dialer, WindowsHost: opts.autoForwardHost, WindowsHost6: opts.autoForwardHost6, Interval: opts.autoForwardInterval, Included: opts.autoUDPInclude, Excluded: excluded, Logger: logger}
+			autoUDPDone = make(chan error, 1)
+			go func() { autoUDPDone <- udpWatcher.Run(ctx) }()
+			logger.Printf("automatic UDP forwarding enabled for allowlisted ports %s", formatPorts(portsFromSet(opts.autoUDPInclude)))
+		}
+		autoResetDone = make(chan error, 1)
+		go func() {
+			for {
+				_, changed := dialer.current()
+				select {
+				case <-changed:
+					watcher.Reset()
+					if udpWatcher != nil {
+						udpWatcher.Reset()
+					}
+				case <-ctx.Done():
+					autoResetDone <- nil
+					return
+				}
+			}
+		}()
+	}
 	sessionDone := make(chan error, 1)
 	go func() {
 		sessionDone <- supervise(ctx, opts, logger, func(sessionCtx context.Context, sessionOpts options, sessionLogger *log.Logger) error {
-			return runSession(sessionCtx, sessionOpts, sessionLogger, socksListener, httpListener, dialer, control)
+			return runSession(sessionCtx, sessionOpts, sessionLogger, dialer, control)
 		}, relayRestartDelay)
 	}()
 	select {
@@ -345,12 +390,18 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 		return sessionCompletion(ctx, err)
 	case err := <-controlDone:
 		return sessionCompletion(ctx, err)
+	case err := <-autoDone:
+		return sessionCompletion(ctx, err)
+	case err := <-autoUDPDone:
+		return sessionCompletion(ctx, err)
+	case err := <-autoResetDone:
+		return sessionCompletion(ctx, err)
 	case <-parent.Done():
 		return parent.Err()
 	}
 }
 
-func runSession(parent context.Context, opts options, logger *log.Logger, socksListener net.Listener, httpListener net.Listener, dialer *sessionDialer, control *listencontrol.Server) error {
+func runSession(parent context.Context, opts options, logger *log.Logger, dialer *sessionDialer, control *listencontrol.Server) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
@@ -466,34 +517,6 @@ func runSession(parent context.Context, opts options, logger *log.Logger, socksL
 		}
 	}
 
-	var autoDone chan error
-	var autoUDPDone chan error
-	if opts.autoForward {
-		excluded := clonePortSet(opts.autoExclude)
-		addAddressPort(excluded, socksListener.Addr().String())
-		if httpListener != nil {
-			addAddressPort(excluded, httpListener.Addr().String())
-		}
-		for _, mapping := range opts.reverse {
-			addAddressPort(excluded, mapping.Windows)
-			addAddressPort(excluded, mapping.WSL)
-		}
-		for _, mapping := range opts.reverseUDP {
-			addAddressPort(excluded, mapping.Windows)
-			addAddressPort(excluded, mapping.WSL)
-		}
-		watcher := &autoforward.Watcher{Scanner: autoforward.DefaultProcScanner(), Opener: client, WindowsHost: opts.autoForwardHost, WindowsHost6: opts.autoForwardHost6, Interval: opts.autoForwardInterval, Included: opts.autoInclude, Excluded: excluded, Logger: logger}
-		autoDone = make(chan error, 1)
-		go func() { autoDone <- watcher.Run(ctx) }()
-		logger.Printf("automatic forwarding enabled on Windows hosts %s (IPv4), %s (IPv6)", opts.autoForwardHost, opts.autoForwardHost6)
-		if opts.autoForwardUDP {
-			udpWatcher := &autoforward.DatagramWatcher{Scanner: autoforward.DefaultProcScanner(), Opener: client, WindowsHost: opts.autoForwardHost, WindowsHost6: opts.autoForwardHost6, Interval: opts.autoForwardInterval, Included: opts.autoUDPInclude, Excluded: excluded, Logger: logger}
-			autoUDPDone = make(chan error, 1)
-			go func() { autoUDPDone <- udpWatcher.Run(ctx) }()
-			logger.Printf("automatic UDP forwarding enabled for allowlisted ports %s", formatPorts(portsFromSet(opts.autoUDPInclude)))
-		}
-	}
-
 	select {
 	case err := <-relayDone:
 		err = sessionCompletion(ctx, err)
@@ -509,10 +532,6 @@ func runSession(parent context.Context, opts options, logger *log.Logger, socksL
 			return errRelayExited
 		}
 		return err
-	case err := <-autoDone:
-		return sessionCompletion(ctx, err)
-	case err := <-autoUDPDone:
-		return sessionCompletion(ctx, err)
 	case <-ctx.Done():
 		return ctx.Err()
 	}

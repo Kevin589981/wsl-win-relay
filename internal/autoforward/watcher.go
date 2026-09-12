@@ -2,6 +2,7 @@ package autoforward
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -32,6 +33,8 @@ type DatagramWatcher struct {
 	Included     map[uint16]bool
 	Excluded     map[uint16]bool
 	Logger       *log.Logger
+	runnerMu     sync.Mutex
+	runner       *Watcher
 }
 
 type datagramScannerAdapter struct{ scanner DatagramScanner }
@@ -53,7 +56,26 @@ func (w *DatagramWatcher) Run(ctx context.Context) error {
 		WindowsHost6: w.WindowsHost6, Interval: w.Interval, Included: w.Included,
 		Excluded: w.Excluded, Logger: w.Logger, Label: "auto-forward UDP",
 	}
+	w.runnerMu.Lock()
+	w.runner = runner
+	w.runnerMu.Unlock()
+	defer func() {
+		w.runnerMu.Lock()
+		w.runner = nil
+		w.runnerMu.Unlock()
+	}()
 	return runner.Run(ctx)
+}
+
+// Reset drops mappings owned by the previous relay session. The next scan
+// will recreate them through the current opener.
+func (w *DatagramWatcher) Reset() {
+	w.runnerMu.Lock()
+	runner := w.runner
+	w.runnerMu.Unlock()
+	if runner != nil {
+		runner.Reset()
+	}
 }
 
 func (w *DatagramWatcher) datagramScanner() Scanner {
@@ -125,6 +147,11 @@ func (w *Watcher) Run(ctx context.Context) error {
 }
 
 func (w *Watcher) sync(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
 	if w.Label == "" {
 		w.Label = "auto-forward"
 	}
@@ -192,6 +219,17 @@ func (w *Watcher) sync(ctx context.Context) error {
 			}
 			continue
 		}
+		if closer == nil {
+			openErr = errors.New("opener returned nil mapping")
+			w.mu.Lock()
+			firstRejection := !w.rejected[key]
+			w.rejected[key] = true
+			w.mu.Unlock()
+			if firstRejection {
+				w.Logger.Printf("%s rejected %s -> %s: %v", w.Label, windowsAddr, wslTarget, openErr)
+			}
+			continue
+		}
 		w.mu.Lock()
 		wasRejected := w.rejected[key]
 		delete(w.rejected, key)
@@ -225,7 +263,23 @@ func (w *Watcher) closeAll() {
 	}
 }
 
+// Reset closes all mappings without stopping the watcher. It is used when the
+// relay transport is replaced so active entries cannot retain dead clients.
+func (w *Watcher) Reset() {
+	w.mu.Lock()
+	active := w.active
+	w.active = make(map[listenerKey]activeMapping)
+	w.rejected = make(map[listenerKey]bool)
+	w.mu.Unlock()
+	for _, mapping := range active {
+		w.closeMapping(mapping.closer)
+	}
+}
+
 func (w *Watcher) closeMapping(closer io.Closer) {
+	if closer == nil {
+		return
+	}
 	if err := closer.Close(); err != nil {
 		w.Logger.Printf("%s close: %v", w.Label, err)
 	}

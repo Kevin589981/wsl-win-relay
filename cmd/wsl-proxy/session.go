@@ -143,6 +143,30 @@ func (d *sessionDialer) reserveDatagramForward(ctx context.Context, windows, wsl
 	}
 }
 
+// ReverseForward implements the automatic-forward opener contract. Automatic
+// mappings use the same two-phase reservation as strict listeners, then keep
+// the committed reservation as their lifetime closer.
+func (d *sessionDialer) ReverseForward(ctx context.Context, windows, wsl string) (io.Closer, error) {
+	reservation, err := d.reserveReverseForward(ctx, windows, wsl)
+	if err != nil {
+		return nil, err
+	}
+	if reservation == nil {
+		return nil, errors.New("relay returned nil reverse reservation")
+	}
+	if err := reservation.Commit(); err != nil {
+		_ = reservation.Close()
+		return nil, err
+	}
+	return reservation, nil
+}
+
+// ReverseDatagramForward implements the automatic UDP-forward opener
+// contract and waits for a healthy relay session before opening.
+func (d *sessionDialer) ReverseDatagramForward(ctx context.Context, windows, wsl string) (io.Closer, error) {
+	return d.reserveDatagramForward(ctx, windows, wsl)
+}
+
 func (d *sessionDialer) current() (sessionClient, <-chan struct{}) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()

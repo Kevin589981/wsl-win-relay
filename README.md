@@ -205,7 +205,7 @@ Useful controls:
 -auto-forward-interval 1s          Discovery interval
 ```
 
-The SOCKS5 listener and explicit reverse-forward destinations are excluded automatically. Automatic mappings are removed when their WSL listener disappears.
+The SOCKS5 listener and explicit reverse-forward destinations are excluded automatically. Automatic mappings are removed when their WSL listener disappears. The watcher lives for the whole proxy process: when the Windows relay child is replaced, old mappings are closed and recreated on the replacement session after it becomes ready.
 
 IPv4 and IPv6 Windows bind hosts are configured independently. The defaults are
 `127.0.0.1` and `::1`; set `-strict-listen-host6` and/or `-auto-forward-host6`
@@ -343,7 +343,10 @@ session starts, and new requests wait for it; in-flight streams still end with
 the failed session. A relay child that exits normally with a non-zero status
 is treated as a fatal configuration/runtime error instead of being retried
 forever; EOF or signal termination remains recoverable. Configuration and
-listener errors remain fatal. The
+listener errors remain fatal. Automatic TCP/UDP mappings are also
+process-scoped: they are detached from a failed child and rebound through the
+reconnecting session dialer, so a transient relay restart does not leave a
+stale Windows listener behind. The
 installer copies the built Linux proxy to `~/bin/wsl-proxy-linux`, the service
 wrapper to `~/bin/wsl-win-relay-service`, and the strict-listen launcher to
 `~/bin/wsl-win-relay-run`; when the native library is present it also installs
