@@ -465,6 +465,28 @@ static void cleanup_tasks(void) {
     active_task = NULL;
 }
 
+static void terminate_tracee(void) {
+    if (root_pid > 0) {
+        (void)kill(root_pid, SIGKILL);
+    }
+    for (struct task *task = tasks; task != NULL; task = task->next) {
+        if (task->pid != root_pid) {
+            (void)kill(task->pid, SIGKILL);
+        }
+    }
+    for (;;) {
+        int status;
+        pid_t pid = waitpid(-1, &status, __WALL);
+        if (pid > 0) {
+            continue;
+        }
+        if (pid < 0 && errno == EINTR) {
+            continue;
+        }
+        break;
+    }
+}
+
 static void remove_binding(int fd) {
     struct task_group *group = active_task->group;
     struct binding **cursor = &group->bindings;
@@ -1012,6 +1034,9 @@ int main(int argc, char **argv) {
         _exit(127);
     }
     int status = trace_target();
+    if (status < 0) {
+        terminate_tracee();
+    }
     cleanup_tasks();
     return status < 0 ? 1 : status;
 }
