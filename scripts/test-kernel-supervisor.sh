@@ -23,8 +23,15 @@ printf '%s\n' \
     '#include <stdlib.h>' \
     '#include <string.h>' \
     '#include <sys/socket.h>' \
+    '#include <errno.h>' \
+    '#include <sys/wait.h>' \
     '#include <unistd.h>' \
     'int main(int argc, char **argv) {' \
+    '  if (argc > 1 && strcmp(argv[1], "fork") == 0) {' \
+    '    pid_t child = fork();' \
+    '    if (child >= 0) { if (child == 0) _exit(9); waitpid(child, 0, 0); return 8; }' \
+    '    return errno == ENOTSUP ? 0 : 7;' \
+    '  }' \
     '  int udp = argc > 1 && strcmp(argv[1], "udp") == 0;' \
     '  int port = argc > 2 ? atoi(argv[2]) : (udp ? 47126 : 47125);' \
     '  int fd = socket(AF_INET, udp ? SOCK_DGRAM : SOCK_STREAM, 0);' \
@@ -82,4 +89,13 @@ if WSL_WIN_RELAY_CONTROL="$tmp_dir/reject.sock" "$repo_dir/scripts/wsl-win-relay
 fi
 grep -q 'RESERVE .* tcp4 47125' "$tmp_dir/reject.log"
 ! grep -q '^COMMIT ' "$tmp_dir/reject.log"
+
+start_control "$tmp_dir/fork.sock" "$tmp_dir/fork.log"
+WSL_WIN_RELAY_CONTROL="$tmp_dir/fork.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" fork
+if [ -s "$tmp_dir/fork.log" ]; then
+    echo "fork rejection unexpectedly touched the lease control protocol" >&2
+    cat "$tmp_dir/fork.log" >&2
+    exit 1
+fi
+stop_control
 echo "kernel supervisor coordinated static TCP/UDP and propagated rejection"
