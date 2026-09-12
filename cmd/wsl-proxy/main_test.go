@@ -248,7 +248,7 @@ func TestRelayArgumentsHasNoSyntheticSubcommand(t *testing.T) {
 }
 
 func TestConnectorEnvironmentExportsBrokerCredentialsThroughWSLENV(t *testing.T) {
-	t.Setenv("WSLENV", "PATH_TRANSLATED/p:WSL_WIN_RELAY_BROKER_ENDPOINT")
+	t.Setenv("WSLENV", "PATH_TRANSLATED/p:WSL_WIN_RELAY_BROKER_ENDPOINT/u:WSL_WIN_RELAY_ATTACH_TOKEN/u:WSL_WIN_RELAY_ATTACH_TOKEN")
 	env := connectorEnvironment()
 	var wslenv string
 	for _, entry := range env {
@@ -271,6 +271,9 @@ func TestConnectorEnvironmentExportsBrokerCredentialsThroughWSLENV(t *testing.T)
 		if count != 1 {
 			t.Fatalf("WSLENV entry %q count=%d in %q", required, count, wslenv)
 		}
+	}
+	if strings.Contains(wslenv, "/u") {
+		t.Fatalf("broker credentials retained an unset flag: %q", wslenv)
 	}
 	if !strings.Contains(wslenv, "PATH_TRANSLATED/p") {
 		t.Fatalf("existing WSLENV entry was lost: %q", wslenv)

@@ -584,19 +584,7 @@ func relayArguments(opts options) []string {
 func connectorEnvironment() []string {
 	env := os.Environ()
 	wslenv := os.Getenv("WSLENV")
-	entries := strings.Split(wslenv, ":")
-	for _, required := range []string{"WSL_WIN_RELAY_BROKER_ENDPOINT", "WSL_WIN_RELAY_ATTACH_TOKEN"} {
-		found := false
-		for _, entry := range entries {
-			if entry == required || strings.HasPrefix(entry, required+"/") {
-				found = true
-				break
-			}
-		}
-		if !found {
-			entries = append(entries, required)
-		}
-	}
+	entries := normalizeWSLENV(strings.Split(wslenv, ":"), []string{"WSL_WIN_RELAY_BROKER_ENDPOINT", "WSL_WIN_RELAY_ATTACH_TOKEN"})
 	value := "WSLENV=" + strings.Join(entries, ":")
 	for index, entry := range env {
 		if strings.HasPrefix(entry, "WSLENV=") {
@@ -605,6 +593,38 @@ func connectorEnvironment() []string {
 		}
 	}
 	return append(env, value)
+}
+
+func normalizeWSLENV(entries, required []string) []string {
+	requiredSet := make(map[string]bool, len(required))
+	for _, name := range required {
+		requiredSet[name] = true
+	}
+	seen := make(map[string]bool, len(required))
+	result := make([]string, 0, len(entries)+len(required))
+	for _, entry := range entries {
+		if entry == "" {
+			continue
+		}
+		base := entry
+		if slash := strings.IndexByte(entry, '/'); slash >= 0 {
+			base = entry[:slash]
+		}
+		if requiredSet[base] {
+			if !seen[base] {
+				result = append(result, base)
+				seen[base] = true
+			}
+			continue
+		}
+		result = append(result, entry)
+	}
+	for _, name := range required {
+		if !seen[name] {
+			result = append(result, name)
+		}
+	}
+	return result
 }
 
 type noCommitReservation struct{ io.Closer }
