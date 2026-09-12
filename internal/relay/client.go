@@ -81,7 +81,7 @@ func (c *Client) Handshake(ctx context.Context, required uint64) (uint64, error)
 
 func (c *Client) OpenPacketContext(ctx context.Context) (net.PacketConn, error) {
 	id := c.nextID.Add(2)
-	p := &clientPacketConn{client: c, id: id, ready: make(chan error, 1), incoming: make(chan packetEvent, 64), done: make(chan struct{})}
+	p := &clientPacketConn{client: c, id: id, ready: make(chan error, 1), incoming: make(chan packetEvent, 64), done: make(chan struct{}), deadlineChanged: make(chan struct{})}
 	c.mu.Lock()
 	c.datagrams[id] = p
 	c.mu.Unlock()
@@ -405,19 +405,20 @@ type packetEvent struct {
 	err      error
 }
 type clientPacketConn struct {
-	client        *Client
-	id            uint32
-	ready         chan error
-	readyOnce     sync.Once
-	incoming      chan packetEvent
-	closeOnce     sync.Once
-	done          chan struct{}
-	doneOnce      sync.Once
-	errorMu       sync.Mutex
-	terminalErr   error
-	deadlineMu    sync.Mutex
-	readDeadline  time.Time
-	writeDeadline time.Time
+	client          *Client
+	id              uint32
+	ready           chan error
+	readyOnce       sync.Once
+	incoming        chan packetEvent
+	closeOnce       sync.Once
+	done            chan struct{}
+	doneOnce        sync.Once
+	errorMu         sync.Mutex
+	terminalErr     error
+	deadlineMu      sync.Mutex
+	readDeadline    time.Time
+	writeDeadline   time.Time
+	deadlineChanged chan struct{}
 }
 
 func (p *clientPacketConn) handle(frame protocol.Frame) {
@@ -469,37 +470,57 @@ func (p *clientPacketConn) terminalError() error {
 }
 
 func (p *clientPacketConn) ReadFrom(buffer []byte) (int, net.Addr, error) {
-	p.deadlineMu.Lock()
-	deadline := p.readDeadline
-	p.deadlineMu.Unlock()
-	var timer *time.Timer
-	var timeout <-chan time.Time
-	if !deadline.IsZero() {
-		duration := time.Until(deadline)
-		if duration <= 0 {
+	for {
+		p.deadlineMu.Lock()
+		deadline := p.readDeadline
+		deadlineChanged := p.deadlineChanged
+		if deadlineChanged == nil {
+			deadlineChanged = make(chan struct{})
+			p.deadlineChanged = deadlineChanged
+		}
+		p.deadlineMu.Unlock()
+		var timer *time.Timer
+		var timeout <-chan time.Time
+		if !deadline.IsZero() {
+			duration := time.Until(deadline)
+			if duration <= 0 {
+				return 0, nil, osTimeout{}
+			}
+			timer = time.NewTimer(duration)
+			timeout = timer.C
+		}
+		select {
+		case event := <-p.incoming:
+			if timer != nil {
+				timer.Stop()
+			}
+			if event.err != nil {
+				return 0, nil, event.err
+			}
+			if len(event.data) > len(buffer) {
+				copy(buffer, event.data[:len(buffer)])
+				return len(buffer), relayAddr(event.endpoint), io.ErrShortBuffer
+			}
+			n := copy(buffer, event.data)
+			return n, relayAddr(event.endpoint), nil
+		case <-timeout:
 			return 0, nil, osTimeout{}
+		case <-deadlineChanged:
+			if timer != nil {
+				timer.Stop()
+			}
+			continue
+		case <-p.done:
+			if timer != nil {
+				timer.Stop()
+			}
+			return 0, nil, p.terminalError()
+		case <-p.client.closed:
+			if timer != nil {
+				timer.Stop()
+			}
+			return 0, nil, ErrClientClosed
 		}
-		timer = time.NewTimer(duration)
-		timeout = timer.C
-		defer timer.Stop()
-	}
-	select {
-	case event := <-p.incoming:
-		if event.err != nil {
-			return 0, nil, event.err
-		}
-		if len(event.data) > len(buffer) {
-			copy(buffer, event.data[:len(buffer)])
-			return len(buffer), relayAddr(event.endpoint), io.ErrShortBuffer
-		}
-		n := copy(buffer, event.data)
-		return n, relayAddr(event.endpoint), nil
-	case <-timeout:
-		return 0, nil, osTimeout{}
-	case <-p.done:
-		return 0, nil, p.terminalError()
-	case <-p.client.closed:
-		return 0, nil, ErrClientClosed
 	}
 }
 
@@ -540,19 +561,34 @@ func (p *clientPacketConn) LocalAddr() net.Addr { return relayAddr("wsl-udp") }
 func (p *clientPacketConn) SetDeadline(t time.Time) error {
 	p.deadlineMu.Lock()
 	p.readDeadline, p.writeDeadline = t, t
+	changed := p.deadlineChanged
+	p.deadlineChanged = make(chan struct{})
 	p.deadlineMu.Unlock()
+	if changed != nil {
+		close(changed)
+	}
 	return nil
 }
 func (p *clientPacketConn) SetReadDeadline(t time.Time) error {
 	p.deadlineMu.Lock()
 	p.readDeadline = t
+	changed := p.deadlineChanged
+	p.deadlineChanged = make(chan struct{})
 	p.deadlineMu.Unlock()
+	if changed != nil {
+		close(changed)
+	}
 	return nil
 }
 func (p *clientPacketConn) SetWriteDeadline(t time.Time) error {
 	p.deadlineMu.Lock()
 	p.writeDeadline = t
+	changed := p.deadlineChanged
+	p.deadlineChanged = make(chan struct{})
 	p.deadlineMu.Unlock()
+	if changed != nil {
+		close(changed)
+	}
 	return nil
 }
 

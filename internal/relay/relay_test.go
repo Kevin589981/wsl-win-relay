@@ -863,6 +863,32 @@ func TestReadDeadlineUpdateWakesBlockedRead(t *testing.T) {
 	}
 }
 
+func TestPacketReadDeadlineUpdateWakesBlockedRead(t *testing.T) {
+	packet := &clientPacketConn{client: NewClient(&discardReadWriter{}), id: 1, ready: make(chan error, 1), incoming: make(chan packetEvent), done: make(chan struct{})}
+	if err := packet.SetReadDeadline(time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, _, err := packet.ReadFrom(make([]byte, 1))
+		result <- err
+	}()
+	time.Sleep(10 * time.Millisecond)
+	if err := packet.SetReadDeadline(time.Now().Add(20 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-result:
+		var timeout osTimeout
+		if !errors.As(err, &timeout) {
+			t.Fatalf("packet read error=%v, want timeout", err)
+		}
+	case <-time.After(time.Second):
+		_ = packet.Close()
+		t.Fatal("blocked packet read did not observe updated deadline")
+	}
+}
+
 type discardReadWriter struct{}
 
 func (*discardReadWriter) Read([]byte) (int, error)    { return 0, io.EOF }
