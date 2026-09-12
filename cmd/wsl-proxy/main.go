@@ -413,6 +413,9 @@ func runSession(parent context.Context, opts options, logger *log.Logger, dialer
 
 	cmd := exec.CommandContext(ctx, opts.relayExe, relayArguments(opts)...)
 	cmd.Stderr = os.Stderr
+	if opts.brokerMode {
+		cmd.Env = connectorEnvironment()
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("open relay stdin: %w", err)
@@ -576,6 +579,32 @@ func relayArguments(opts options) []string {
 		return nil
 	}
 	return []string{"-upstream-proxy", opts.upstreamProxy}
+}
+
+func connectorEnvironment() []string {
+	env := os.Environ()
+	wslenv := os.Getenv("WSLENV")
+	entries := strings.Split(wslenv, ":")
+	for _, required := range []string{"WSL_WIN_RELAY_BROKER_ENDPOINT", "WSL_WIN_RELAY_ATTACH_TOKEN"} {
+		found := false
+		for _, entry := range entries {
+			if entry == required || strings.HasPrefix(entry, required+"/") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			entries = append(entries, required)
+		}
+	}
+	value := "WSLENV=" + strings.Join(entries, ":")
+	for index, entry := range env {
+		if strings.HasPrefix(entry, "WSLENV=") {
+			env[index] = value
+			return env
+		}
+	}
+	return append(env, value)
 }
 
 type noCommitReservation struct{ io.Closer }

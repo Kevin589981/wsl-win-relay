@@ -51,6 +51,9 @@ func runPersistentConnector(parent, mappingCtx context.Context, opts options, lo
 	defer cancel()
 	cmd := exec.CommandContext(ctx, opts.relayExe, relayArguments(opts)...)
 	cmd.Stderr = os.Stderr
+	if opts.brokerMode {
+		cmd.Env = connectorEnvironment()
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("open connector stdin: %w", err)

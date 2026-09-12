@@ -55,6 +55,9 @@
 - [x] Opt-in broker and connector executables bridge stdio to local IPC and
       run the existing relay server after attach; offline WSL SOCKS5 integration
       is covered by `scripts/test-broker-connector.sh`.
+- [x] Real WSL-to-Windows broker interop smoke builds the Windows binaries,
+      exports broker credentials through `WSLENV`, attaches over named pipes,
+      and reaches an external HTTPS endpoint.
 - [x] Frame-aware replaceable Link and `relay.Server.ServeAttached` keep the
       broker server lifecycle alive across connector transport replacement.
 - [x] Relay client `RunAttached`/`Rehandshake` reuse the same stream registry,
@@ -81,8 +84,8 @@
 - [x] Broker-mode can be selected from the persistent JSON configuration while
       attach credentials remain environment-only.
 - [x] Optional systemd user broker unit, private token file, and bounded broker
-      process restart wrapper are available; established broker sockets still
-      end when the process crashes.
+      process restart wrapper are available; socket-host crashes remain the
+      documented established-socket failure boundary.
 - [x] Broker instance identity detects a broker process restart and rebuilds
       stale peer state plus explicit/automatic mappings without restarting the
       WSL proxy; a real broker-restart integration test covers both directions.

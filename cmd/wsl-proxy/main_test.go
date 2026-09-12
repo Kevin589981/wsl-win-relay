@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -243,6 +244,36 @@ func TestRelayArgumentsHasNoSyntheticSubcommand(t *testing.T) {
 	want := []string{"-upstream-proxy", "socks5h://127.0.0.1:7890"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("arguments %v, want %v", got, want)
+	}
+}
+
+func TestConnectorEnvironmentExportsBrokerCredentialsThroughWSLENV(t *testing.T) {
+	t.Setenv("WSLENV", "PATH_TRANSLATED/p:WSL_WIN_RELAY_BROKER_ENDPOINT")
+	env := connectorEnvironment()
+	var wslenv string
+	for _, entry := range env {
+		if len(entry) >= len("WSLENV=") && entry[:len("WSLENV=")] == "WSLENV=" {
+			wslenv = entry[len("WSLENV="):]
+			break
+		}
+	}
+	if wslenv == "" {
+		t.Fatal("WSLENV was not added to connector environment")
+	}
+	parts := strings.Split(wslenv, ":")
+	for _, required := range []string{"WSL_WIN_RELAY_BROKER_ENDPOINT", "WSL_WIN_RELAY_ATTACH_TOKEN"} {
+		count := 0
+		for _, part := range parts {
+			if part == required || strings.HasPrefix(part, required+"/") {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Fatalf("WSLENV entry %q count=%d in %q", required, count, wslenv)
+		}
+	}
+	if !strings.Contains(wslenv, "PATH_TRANSLATED/p") {
+		t.Fatalf("existing WSLENV entry was lost: %q", wslenv)
 	}
 }
 

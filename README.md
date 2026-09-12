@@ -89,8 +89,22 @@ selects broker mode when `WSL_WIN_RELAY_BROKER_MODE=1`. After a bridge-worker
 restart, the running proxy reconnects through the same socket host and
 reconstructs explicit and automatic mappings when needed.
 The broker unit uses `KillMode=process` so systemd frontend restarts do not
-terminate the worker; a normal stop still shuts it down through the private
-control endpoint.
+terminate the bridge worker or socket host; a normal stop still shuts them down
+through the private control endpoints.
+
+To verify the complete WSL-to-Windows broker path on a machine with WSL
+interop and working Windows egress, run:
+
+```bash
+./scripts/test-broker-windows-interop.sh
+```
+
+The smoke builds the Linux proxy and Windows broker/connector, starts the
+broker on a per-user named pipe, and performs a SOCKS5 request to
+`https://example.com`. WSL does not automatically export arbitrary environment
+variables to Windows processes, so broker mode adds
+`WSL_WIN_RELAY_BROKER_ENDPOINT` and `WSL_WIN_RELAY_ATTACH_TOKEN` to `WSLENV`
+for connector children. The token remains out of command-line arguments.
 
 ## Security model
 
