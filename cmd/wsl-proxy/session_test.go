@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -100,6 +101,38 @@ func TestSessionDialerRetriesPacketAfterSessionReplacement(t *testing.T) {
 	_ = packet.Close()
 }
 
+func TestSessionDialerRetriesReverseReservationAfterSessionReplacement(t *testing.T) {
+	oldClient := &fakeSessionClient{reverseErr: relay.ErrClientClosed, called: make(chan struct{}, 1)}
+	newClient := &fakeSessionClient{reverseReservation: &relay.ReverseReservation{}}
+	dialer := newSessionDialer()
+	dialer.set(oldClient)
+
+	type result struct {
+		reservation *relay.ReverseReservation
+		err         error
+	}
+	done := make(chan result, 1)
+	go func() {
+		reservation, err := dialer.reserveReverseForward(context.Background(), "127.0.0.1:8000", "127.0.0.1:8000")
+		done <- result{reservation: reservation, err: err}
+	}()
+	select {
+	case <-oldClient.called:
+	case <-time.After(time.Second):
+		t.Fatal("old reverse session was not used")
+	}
+	dialer.clear(oldClient)
+	dialer.set(newClient)
+	select {
+	case got := <-done:
+		if got.err != nil || got.reservation != newClient.reverseReservation {
+			t.Fatalf("result=%+v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("reverse reservation did not use replacement session")
+	}
+}
+
 func TestSessionRetryErrorIncludesClosedNetwork(t *testing.T) {
 	if !isSessionRetryError(net.ErrClosed) {
 		t.Fatal("net.ErrClosed should trigger session retry")
@@ -107,11 +140,13 @@ func TestSessionRetryErrorIncludesClosedNetwork(t *testing.T) {
 }
 
 type fakeSessionClient struct {
-	dialErr   error
-	packetErr error
-	conn      net.Conn
-	packet    net.PacketConn
-	called    chan struct{}
+	dialErr            error
+	packetErr          error
+	reverseErr         error
+	reverseReservation *relay.ReverseReservation
+	conn               net.Conn
+	packet             net.PacketConn
+	called             chan struct{}
 }
 
 func newFakeSessionClient() (*fakeSessionClient, net.Conn) {
@@ -146,6 +181,26 @@ func (f *fakeSessionClient) OpenPacketContext(context.Context) (net.PacketConn, 
 		return nil, errors.New("packet test client not implemented")
 	}
 	return f.packet, nil
+}
+
+func (f *fakeSessionClient) ReserveReverseForward(context.Context, string, string) (*relay.ReverseReservation, error) {
+	if f.called != nil {
+		select {
+		case f.called <- struct{}{}:
+		default:
+		}
+	}
+	if f.reverseErr != nil {
+		return nil, f.reverseErr
+	}
+	return f.reverseReservation, nil
+}
+
+func (f *fakeSessionClient) ReverseDatagramForward(context.Context, string, string) (io.Closer, error) {
+	if f.reverseErr != nil {
+		return nil, f.reverseErr
+	}
+	return nil, errors.New("packet reverse test client not implemented")
 }
 
 func newFakePacketClient(t *testing.T) (*fakeSessionClient, net.PacketConn) {

@@ -32,6 +32,9 @@
       listener mappings.
 - [x] Session-independent local SOCKS5/HTTP listeners with a reconnecting
       dialer for new requests during relay restarts.
+- [x] Strict control socket and live listener leases survive relay child
+      replacement; Windows reservations are rebound and recommitted for the
+      replacement session.
 - [x] Non-zero normal Windows relay exit status is classified as fatal instead
       of causing an unbounded restart loop.
 - [ ] Kernel-level coverage for static binaries and `vfork()` ownership
