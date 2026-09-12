@@ -26,6 +26,9 @@ work follows the same model:
   record. Process children have a copied fd table; `CLONE_THREAD` tasks share
   their group's fd table, so descriptor numbers retain Linux thread-group
   semantics.
+- Process-style `clone(CLONE_FILES)` children also share the group fd table.
+  They do not receive a second lease owner because a close in either task is a
+  close in the shared Linux descriptor table.
 - Descriptor lifecycle also covers `fcntl(F_DUPFD*)` and `close_range()` so
   static applications do not leave Windows mappings behind after bulk or
   libc-level descriptor cleanup. `SOCK_CLOEXEC` and `CLOSE_RANGE_CLOEXEC`

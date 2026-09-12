@@ -125,6 +125,16 @@ printf '%s\n' \
     '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 6;' \
     '    close(fd); return 0;' \
     '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "clone-files") == 0) {' \
+    '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0};' \
+    '    address.sin_family = AF_INET; address.sin_port = htons(47139); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
+    '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 2;' \
+    '    long child = syscall(SYS_clone, (unsigned long)(CLONE_FILES | SIGCHLD), 0, NULL, NULL, NULL);' \
+    '    if (child < 0) { int error = errno; close(fd); return error == ENOSYS || error == EPERM ? 77 : 4; }' \
+    '    if (child == 0) { close(fd); _exit(0); }' \
+    '    if (waitpid((pid_t)child, NULL, 0) != (pid_t)child) return 5;' \
+    '    return close(fd) < 0 && errno == EBADF ? 0 : 6;' \
+    '  }' \
     '  int duplicate = argc > 1 && strcmp(argv[1], "dup") == 0;' \
     '  int udp = argc > 1 && strcmp(argv[1], "udp") == 0;' \
     '  int ipv6 = argc > 1 && strcmp(argv[1], "tcp6") == 0;' \
@@ -264,6 +274,22 @@ WSL_WIN_RELAY_CONTROL="$tmp_dir/socket-cloexec.sock" "$repo_dir/scripts/wsl-win-
 grep -q 'RESERVE .* tcp4 47138' "$tmp_dir/socket-cloexec.log"
 grep -q 'RESERVE .* tcp4 47138' "$tmp_dir/socket-cloexec.log"
 test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/socket-cloexec.log")" -eq 2
+stop_control
+
+start_control "$tmp_dir/clone-files.sock" "$tmp_dir/clone-files.log"
+set +e
+WSL_WIN_RELAY_CONTROL="$tmp_dir/clone-files.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" clone-files
+clone_files_status=$?
+set -e
+if [ "$clone_files_status" -ne 0 ] && [ "$clone_files_status" -ne 77 ]; then
+    echo "clone-files target failed with status $clone_files_status" >&2
+    exit 1
+fi
+if [ "$clone_files_status" -eq 0 ]; then
+    grep -q 'RESERVE .* tcp4 47139' "$tmp_dir/clone-files.log"
+    ! grep -q '^ADOPT ' "$tmp_dir/clone-files.log"
+    test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/clone-files.log")" -eq 1
+fi
 stop_control
 
 start_control "$tmp_dir/leader-sys-exit.sock" "$tmp_dir/leader-sys-exit.log"

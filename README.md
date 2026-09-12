@@ -439,7 +439,8 @@ direct `syscall(SYS_listen/SYS_bind)` calls, including TCP `listen()`, non-zero
 UDP `bind()`, `dup()`, `dup2()`, `dup3()`, `fcntl(F_DUPFD*)`, `close_range()`,
 `SOCK_CLOEXEC`/`FD_CLOEXEC` exec teardown, and ordinary `fork()` descriptor
 inheritance, plus process-style `clone()`,
-`clone3()`, and parent-side `vfork()` adoption. Static binaries should use the
+`clone3()` (including `CLONE_FILES` shared-fd children), and parent-side
+`vfork()` adoption. Static binaries should use the
 opt-in `--kernel` adapter; setuid binaries remain rejected. Child-side
 networking before `vfork()` `exec`/`_exit` is supported only for direct
 syscall-safe operations. Ordinary pthread/`CLONE_THREAD`

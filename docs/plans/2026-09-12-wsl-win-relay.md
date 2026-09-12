@@ -97,6 +97,8 @@
       listener reservations behind.
 - [x] `socket(..., SOCK_CLOEXEC)` bindings enter the same exec-time retirement
       path and are covered by a static self-exec/rebind smoke test.
+- [x] Process-style `clone(CLONE_FILES)` children share the supervisor group
+      state and descriptor lease, matching Linux shared-fd semantics.
 - [x] ptrace register access is isolated for amd64 and aarch64 in
       `native/strict_supervisor_regs.h`; unsupported architectures fail at
       compile time until a dedicated adapter is added.

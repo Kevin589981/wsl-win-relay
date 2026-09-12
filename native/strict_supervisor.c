@@ -62,6 +62,7 @@ struct pending {
     int oldfd;
     int newfd;
     int flags;
+    uint64_t create_flags;
     unsigned range_first;
     unsigned range_last;
     int family;
@@ -608,7 +609,8 @@ static int handle_entry(wwr_regs *regs) {
     }
     if (syscall_number == SYS_clone) {
         pending_call.kind = PENDING_CREATE;
-        pending_call.type = ((unsigned long)WWR_ARG(regs, 0) & CLONE_THREAD) != 0;
+        pending_call.create_flags = (uint64_t)WWR_ARG(regs, 0);
+        pending_call.type = (pending_call.create_flags & CLONE_THREAD) != 0;
         return 0;
     }
 #ifdef SYS_clone3
@@ -620,6 +622,7 @@ static int handle_entry(wwr_regs *regs) {
             return stop_syscall(regs, ENOTSUP);
         }
         pending_call.kind = PENDING_CREATE;
+        pending_call.create_flags = arguments.flags;
         pending_call.type = (arguments.flags & CLONE_THREAD) != 0;
     }
 #endif
@@ -908,11 +911,14 @@ static int trace_target(void) {
             unsigned long child_value = 0;
             if (ptrace(PTRACE_GETEVENTMSG, pid, 0, &child_value) < 0) return -1;
             int thread_child = event == PTRACE_EVENT_CLONE && task->pending.kind == PENDING_CREATE && task->pending.type != 0;
-            if (debug_enabled()) fprintf(stderr, "strict-supervisor: task %ld created %ld thread=%d\n", (long)pid, (long)child_value, thread_child);
-            struct task_group *child_group = thread_child ? task->group : clone_group(task->group, (pid_t)child_value);
+            int shared_files = task->pending.kind == PENDING_CREATE &&
+                (task->pending.create_flags & CLONE_FILES) != 0;
+            int shared_group = thread_child || shared_files;
+            if (debug_enabled()) fprintf(stderr, "strict-supervisor: task %ld created %ld thread=%d shared-files=%d\n", (long)pid, (long)child_value, thread_child, shared_files);
+            struct task_group *child_group = shared_group ? task->group : clone_group(task->group, (pid_t)child_value);
             struct task *child = child_group == NULL ? NULL : add_task((pid_t)child_value, child_group);
             if (child == NULL) {
-                if (!thread_child) free(child_group);
+                if (!shared_group) free(child_group);
                 return -1;
             }
             int child_ready = 1;
