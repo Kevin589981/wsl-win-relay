@@ -34,6 +34,13 @@ Explicit reverse port forwarding and strict synchronization with dynamically lin
 
 Automatic discovery is available as an opt-in polling mode. It mirrors detected TCP listeners after they begin listening. This provides zero-configuration reachability but cannot retroactively make the application's already-successful `listen(2)` fail when Windows rejects the corresponding port; use the strict launcher when rejection propagation is required.
 
+The persistent-broker foundation is now staged in `internal/transport/attach`:
+it provides a per-instance token, generation-safe ownership, a bounded versioned
+attach handshake, and deterministic registry-summary/resume-ack messages. The
+Windows broker/connector that owns sockets across connector restarts is not yet
+enabled by default. Until that layer is complete, a broken stdio session still
+ends in-flight connections while new requests and mappings recover normally.
+
 ## Security model
 
 - The WSL listener binds to `127.0.0.1` by default.
