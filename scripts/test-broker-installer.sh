@@ -36,4 +36,15 @@ WSL_WIN_RELAY_BROKER_EXE=/bin/echo \
     "$repo_dir/scripts/install-broker-user-service.sh" >/dev/null
 [ "$(sed -n "s/^WSL_WIN_RELAY_ATTACH_TOKEN='\([^']*\)'$/\1/p" "$env_file")" = "$token" ]
 [ "$(cat "$token_file")" = "$token" ]
+
+rm -f "$token_file"
+if HOME="$tmp_dir/home" \
+    XDG_CONFIG_HOME="$tmp_dir/config" \
+    PATH="$tmp_dir/bin:/usr/bin:/bin" \
+    WSL_WIN_RELAY_BROKER_EXE=/bin/echo \
+        "$repo_dir/scripts/install-broker-user-service.sh" >"$tmp_dir/missing-token.out" 2>&1; then
+    echo "broker installer unexpectedly accepted a missing configured token file" >&2
+    exit 1
+fi
+grep -q 'token file is missing or non-regular' "$tmp_dir/missing-token.out"
 echo "broker installer creates and preserves protected token file"

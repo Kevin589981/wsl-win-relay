@@ -36,6 +36,40 @@ chmod 700 "$config_dir"
 install -m 0755 "$repo_dir/scripts/run-broker-user-service.sh" "$bin_dir/wsl-win-relay-broker-service"
 install -m 0644 "$repo_dir/systemd/wsl-win-relay-broker.service" "$service_dir/wsl-win-relay-broker.service"
 
+validate_token_file() {
+    token_path=$1
+    if [ -L "$token_path" ] || [ ! -f "$token_path" ]; then
+        echo "configured broker token file is missing or non-regular: $token_path" >&2
+        return 1
+    fi
+    chmod 600 "$token_path"
+    token_value=$(tr -d ' \t\r\n' < "$token_path")
+    token_length=${#token_value}
+    case "$token_value" in
+        ''|*[!0-9A-Fa-f]*)
+            echo "configured broker token file is not hexadecimal: $token_path" >&2
+            return 1
+            ;;
+    esac
+    if [ $((token_length % 2)) -ne 0 ]; then
+        echo "configured broker token file has an odd-length hexadecimal token: $token_path" >&2
+        return 1
+    fi
+    configured_token=$(sed -n "s/^WSL_WIN_RELAY_ATTACH_TOKEN='\([0-9A-Fa-f]*\)'$/\1/p" "$env_file" | head -n 1)
+    if [ -n "$configured_token" ] && [ "$configured_token" != "$token_value" ]; then
+        echo "broker environment token does not match $token_path" >&2
+        return 1
+    fi
+}
+
+if [ -f "$env_file" ]; then
+    configured_token_file=$(sed -n "s/^WSL_WIN_RELAY_ATTACH_TOKEN_FILE='\(.*\)'$/\1/p" "$env_file" | head -n 1)
+    if [ -n "$configured_token_file" ]; then
+        token_file=$configured_token_file
+        validate_token_file "$token_file"
+    fi
+fi
+
 if [ ! -e "$env_file" ]; then
     token=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
     endpoint=${WSL_WIN_RELAY_BROKER_ENDPOINT:-wsl-win-relay-broker}
@@ -55,7 +89,7 @@ if ! grep -q '^WSL_WIN_RELAY_BROKER_MODE=' "$env_file"; then
 fi
 chmod 600 "$env_file"
 if [ -f "$token_file" ]; then
-    chmod 600 "$token_file"
+    validate_token_file "$token_file"
 fi
 
 systemctl --user daemon-reload
