@@ -147,8 +147,10 @@
       outages for a bounded window so WSL proxy services survive supervised
       frontend replacement; authentication/configuration failures remain
       terminal.
-- [ ] Socket-owner crash recovery still requires a separate host-level recovery
-      boundary because the socket owner owns the kernel sockets.
+- [x] Optional Windows Task Scheduler installation provides a host-level
+      `-supervise` boundary that can keep the broker available across WSL VM or
+      user-service shutdown; established streams after a socket-owner crash
+      remain intentionally unrecoverable.
 
 The hot-reconnect implementation follows [ADR-0015](../adr/0015-persistent-windows-ownership-and-attach.md) and [ADR-0016](../adr/0016-process-isolated-socket-owner.md): relay state and socket ownership now live in an independent socket owner behind replaceable connector bridges.
 

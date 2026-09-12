@@ -24,6 +24,25 @@ jobs:
           cache: false
       - run: go test ./...
       - run: go vet ./...
+      - name: Validate Windows host-task installer
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "$PWD/scripts/install-broker-windows-task.ps1",
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
+            -NoProfile -File "$PWD/scripts/install-broker-windows-task.ps1" `
+            -BrokerExe "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
+            -TokenFile "$PWD/README.md" -TaskName WWR-CI-WhatIf -WhatIf
 
   race:
     name: Race detector

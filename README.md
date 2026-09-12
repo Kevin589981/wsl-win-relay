@@ -97,6 +97,23 @@ The broker unit uses `KillMode=process` so systemd frontend restarts do not
 terminate the bridge worker, socket-host bridge, or socket owner; a normal stop still shuts them down
 through the private control endpoints.
 
+If the broker must outlive the WSL VM or user service, install the optional
+Windows Task Scheduler boundary from PowerShell 7:
+
+```powershell
+.\scripts\install-broker-windows-task.ps1 `
+  -BrokerExe 'C:\Tools\wsl-win-broker.exe' `
+  -TokenFile 'C:\Users\you\.config\wsl-win-relay\attach.token' `
+  -StartNow
+```
+
+The installer protects the token file ACL and registers the host-level
+`-supervise` parent. The WSL proxy still uses the same token value through its
+private environment/`WSLENV`; the task only receives the token-file path. Use
+`-Uninstall` with the same `-TaskName` to remove the task. This boundary keeps
+future attachments available across WSL shutdown, but cannot preserve
+established streams after a socket-owner crash.
+
 To verify the complete WSL-to-Windows broker path on a machine with WSL
 interop and working Windows egress, run:
 
