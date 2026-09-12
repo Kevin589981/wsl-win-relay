@@ -111,6 +111,10 @@ type activeMapping struct {
 	closer   io.Closer
 }
 
+// Bound concurrent Windows bind/relay requests so a large procfs scan cannot
+// consume unbounded goroutines while still avoiding head-of-line blocking.
+const maxConcurrentOpens = 8
+
 func (w *Watcher) Run(ctx context.Context) error {
 	if w.Scanner == nil || w.Opener == nil {
 		return fmt.Errorf("scanner and opener are required")
@@ -191,6 +195,12 @@ func (w *Watcher) sync(ctx context.Context) error {
 	for _, mapping := range removed {
 		w.closeMapping(mapping.closer)
 	}
+	type mappingAttempt struct {
+		key        listenerKey
+		listener   Listener
+		generation uint64
+	}
+	attempts := make([]mappingAttempt, 0, len(desired))
 	for key, listener := range desired {
 		w.mu.Lock()
 		active, exists := w.active[key]
@@ -199,78 +209,99 @@ func (w *Watcher) sync(ctx context.Context) error {
 		if exists && active.listener == listener {
 			continue
 		}
-		windowsHost := w.WindowsHost
-		wslHost := listener.Host
-		if listener.Network == "tcp6" {
-			windowsHost = w.WindowsHost6
-		}
-		if listener.Network == "tcp4" && (wslHost == "" || wslHost == "0.0.0.0") {
-			wslHost = "127.0.0.1"
-		}
-		if listener.Network == "tcp6" && (wslHost == "" || wslHost == "::") {
-			wslHost = "::1"
-		}
-		windowsAddr := net.JoinHostPort(windowsHost, strconv.Itoa(int(listener.Port)))
-		wslTarget := net.JoinHostPort(wslHost, strconv.Itoa(int(listener.Port)))
-		openCtx := ctx
-		cancelOpen := func() {}
-		if w.OpenTimeout > 0 {
-			openCtx, cancelOpen = context.WithTimeout(ctx, w.OpenTimeout)
-		}
-		closer, openErr := w.Opener.ReverseForward(openCtx, windowsAddr, wslTarget)
-		cancelOpen()
-		w.mu.Lock()
-		staleGeneration := generation != w.generation
-		w.mu.Unlock()
-		if staleGeneration {
-			// Reset may have replaced the relay session while the opener was
-			// blocked. Never publish a mapping created by that old session.
-			w.closeMapping(closer)
-			continue
-		}
-		if openErr != nil {
-			w.mu.Lock()
-			firstRejection := !w.rejected[key]
-			w.rejected[key] = true
-			w.mu.Unlock()
-			if firstRejection {
-				w.Logger.Printf("%s rejected %s -> %s: %v", w.Label, windowsAddr, wslTarget, openErr)
-			}
-			continue
-		}
-		if closer == nil {
-			openErr = errors.New("opener returned nil mapping")
-			w.mu.Lock()
-			firstRejection := !w.rejected[key]
-			w.rejected[key] = true
-			w.mu.Unlock()
-			if firstRejection {
-				w.Logger.Printf("%s rejected %s -> %s: %v", w.Label, windowsAddr, wslTarget, openErr)
-			}
-			continue
-		}
-		w.mu.Lock()
-		wasRejected := w.rejected[key]
-		delete(w.rejected, key)
-		w.mu.Unlock()
-		if wasRejected {
-			w.Logger.Printf("%s restored %s -> %s", w.Label, windowsAddr, wslTarget)
-		}
-		var closeAfterUnlock io.Closer
-		w.mu.Lock()
-		desiredListener, stillDesired := desired[key]
-		if generation == w.generation && stillDesired && desiredListener == listener {
-			w.active[key] = activeMapping{listener: listener, closer: closer}
-		} else {
-			closeAfterUnlock = closer
-		}
-		w.mu.Unlock()
-		if closeAfterUnlock != nil {
-			w.closeMapping(closeAfterUnlock)
-		}
-		w.Logger.Printf("%s added %s -> %s", w.Label, windowsAddr, wslTarget)
+		attempts = append(attempts, mappingAttempt{key: key, listener: listener, generation: generation})
 	}
+	sem := make(chan struct{}, maxConcurrentOpens)
+	var attemptsDone sync.WaitGroup
+	for _, attempt := range attempts {
+		attemptsDone.Add(1)
+		go func(attempt mappingAttempt) {
+			defer attemptsDone.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			defer func() { <-sem }()
+			w.openOne(ctx, attempt.key, attempt.listener, attempt.generation, desired)
+		}(attempt)
+	}
+	attemptsDone.Wait()
 	return nil
+}
+
+func (w *Watcher) openOne(ctx context.Context, key listenerKey, listener Listener, generation uint64, desired map[listenerKey]Listener) {
+	windowsHost := w.WindowsHost
+	wslHost := listener.Host
+	if listener.Network == "tcp6" {
+		windowsHost = w.WindowsHost6
+	}
+	if listener.Network == "tcp4" && (wslHost == "" || wslHost == "0.0.0.0") {
+		wslHost = "127.0.0.1"
+	}
+	if listener.Network == "tcp6" && (wslHost == "" || wslHost == "::") {
+		wslHost = "::1"
+	}
+	windowsAddr := net.JoinHostPort(windowsHost, strconv.Itoa(int(listener.Port)))
+	wslTarget := net.JoinHostPort(wslHost, strconv.Itoa(int(listener.Port)))
+	openCtx := ctx
+	cancelOpen := func() {}
+	if w.OpenTimeout > 0 {
+		openCtx, cancelOpen = context.WithTimeout(ctx, w.OpenTimeout)
+	}
+	closer, openErr := w.Opener.ReverseForward(openCtx, windowsAddr, wslTarget)
+	cancelOpen()
+	w.mu.Lock()
+	staleGeneration := generation != w.generation
+	w.mu.Unlock()
+	if staleGeneration {
+		// Reset may have replaced the relay session while the opener was
+		// blocked. Never publish a mapping created by that old session.
+		w.closeMapping(closer)
+		return
+	}
+	if openErr != nil {
+		w.mu.Lock()
+		firstRejection := !w.rejected[key]
+		w.rejected[key] = true
+		w.mu.Unlock()
+		if firstRejection {
+			w.Logger.Printf("%s rejected %s -> %s: %v", w.Label, windowsAddr, wslTarget, openErr)
+		}
+		return
+	}
+	if closer == nil {
+		openErr = errors.New("opener returned nil mapping")
+		w.mu.Lock()
+		firstRejection := !w.rejected[key]
+		w.rejected[key] = true
+		w.mu.Unlock()
+		if firstRejection {
+			w.Logger.Printf("%s rejected %s -> %s: %v", w.Label, windowsAddr, wslTarget, openErr)
+		}
+		return
+	}
+	w.mu.Lock()
+	wasRejected := w.rejected[key]
+	delete(w.rejected, key)
+	w.mu.Unlock()
+	if wasRejected {
+		w.Logger.Printf("%s restored %s -> %s", w.Label, windowsAddr, wslTarget)
+	}
+	var closeAfterUnlock io.Closer
+	w.mu.Lock()
+	desiredListener, stillDesired := desired[key]
+	if generation == w.generation && stillDesired && desiredListener == listener {
+		w.active[key] = activeMapping{listener: listener, closer: closer}
+	} else {
+		closeAfterUnlock = closer
+	}
+	w.mu.Unlock()
+	if closeAfterUnlock != nil {
+		w.closeMapping(closeAfterUnlock)
+		return
+	}
+	w.Logger.Printf("%s added %s -> %s", w.Label, windowsAddr, wslTarget)
 }
 
 func (w *Watcher) closeAll() {

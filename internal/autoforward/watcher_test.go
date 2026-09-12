@@ -253,6 +253,30 @@ func TestWatcherDropsMappingOpenedBeforeReset(t *testing.T) {
 	}
 }
 
+func TestWatcherOpensMappingsConcurrently(t *testing.T) {
+	scanner := &sequenceScanner{values: [][]Listener{{
+		{Network: "tcp4", Port: 8000},
+		{Network: "tcp4", Port: 8001},
+	}}}
+	opener := &parallelOpenOpener{started: make(chan string, 2), release: make(chan struct{})}
+	w := &Watcher{Scanner: scanner, Opener: opener, Logger: log.New(io.Discard, "", 0), active: make(map[listenerKey]activeMapping)}
+	done := make(chan error, 1)
+	go func() { done <- w.sync(context.Background()) }()
+	seen := make(map[string]bool)
+	for len(seen) < 2 {
+		select {
+		case value := <-opener.started:
+			seen[value] = true
+		case <-time.After(time.Second):
+			t.Fatalf("mapping attempts were serialized: %v", seen)
+		}
+	}
+	close(opener.release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 type sequenceScanner struct {
 	mu     sync.Mutex
 	values [][]Listener
@@ -333,6 +357,22 @@ func (c delayedCloser) Close() error {
 		close(c.closed)
 	}
 	return nil
+}
+
+type parallelOpenOpener struct {
+	started chan string
+	release chan struct{}
+}
+
+func (*parallelOpenOpener) Scan() ([]Listener, error) { return nil, nil }
+
+func (o *parallelOpenOpener) ReverseForward(_ context.Context, windows, _ string) (io.Closer, error) {
+	_, port, _ := strings.Cut(windows, ":")
+	o.started <- port
+	if port == "8000" {
+		<-o.release
+	}
+	return io.NopCloser(strings.NewReader("")), nil
 }
 
 type recordingDatagramOpener struct {
