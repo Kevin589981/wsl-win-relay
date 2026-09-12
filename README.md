@@ -207,8 +207,12 @@ Remove-Item Env:GOOS,Env:GOARCH
 ```
 
 `scripts/build-wsl.sh` selects `amd64` or `arm64` from `uname -m`; set
-`WSL_WIN_RELAY_GOARCH=amd64|arm64` to override it for Go cross-builds. The
-native strict supervisor is compiled for the running WSL architecture.
+`WSL_WIN_RELAY_GOARCH=amd64|arm64` to override it for Go cross-builds. Set
+`WSL_WIN_RELAY_OUTPUT_DIR` to place a build in a separate staging directory.
+The native strict supervisor is compiled for the running WSL architecture, so
+an arm64 cross-build of the Go binaries is not a substitute for native ptrace
+runtime validation. `scripts/test-cross-build.sh` checks this cross-build path
+in CI.
 `wsl-proxy-linux` is the binary to run inside WSL; `wsl-win-relay.exe` is
 launched by it through WSL interop. Alternatively, run `go build` for the
 Linux proxy directly inside WSL.

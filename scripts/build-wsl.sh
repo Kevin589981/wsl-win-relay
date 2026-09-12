@@ -2,7 +2,8 @@
 set -eu
 
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-mkdir -p "$repo_dir/bin" "$repo_dir/lib"
+output_dir=${WSL_WIN_RELAY_OUTPUT_DIR:-$repo_dir}
+mkdir -p "$output_dir/bin" "$output_dir/lib"
 
 go_arch=${WSL_WIN_RELAY_GOARCH:-}
 if [ -z "$go_arch" ]; then
@@ -20,13 +21,13 @@ case "$go_arch" in
     *) echo "unsupported WSL_WIN_RELAY_GOARCH: $go_arch (expected amd64 or arm64)" >&2; exit 1 ;;
 esac
 
-GOTOOLCHAIN=local GOOS=linux GOARCH="$go_arch" go build -o "$repo_dir/bin/wsl-proxy-linux" "$repo_dir/cmd/wsl-proxy"
-GOTOOLCHAIN=local GOOS=windows GOARCH="$go_arch" go build -o "$repo_dir/bin/wsl-win-relay.exe" "$repo_dir/cmd/win-relay"
-GOTOOLCHAIN=local GOOS=windows GOARCH="$go_arch" go build -o "$repo_dir/bin/wsl-win-broker.exe" "$repo_dir/cmd/win-broker"
-GOTOOLCHAIN=local GOOS=windows GOARCH="$go_arch" go build -o "$repo_dir/bin/wsl-win-connector.exe" "$repo_dir/cmd/win-connector"
+GOTOOLCHAIN=local GOOS=linux GOARCH="$go_arch" go build -o "$output_dir/bin/wsl-proxy-linux" "$repo_dir/cmd/wsl-proxy"
+GOTOOLCHAIN=local GOOS=windows GOARCH="$go_arch" go build -o "$output_dir/bin/wsl-win-relay.exe" "$repo_dir/cmd/win-relay"
+GOTOOLCHAIN=local GOOS=windows GOARCH="$go_arch" go build -o "$output_dir/bin/wsl-win-broker.exe" "$repo_dir/cmd/win-broker"
+GOTOOLCHAIN=local GOOS=windows GOARCH="$go_arch" go build -o "$output_dir/bin/wsl-win-connector.exe" "$repo_dir/cmd/win-connector"
 gcc -O2 -Wall -Wextra -Werror -fPIC -shared \
-    -o "$repo_dir/lib/libwsl_win_relay_listen.so" \
+    -o "$output_dir/lib/libwsl_win_relay_listen.so" \
     "$repo_dir/native/listen_interposer.c" -ldl -pthread
 gcc -O2 -Wall -Wextra -Werror -std=c11 \
-    -o "$repo_dir/bin/wsl-win-relay-strict" \
+    -o "$output_dir/bin/wsl-win-relay-strict" \
     "$repo_dir/native/strict_supervisor.c"
