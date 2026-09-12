@@ -186,6 +186,25 @@ printf '%s\n' \
     '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 6;' \
     '    close(fd); return 0;' \
     '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "clone-files-exec-child") == 0) {' \
+    '    char ready = 1; if (write(10, &ready, 1) != 1 || read(9, &ready, 1) != 1) return 4;' \
+    '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0};' \
+    '    address.sin_family = AF_INET; address.sin_port = htons(47150); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
+    '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 2;' \
+    '    close(fd); return 0;' \
+    '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "clone-files-exec") == 0) {' \
+    '    int fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0); struct sockaddr_in address = {0}; int trigger[2]; int ready[2];' \
+    '    address.sin_family = AF_INET; address.sin_port = htons(47150); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
+    '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0 || pipe(trigger) < 0 || pipe(ready) < 0) return 2;' \
+    '    if (dup2(trigger[0], 9) < 0 || dup2(ready[1], 10) < 0) return 4;' \
+    '    long child = syscall(SYS_clone, (unsigned long)(CLONE_FILES | SIGCHLD), 0, NULL, NULL, NULL);' \
+    '    if (child < 0) { int error = errno; close(fd); return error == ENOSYS || error == EPERM ? 77 : 4; }' \
+    '    if (child == 0) { execl("/proc/self/exe", argv[0], "clone-files-exec-child", (char *)NULL); _exit(5); }' \
+    '    char signal = 0; if (read(ready[0], &signal, 1) != 1) return 6;' \
+    '    close(fd); if (write(trigger[1], &signal, 1) != 1) return 6;' \
+    '    return waitpid((pid_t)child, NULL, 0) == (pid_t)child ? 0 : 6;' \
+    '  }' \
     '  if (argc > 1 && strcmp(argv[1], "clone-files") == 0) {' \
     '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0};' \
     '    address.sin_family = AF_INET; address.sin_port = htons(47139); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
@@ -385,6 +404,14 @@ if [ "$clone_files_status" -eq 0 ]; then
     ! grep -q '^ADOPT ' "$tmp_dir/clone-files.log"
     test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/clone-files.log")" -eq 1
 fi
+stop_control
+
+start_control "$tmp_dir/clone-files-exec.sock" "$tmp_dir/clone-files-exec.log"
+WSL_WIN_RELAY_CONTROL="$tmp_dir/clone-files-exec.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" clone-files-exec
+grep -q 'RESERVE .* tcp4 47150' "$tmp_dir/clone-files-exec.log"
+test "$(grep -Ec '^RESERVE ' "$tmp_dir/clone-files-exec.log")" -eq 2
+test "$(grep -Ec '^ADOPT ' "$tmp_dir/clone-files-exec.log")" -ge 1
+test "$(grep -Ec '^COMMIT ' "$tmp_dir/clone-files-exec.log")" -eq 2
 stop_control
 
 export WWR_TEST_REJECT_ADOPT_AFTER=1

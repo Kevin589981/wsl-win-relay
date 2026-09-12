@@ -110,7 +110,9 @@
 - [x] `socket(..., SOCK_CLOEXEC)` bindings enter the same exec-time retirement
       path and are covered by a static self-exec/rebind smoke test.
 - [x] Process-style `clone(CLONE_FILES)` children share the supervisor group
-      state and descriptor lease, matching Linux shared-fd semantics.
+      state and descriptor lease, matching Linux shared-fd semantics; an
+      execing process-style child splits its descriptor state before
+      `FD_CLOEXEC` retirement so the parent's leases remain intact.
 - [x] Dynamic raw `clone()` and `clone3()` paths fail closed for non-thread
       `CLONE_FILES`; `clone3()` flags are read with `process_vm_readv` so an
       invalid caller pointer cannot crash the interposer.

@@ -81,6 +81,7 @@ struct task {
     pid_t pid;
     int entering;
     int exiting;
+    int process_shared_files;
     struct task_group *group;
     struct pending pending;
     struct task *next;
@@ -560,6 +561,32 @@ static void remove_close_on_exec_bindings(void) {
     }
 }
 
+/* A process-style clone(CLONE_FILES) shares its descriptor table only until
+ * one side execs. Linux then gives the execing process a private table, so
+ * CLOEXEC cleanup must not mutate the parent's tracked bindings. */
+static int split_process_files_on_exec(struct task *task) {
+    if (task == NULL || !task->process_shared_files || task->group == NULL) {
+        return 0;
+    }
+    struct task_group *old_group = task->group;
+    struct task_group *new_group = clone_group(old_group, task->pid);
+    if (new_group == NULL) {
+        return -1;
+    }
+    new_group->refs = 1;
+    task->group = new_group;
+    task->process_shared_files = 0;
+    if (old_group->refs > 0) {
+        old_group->refs--;
+    }
+    if (old_group->refs == 0) {
+        release_group(old_group);
+    }
+    active_task = task;
+    remove_close_on_exec_bindings();
+    return 0;
+}
+
 static int read_target_memory(unsigned long address, void *buffer, size_t length) {
     struct iovec local = {.iov_base = buffer, .iov_len = length};
     struct iovec remote = {.iov_base = (void *)address, .iov_len = length};
@@ -965,6 +992,7 @@ static int trace_target(void) {
                 if (!shared_group) free(child_group);
                 return -1;
             }
+            child->process_shared_files = shared_files && !thread_child;
             int child_ready = 1;
             if (ptrace(PTRACE_SETOPTIONS, child->pid, 0, options) < 0) {
                 if (errno == ESRCH) {
@@ -1006,7 +1034,13 @@ static int trace_target(void) {
             continue;
         }
         if (signal_number == SIGTRAP && event == PTRACE_EVENT_EXEC) {
-            remove_close_on_exec_bindings();
+            int split_files = task->process_shared_files;
+            if (split_process_files_on_exec(task) < 0) {
+                return -1;
+            }
+            if (!split_files) {
+                remove_close_on_exec_bindings();
+            }
             if (ptrace(PTRACE_SYSCALL, pid, 0, 0) < 0) return -1;
             continue;
         }
