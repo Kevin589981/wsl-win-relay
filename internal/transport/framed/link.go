@@ -41,9 +41,9 @@ func (l *Link) Attach(rw io.ReadWriter) (*Attachment, error) {
 		return nil, ErrNil
 	}
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	select {
 	case <-l.closed:
+		l.mu.Unlock()
 		return nil, ErrClosed
 	default:
 	}
@@ -51,6 +51,10 @@ func (l *Link) Attach(rw io.ReadWriter) (*Attachment, error) {
 	a := &Attachment{link: l, rw: rw}
 	l.current = a
 	l.signalLocked()
+	l.mu.Unlock()
+
+	// Closing an old endpoint can run user transport code and may block. Keep
+	// the link state available for concurrent readers and replacements.
 	if old != nil {
 		if closer, ok := old.rw.(io.Closer); ok {
 			_ = closer.Close()

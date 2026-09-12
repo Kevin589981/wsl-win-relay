@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"sync"
 	"testing"
@@ -64,6 +65,73 @@ func TestStaleAttachmentCannotDetachReplacement(t *testing.T) {
 	}
 	_ = firstWriter.Close()
 	_ = secondWriter.Close()
+	_ = link.Close()
+}
+
+type blockingCloseTransport struct {
+	closeStarted chan struct{}
+	closeRelease chan struct{}
+}
+
+func (b *blockingCloseTransport) Read([]byte) (int, error)    { return 0, io.EOF }
+func (b *blockingCloseTransport) Write(p []byte) (int, error) { return len(p), nil }
+func (b *blockingCloseTransport) Close() error {
+	select {
+	case <-b.closeStarted:
+	default:
+		close(b.closeStarted)
+	}
+	<-b.closeRelease
+	return nil
+}
+
+func TestAttachDoesNotHoldLockWhileClosingPreviousTransport(t *testing.T) {
+	link := New()
+	old := &blockingCloseTransport{closeStarted: make(chan struct{}), closeRelease: make(chan struct{})}
+	if _, err := link.Attach(old); err != nil {
+		t.Fatal(err)
+	}
+
+	replacement := make(chan error, 1)
+	go func() {
+		_, err := link.Attach(&bytes.Buffer{})
+		replacement <- err
+	}()
+	select {
+	case <-old.closeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("previous transport was not closed")
+	}
+	select {
+	case err := <-replacement:
+		// The replacement attach closes the old transport before returning, so
+		// it is expected to remain blocked until the close is released.
+		t.Fatalf("replacement attach returned while previous Close was blocked: %v", err)
+	default:
+	}
+
+	attached := make(chan error, 1)
+	go func() {
+		_, err := link.Attach(&bytes.Buffer{})
+		attached <- err
+	}()
+	select {
+	case err := <-attached:
+		if err != nil {
+			t.Fatalf("replacement attach failed: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("replacement attach blocked on previous Close")
+	}
+	close(old.closeRelease)
+	select {
+	case err := <-replacement:
+		if err != nil {
+			t.Fatalf("replacement attach failed after release: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("replacement attach did not finish after previous Close released")
+	}
 	_ = link.Close()
 }
 
