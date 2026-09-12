@@ -4,6 +4,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/sched.h>
 #include <netinet/in.h>
 #include <pthread.h>
 #include <sched.h>
@@ -606,6 +607,44 @@ long syscall(long number, ...) {
             return result;
         }
 #endif
+#ifdef SYS_clone
+        if (number == SYS_clone) {
+            va_list arguments;
+            va_start(arguments, number);
+            unsigned long flags = va_arg(arguments, unsigned long);
+            void *stack = va_arg(arguments, void *);
+            pid_t *parent_tid = va_arg(arguments, pid_t *);
+            pid_t *child_tid = va_arg(arguments, pid_t *);
+            unsigned long tls = va_arg(arguments, unsigned long);
+            va_end(arguments);
+            syscall_interposer_depth++;
+            long result = real_syscall(SYS_clone, flags, stack, parent_tid, child_tid, tls);
+            syscall_interposer_depth--;
+            if (result > 0 && (flags & CLONE_THREAD) == 0) {
+                adopt_tracked_for_pid((pid_t)result);
+            }
+            return result;
+        }
+#endif
+#ifdef SYS_clone3
+        if (number == SYS_clone3) {
+            va_list arguments;
+            va_start(arguments, number);
+            struct clone_args *clone_arguments = va_arg(arguments, struct clone_args *);
+            size_t clone_arguments_size = va_arg(arguments, size_t);
+            va_end(arguments);
+            syscall_interposer_depth++;
+            long result = real_syscall(SYS_clone3, clone_arguments, clone_arguments_size);
+            syscall_interposer_depth--;
+            if (result > 0) {
+                uint64_t flags = clone_arguments == NULL ? 0 : clone_arguments->flags;
+                if ((flags & CLONE_THREAD) == 0) {
+                    adopt_tracked_for_pid((pid_t)result);
+                }
+            }
+            return result;
+        }
+#endif
     }
 
     /* Linux syscall(2) accepts at most six register-sized arguments. */
@@ -691,7 +730,8 @@ pid_t fork(void) {
  * descriptors. Register that PID as an owner from the parent, just as the
  * fork wrapper does. CLONE_THREAD is intentionally excluded because it
  * shares the thread-group PID and the existing owner already covers the
- * shared descriptor table; clone3() and vfork() remain outside this wrapper.
+ * shared descriptor table; vfork() remains outside this wrapper. Direct raw
+ * clone/clone3 syscalls are handled in the syscall interposer below.
  */
 int clone(int (*function)(void *), void *stack, int flags, void *argument, ...) {
     pthread_once(&init_once, initialize);

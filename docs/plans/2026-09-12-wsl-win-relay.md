@@ -19,6 +19,8 @@
       Linux amd64 applications.
 - [x] Lease adoption for process-style `clone()` children, in addition to
       ordinary `fork()`.
+- [x] Parent-side lease adoption for dynamically linked raw `SYS_clone` and
+      `SYS_clone3` process children.
 - [x] Explicitly allowlisted UDP polling for common unconnected services, with
       a documented procfs ambiguity boundary.
 - [x] Process-boundary recovery that recreates mappings after broken relay
@@ -30,8 +32,8 @@
       listener mappings.
 - [x] Session-independent local SOCKS5/HTTP listeners with a reconnecting
       dialer for new requests during relay restarts.
-- [ ] Kernel-level coverage for static binaries, `clone3()`/`CLONE_THREAD`, and
-      `vfork()` ownership patterns.
+- [ ] Kernel-level coverage for static binaries, `CLONE_THREAD`, and `vfork()`
+      ownership patterns.
 - [ ] In-process hot reconnect that preserves existing connections across a
       broken stdio session.
 

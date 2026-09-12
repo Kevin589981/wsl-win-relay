@@ -2,6 +2,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/sched.h>
 #include <netinet/in.h>
 #include <sched.h>
 #include <stdlib.h>
@@ -120,6 +121,24 @@ int main(void) {
         return 19;
     }
     free(clone_stack);
+#ifdef SYS_clone3
+    struct clone_args clone3_arguments = {0};
+    clone3_arguments.exit_signal = SIGCHLD;
+    long clone3_result = syscall(SYS_clone3, &clone3_arguments, sizeof(clone3_arguments));
+    if (clone3_result == 0) {
+        (void)close_range((unsigned int)fd, (unsigned int)fd, 0);
+        _exit(0);
+    }
+    if (clone3_result > 0) {
+        if (waitpid((pid_t)clone3_result, NULL, 0) != clone3_result) {
+            close(fd);
+            return 20;
+        }
+    } else if (errno != ENOSYS && errno != EPERM && errno != EINVAL) {
+        close(fd);
+        return 21;
+    }
+#endif
     pid_t child = fork();
     if (child < 0) {
         close_range((unsigned int)fd, (unsigned int)fd, 0);
