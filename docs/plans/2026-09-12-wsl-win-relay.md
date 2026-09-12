@@ -117,6 +117,8 @@
       proxy without requiring WSL to reach that proxy endpoint.
 - [x] Socket-host bridge crash recovery preserves already-established streams
       because the socket owner, rather than the bridge, owns the kernel sockets.
+- [x] Socket-owner crash recovery rebuilds the owner, outer bridges, and new
+      mappings; established streams remain the documented unrecoverable boundary.
 - [ ] Socket-owner crash recovery still requires a separate host-level recovery
       boundary because the socket owner owns the kernel sockets.
 

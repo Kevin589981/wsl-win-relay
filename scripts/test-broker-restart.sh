@@ -14,6 +14,7 @@ delayed_pid=
 delayed_curl_pid=
 worker_delayed_curl_pid=
 host_delayed_curl_pid=
+owner_pid=
 service_port=$(python3 -c 'import socket
 while True:
     s=socket.socket(); s.bind(("127.0.0.1", 0)); p=s.getsockname()[1]; s.close()
@@ -31,6 +32,7 @@ cleanup() {
     [ -z "${broker_pid:-}" ] || kill "$broker_pid" 2>/dev/null || true
     [ -z "${worker_pid:-}" ] || kill "$worker_pid" 2>/dev/null || true
     [ -z "${host_pid:-}" ] || kill "$host_pid" 2>/dev/null || true
+    [ -z "${owner_pid:-}" ] || kill "$owner_pid" 2>/dev/null || true
     [ -z "${http_pid:-}" ] || kill "$http_pid" 2>/dev/null || true
     [ -z "${http2_pid:-}" ] || kill "$http2_pid" 2>/dev/null || true
     [ -z "${http3_pid:-}" ] || kill "$http3_pid" 2>/dev/null || true
@@ -42,6 +44,7 @@ cleanup() {
     [ -z "${broker_pid:-}" ] || wait "$broker_pid" 2>/dev/null || true
     [ -z "${worker_pid:-}" ] || wait "$worker_pid" 2>/dev/null || true
     [ -z "${host_pid:-}" ] || wait "$host_pid" 2>/dev/null || true
+    [ -z "${owner_pid:-}" ] || wait "$owner_pid" 2>/dev/null || true
     [ -z "${http_pid:-}" ] || wait "$http_pid" 2>/dev/null || true
     [ -z "${http2_pid:-}" ] || wait "$http2_pid" 2>/dev/null || true
     [ -z "${http3_pid:-}" ] || wait "$http3_pid" 2>/dev/null || true
@@ -341,6 +344,15 @@ if ! wait "$host_delayed_curl_pid"; then
 fi
 host_delayed_curl_pid=
 grep -qx "broker-socket-host-crash-ok" "$tmp_dir/host-delayed.out"
+
+owner_pid=$(ps -eo pid=,args= | awk -v exe="$tmp_dir/win-broker" '$0 ~ exe " -socket-owner" {print $1; exit}')
+if [ -z "$owner_pid" ]; then
+    cat "$tmp_dir/broker.log" "$tmp_dir/proxy.log"
+    exit 1
+fi
+kill -9 "$owner_pid"
+wait "$owner_pid" 2>/dev/null || true
+owner_pid=
 for _ in $(seq 1 450); do
     if probe >"$tmp_dir/host-restart.out" 2>"$tmp_dir/host-restart.err"; then
         break
@@ -351,4 +363,4 @@ if ! grep -qx "broker-restart-ok" "$tmp_dir/host-restart.out"; then
     cat "$tmp_dir/broker.log" "$tmp_dir/proxy.log" "$tmp_dir/host-restart.err"
     exit 1
 fi
-echo "frontend, bridge-worker, and socket-host bridge crashes preserved streams; socket-owner state rebuilt mappings"
+echo "frontend, bridge-worker, and socket-host bridge crashes preserved streams; socket-owner crash rebuilt mappings"
