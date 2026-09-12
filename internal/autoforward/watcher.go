@@ -323,6 +323,9 @@ func (w *Watcher) openOne(ctx context.Context, key listenerKey, listener Listene
 		return
 	}
 	if openErr != nil {
+		// An opener may have created a Windows-side resource before reporting a
+		// failure. Always close a non-nil handle returned with that error.
+		w.closeMapping(closer)
 		w.mu.Lock()
 		firstRejection := !w.rejected[key]
 		w.rejected[key] = true

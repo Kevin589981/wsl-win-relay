@@ -93,6 +93,11 @@ func openAll(ctx context.Context, mappings []Mapping, open func(Mapping) (io.Clo
 	for _, mapping := range mappings {
 		closer, err := open(mapping)
 		if err != nil {
+			// A backend may return a live handle together with an error after a
+			// partial Windows-side setup. Do not leak that handle during rollback.
+			if closer != nil {
+				_ = closer.Close()
+			}
 			_ = set.Close()
 			return nil, fmt.Errorf("%s=%s: %w", mapping.Windows, mapping.WSL, err)
 		}

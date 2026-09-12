@@ -67,6 +67,28 @@ func TestOpenDatagramAllRejectsNilCloser(t *testing.T) {
 	}
 }
 
+func TestOpenAllClosesHandleReturnedWithError(t *testing.T) {
+	opener := &partialFailureOpener{}
+	_, err := OpenAll(context.Background(), opener, []Mapping{{Windows: "a", WSL: "x"}})
+	if err == nil {
+		t.Fatal("expected registration failure")
+	}
+	if !opener.closed {
+		t.Fatal("partially-created mapping was not closed")
+	}
+}
+
+func TestOpenDatagramAllClosesHandleReturnedWithError(t *testing.T) {
+	opener := &partialFailureDatagramOpener{}
+	_, err := OpenDatagramAll(context.Background(), opener, []Mapping{{Windows: "a", WSL: "x"}})
+	if err == nil {
+		t.Fatal("expected registration failure")
+	}
+	if !opener.closed {
+		t.Fatal("partially-created datagram mapping was not closed")
+	}
+}
+
 type fakeOpener struct {
 	calls  int
 	failAt int
@@ -77,6 +99,18 @@ type fakeDatagramOpener struct {
 	calls  int
 	failAt int
 	closed []string
+}
+
+type partialFailureOpener struct{ closed bool }
+
+func (o *partialFailureOpener) ReverseForward(context.Context, string, string) (io.Closer, error) {
+	return closerFunc(func() error { o.closed = true; return nil }), errors.New("setup failed")
+}
+
+type partialFailureDatagramOpener struct{ closed bool }
+
+func (o *partialFailureDatagramOpener) ReverseDatagramForward(context.Context, string, string) (io.Closer, error) {
+	return closerFunc(func() error { o.closed = true; return nil }), errors.New("setup failed")
 }
 
 type nilOpener struct{}

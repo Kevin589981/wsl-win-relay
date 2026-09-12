@@ -208,6 +208,20 @@ func TestWatcherTreatsNilCloserAsRejected(t *testing.T) {
 	}
 }
 
+func TestWatcherClosesHandleReturnedWithError(t *testing.T) {
+	scanner := &sequenceScanner{values: [][]Listener{{{Network: "tcp4", Port: 8000}}}}
+	opener := &partialFailureOpener{closed: make(chan string, 1)}
+	w := &Watcher{Scanner: scanner, Opener: opener, Logger: log.New(io.Discard, "", 0), active: make(map[listenerKey]activeMapping)}
+	if err := w.sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-opener.closed:
+	default:
+		t.Fatal("partially-created mapping was not closed")
+	}
+}
+
 func TestWatcherResetClosesActiveMappings(t *testing.T) {
 	opener := &recordingOpener{closed: make(chan string, 1)}
 	w := &Watcher{Opener: opener, Logger: log.New(io.Discard, "", 0), active: map[listenerKey]activeMapping{
@@ -361,6 +375,12 @@ type recordingOpener struct {
 	closed   chan string
 	failures int
 	err      error
+}
+
+type partialFailureOpener struct{ closed chan string }
+
+func (o *partialFailureOpener) ReverseForward(_ context.Context, windows, wsl string) (io.Closer, error) {
+	return closeRecorder{value: windows + "=" + wsl, out: o.closed}, errors.New("setup failed")
 }
 
 type nilCloserOpener struct{}
