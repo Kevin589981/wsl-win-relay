@@ -35,6 +35,10 @@ frontend crash has no opportunity to send that request, so the worker remains
 alive. Service-level stop still terminates the worker through the control
 path and the systemd process group.
 
+The systemd broker unit uses `KillMode=process` so a restart of the frontend
+does not terminate the worker as part of cgroup cleanup. A normal frontend
+shutdown sends `STOP` over the private control endpoint before exiting.
+
 The frontend bridge is byte-transparent. Attach authentication and protocol
 validation remain solely in the worker, avoiding a second implementation of
 the wire contract and keeping stale connector teardown semantics unchanged.

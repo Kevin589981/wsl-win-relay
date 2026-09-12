@@ -7,7 +7,9 @@ Type=simple
 ExecStart=%h/bin/wsl-win-relay-broker-service
 Restart=on-failure
 RestartSec=2s
-KillMode=control-group
+# Keep the socket-owning worker alive when systemd restarts a crashed frontend.
+# A normal frontend stop sends STOP through the private worker control endpoint.
+KillMode=process
 TimeoutStopSec=10s
 
 [Install]

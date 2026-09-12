@@ -86,6 +86,9 @@ not close established kernel sockets; a worker crash still does. The normal
 proxy service wrapper loads the same env file for connector children and
 selects broker mode when `WSL_WIN_RELAY_BROKER_MODE=1`. After a worker restart,
 the running proxy reconstructs explicit and automatic mappings.
+The broker unit uses `KillMode=process` so systemd frontend restarts do not
+terminate the worker; a normal stop still shuts it down through the private
+control endpoint.
 
 ## Security model
 
