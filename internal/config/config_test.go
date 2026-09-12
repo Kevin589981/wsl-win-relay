@@ -36,3 +36,13 @@ func TestLoadMergesDefaultsAndRejectsUnknownFields(t *testing.T) {
 		t.Fatal("expected unknown-field error")
 	}
 }
+
+func TestRelayDialDurationRejectsNonPositiveValues(t *testing.T) {
+	for _, value := range []string{"", "0", "-1s", "not-a-duration"} {
+		file := Default()
+		file.RelayDialTimeout = value
+		if _, err := file.RelayDialDuration(); err == nil {
+			t.Fatalf("value %q should be rejected", value)
+		}
+	}
+}
