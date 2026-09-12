@@ -33,6 +33,7 @@ printf '%s\n' \
     '    if (child >= 0) { if (child == 0) _exit(9); waitpid(child, 0, 0); return 8; }' \
     '    return errno == ENOTSUP ? 0 : 7;' \
     '  }' \
+    '  int duplicate = argc > 1 && strcmp(argv[1], "dup") == 0;' \
     '  int udp = argc > 1 && strcmp(argv[1], "udp") == 0;' \
     '  int port = argc > 2 ? atoi(argv[2]) : (udp ? 47126 : 47125);' \
     '  int fd = socket(AF_INET, udp ? SOCK_DGRAM : SOCK_STREAM, 0);' \
@@ -41,6 +42,7 @@ printf '%s\n' \
     '  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
     '  if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0) return 2;' \
     '  if (!udp && listen(fd, 4) < 0) return 3;' \
+    '  if (duplicate) { int alias = dup(fd); if (alias < 0) return 4; close(fd); usleep(100000); close(alias); return 0; }' \
     '  usleep(100000); close(fd); return 0;' \
     '}' >"$tmp_dir/target.c"
 gcc -static -O2 -o "$tmp_dir/static-target" "$tmp_dir/target.c"
@@ -81,6 +83,11 @@ start_control "$tmp_dir/udp.sock" "$tmp_dir/udp.log"
 WSL_WIN_RELAY_CONTROL="$tmp_dir/udp.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" udp
 grep -q 'RESERVE .* udp4 47126' "$tmp_dir/udp.log"
 grep -q '^CLOSE ' "$tmp_dir/udp.log"
+stop_control
+
+start_control "$tmp_dir/dup.sock" "$tmp_dir/dup.log"
+WSL_WIN_RELAY_CONTROL="$tmp_dir/dup.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" dup
+test "$(grep -c '^CLOSE ' "$tmp_dir/dup.log")" -eq 1
 stop_control
 
 start_control "$tmp_dir/reject.sock" "$tmp_dir/reject.log" 47125
