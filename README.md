@@ -252,10 +252,12 @@ Place `wsl-win-relay.exe` somewhere visible to WSL interop (or pass its absolute
 curl --proxy socks5h://127.0.0.1:1080 https://example.com
 ```
 
-The `socks5h` form is intentional: TCP hostnames are sent through the relay
-and resolved by Windows rather than by WSL. SOCKS5 UDP ASSOCIATE is also
-supported; SOCKS5H UDP destinations can remain domain names for upstream
-resolution, while native UDP uses Windows resolution. SOCKS fragmentation
+The `socks5h` form is intentional when the upstream should resolve names
+remotely: TCP hostnames are sent through the relay rather than resolved by WSL.
+The `socks5` form resolves TCP and UDP names on Windows before sending IP
+addresses to the upstream. SOCKS5 UDP ASSOCIATE is supported; SOCKS5H UDP
+destinations can remain domain names for upstream resolution, while native UDP
+uses Windows resolution. SOCKS fragmentation
 (`FRAG != 0`) is rejected because there is no interoperable fragmentation
 standard in common clients.
 

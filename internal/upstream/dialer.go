@@ -59,6 +59,13 @@ func (d *Dialer) DialContext(ctx context.Context, target string) (net.Conn, erro
 	if _, _, err := net.SplitHostPort(target); err != nil {
 		return nil, fmt.Errorf("invalid target %q: %w", target, err)
 	}
+	if strings.EqualFold(d.proxy.Scheme, "socks5") {
+		resolved, resolveErr := resolveTarget(ctx, target)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		target = resolved
+	}
 	conn, err := d.dialer.DialContext(ctx, "tcp", d.proxy.Host)
 	if err != nil {
 		return nil, err
@@ -163,7 +170,7 @@ func (d *Dialer) OpenPacketContext(ctx context.Context) (net.PacketConn, error) 
 		_ = control.Close()
 		return nil, err
 	}
-	packet := &socks5PacketConn{control: control, udp: udp, relay: relayAddr, done: make(chan struct{})}
+	packet := &socks5PacketConn{control: control, udp: udp, relay: relayAddr, resolveDomains: strings.EqualFold(d.proxy.Scheme, "socks5"), done: make(chan struct{})}
 	close(finished)
 	go func() {
 		select {
@@ -177,6 +184,29 @@ func (d *Dialer) OpenPacketContext(ctx context.Context) (net.PacketConn, error) 
 		return nil, err
 	}
 	return packet, nil
+}
+
+func resolveTarget(ctx context.Context, target string) (string, error) {
+	host, port, err := net.SplitHostPort(target)
+	if err != nil {
+		return "", fmt.Errorf("invalid target %q: %w", target, err)
+	}
+	if net.ParseIP(host) != nil {
+		return target, nil
+	}
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	if err != nil {
+		return "", fmt.Errorf("resolve target %q: %w", host, err)
+	}
+	if len(ips) == 0 {
+		return "", fmt.Errorf("resolve target %q: no addresses", host)
+	}
+	for _, ip := range ips {
+		if ip4 := ip.To4(); ip4 != nil {
+			return net.JoinHostPort(ip4.String(), port), nil
+		}
+	}
+	return net.JoinHostPort(ips[0].String(), port), nil
 }
 
 func httpConnect(conn net.Conn, target string, user *url.Userinfo) error {
@@ -364,12 +394,13 @@ func readSocksAddress(reader io.Reader, addressType byte) (string, error) {
 }
 
 type socks5PacketConn struct {
-	mu      sync.Mutex
-	control net.Conn
-	udp     *net.UDPConn
-	relay   *net.UDPAddr
-	done    chan struct{}
-	closed  bool
+	mu             sync.Mutex
+	control        net.Conn
+	udp            *net.UDPConn
+	relay          *net.UDPAddr
+	resolveDomains bool
+	done           chan struct{}
+	closed         bool
 }
 
 func (p *socks5PacketConn) ReadFrom(buffer []byte) (int, net.Addr, error) {
@@ -404,6 +435,15 @@ func (p *socks5PacketConn) WriteTo(data []byte, address net.Addr) (int, error) {
 }
 
 func (p *socks5PacketConn) WriteToTarget(data []byte, target string) (int, error) {
+	if p.resolveDomains {
+		resolveCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		resolved, err := resolveTarget(resolveCtx, target)
+		cancel()
+		if err != nil {
+			return 0, err
+		}
+		target = resolved
+	}
 	targetAddress, err := encodeTarget(target)
 	if err != nil {
 		return 0, err

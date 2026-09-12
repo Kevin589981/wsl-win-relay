@@ -170,6 +170,66 @@ func TestSOCKS5Dialer(t *testing.T) {
 	}
 }
 
+func TestSOCKS5DialerResolvesDomainsLocally(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	serverErr := make(chan error, 1)
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			serverErr <- acceptErr
+			return
+		}
+		defer conn.Close()
+		if _, err := io.ReadFull(conn, make([]byte, 3)); err != nil {
+			serverErr <- err
+			return
+		}
+		if _, err := conn.Write([]byte{5, 0}); err != nil {
+			serverErr <- err
+			return
+		}
+		header := make([]byte, 4)
+		if _, err := io.ReadFull(conn, header); err != nil {
+			serverErr <- err
+			return
+		}
+		if header[0] != 5 || header[1] != 1 || header[3] != 1 {
+			serverErr <- io.ErrUnexpectedEOF
+			return
+		}
+		address := make([]byte, 6)
+		if _, err := io.ReadFull(conn, address); err != nil {
+			serverErr <- err
+			return
+		}
+		if !net.IP(address[:4]).Equal(net.ParseIP("127.0.0.1")) || binary.BigEndian.Uint16(address[4:]) != 443 {
+			serverErr <- io.ErrUnexpectedEOF
+			return
+		}
+		_, err := conn.Write([]byte{5, 0, 0, 1, 127, 0, 0, 1, 0, 1})
+		serverErr <- err
+	}()
+
+	dialer, err := New("socks5://" + listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	conn, err := dialer.DialContext(ctx, "localhost:443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.Close()
+	if err := <-serverErr; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSOCKS5PacketDialer(t *testing.T) {
 	udpProxy, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
@@ -240,7 +300,7 @@ func TestSOCKS5PacketDialer(t *testing.T) {
 		serverErr <- writeErr
 	}()
 
-	dialer, err := New("socks5://" + tcpProxy.Addr().String())
+	dialer, err := New("socks5h://" + tcpProxy.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}

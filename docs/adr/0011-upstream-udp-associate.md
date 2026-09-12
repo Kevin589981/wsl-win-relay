@@ -12,8 +12,9 @@ no portable datagram mode, while SOCKS5 defines UDP ASSOCIATE and keeps a TCP
 control connection alive for the association lifetime.
 
 The relay protocol already carries a destination endpoint with every UDP
-datagram. Native UDP sockets need a resolved `net.UDPAddr`, while a SOCKS5
-wrapper can preserve a domain endpoint and let the upstream proxy resolve it.
+datagram. Native UDP sockets need a resolved `net.UDPAddr`. SOCKS5 has two
+established DNS modes: `socks5` resolves names on the relay host, while
+`socks5h` preserves a domain endpoint for the upstream proxy to resolve.
 
 ## Decision
 
@@ -30,8 +31,10 @@ dialer implements the factory as follows:
 The SOCKS5 TCP control connection is closed together with the packet
 connection, and context cancellation closes both so blocked reads terminate.
 Native packet connections continue to resolve datagram destinations on Windows.
-The SOCKS5 packet wrapper additionally implements a target-string write path so
-domain destinations can use SOCKS5H remote resolution.
+For a `socks5` upstream, TCP and UDP domain targets are resolved on Windows
+before encoding; `socks5h` keeps them as domain targets for remote resolution.
+The packet wrapper therefore retains a target-string write path without
+forcing one DNS policy on both schemes.
 
 ## Consequences
 
@@ -49,7 +52,8 @@ domain destinations can use SOCKS5H remote resolution.
 - SOCKS5 UDP support depends on the upstream proxy allowing UDP ASSOCIATE and
   receiving UDP traffic from the relay host.
 - Native and SOCKS5 packet paths use different DNS policies: native UDP is
-  resolved by Windows, while SOCKS5H can resolve domain destinations remotely.
+  resolved by Windows, plain SOCKS5 resolves locally on Windows, and SOCKS5H
+  can resolve domain destinations remotely.
 
 ## Alternatives Considered
 
@@ -57,7 +61,8 @@ domain destinations can use SOCKS5H remote resolution.
 non-standard, inefficient, and incompatible with ordinary HTTP proxies.
 
 **Resolve every datagram name before the packet wrapper:** rejected because it
-would prevent SOCKS5H remote resolution when Windows DNS is unavailable.
+would prevent SOCKS5H remote resolution when Windows DNS is unavailable; the
+choice is made from the explicit upstream scheme instead.
 
 **Keep UDP native for every upstream scheme:** rejected because SOCKS5 UDP
 ASSOCIATE is specifically useful when native Windows UDP egress is unavailable.
