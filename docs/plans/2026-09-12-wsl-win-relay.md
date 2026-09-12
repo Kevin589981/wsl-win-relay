@@ -85,6 +85,8 @@
       that completes after relay reset cannot republish a stale-session mapping.
 - [x] Automatic mapping opens use a bounded worker pool so one slow Windows
       bind/relay request cannot serialize an entire listener scan.
+- [x] The bounded mapping worker pool is covered by a concurrency regression
+      test and keeps stale-session cleanup checks in every worker.
 - [x] Broker-mode can be selected from the persistent JSON configuration while
       attach credentials remain environment-only.
 - [x] Optional systemd user broker unit, private token file, and bounded broker
