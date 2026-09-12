@@ -460,7 +460,15 @@ func (s *Server) Rebind(ctx context.Context, reserve ReserveFunc, reserveDatagra
 		}
 		entry.l.mu.Lock()
 		windows, wsl, datagram := entry.l.windows, entry.l.wsl, entry.l.datagram
+		old := entry.l.reservation
+		entry.l.reservation = nil
 		entry.l.mu.Unlock()
+		// The previous relay peer may still own the Windows socket while its
+		// transport is being replaced. Release that reservation before binding
+		// the replacement so rebind cannot fail with a stale EADDRINUSE.
+		if old != nil {
+			_ = old.Close()
+		}
 		var replacement Reservation
 		var err error
 		if datagram {
@@ -501,7 +509,6 @@ func (s *Server) Rebind(ctx context.Context, reserve ReserveFunc, reserveDatagra
 			_ = replacement.Close()
 			continue
 		}
-		old := entry.l.reservation
 		entry.l.reservation = replacement
 		entry.l.mu.Unlock()
 		_ = old.Close()

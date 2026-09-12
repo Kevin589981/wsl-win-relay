@@ -334,7 +334,6 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 	}
 	var autoDone chan error
 	var autoUDPDone chan error
-	var autoResetDone chan error
 	if opts.autoForward {
 		excluded := clonePortSet(opts.autoExclude)
 		addAddressPort(excluded, socksListener.Addr().String())
@@ -360,31 +359,12 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 			go func() { autoUDPDone <- udpWatcher.Run(ctx) }()
 			logger.Printf("automatic UDP forwarding enabled for allowlisted ports %s", formatPorts(portsFromSet(opts.autoUDPInclude)))
 		}
-		autoResetDone = make(chan error, 1)
-		go func() {
-			var observed sessionClient
-			for {
-				current, changed := dialer.current()
-				if current != observed {
-					// The initial dialer.set closes its bootstrap channel. There
-					// is no old session to reset at that point; only a transition
-					// away from an observed client invalidates its mappings.
-					if observed != nil {
-						watcher.Reset()
-						if udpWatcher != nil {
-							udpWatcher.Reset()
-						}
-					}
-					observed = current
-				}
-				select {
-				case <-changed:
-				case <-ctx.Done():
-					autoResetDone <- nil
-					return
-				}
+		dialer.setClearHook(func() {
+			watcher.Reset()
+			if udpWatcher != nil {
+				udpWatcher.Reset()
 			}
-		}()
+		})
 	}
 	sessionDone := make(chan error, 1)
 	go func() {
@@ -408,8 +388,6 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 	case err := <-autoDone:
 		return sessionCompletion(ctx, err)
 	case err := <-autoUDPDone:
-		return sessionCompletion(ctx, err)
-	case err := <-autoResetDone:
 		return sessionCompletion(ctx, err)
 	case <-parent.Done():
 		return parent.Err()

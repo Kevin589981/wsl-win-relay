@@ -331,8 +331,8 @@ func TestRebindKeepsLeaseWhenReplacementFails(t *testing.T) {
 		t.Fatalf("rebind error=%v", err)
 	}
 	_, closed := old.values()
-	if closed {
-		t.Fatal("failed rebind closed the existing lease")
+	if !closed {
+		t.Fatal("failed rebind did not close the stale reservation")
 	}
 	server.mu.Lock()
 	_, exists := server.leases[9]

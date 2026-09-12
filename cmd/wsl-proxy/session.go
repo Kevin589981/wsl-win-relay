@@ -17,6 +17,7 @@ type sessionDialer struct {
 	mu      sync.RWMutex
 	client  sessionClient
 	changed chan struct{}
+	onClear func()
 }
 
 type sessionClient interface {
@@ -43,6 +44,7 @@ func (d *sessionDialer) set(client sessionClient) {
 }
 
 func (d *sessionDialer) clear(client sessionClient) {
+	var onClear func()
 	d.mu.Lock()
 	if d.client != client {
 		d.mu.Unlock()
@@ -51,8 +53,18 @@ func (d *sessionDialer) clear(client sessionClient) {
 	previous := d.changed
 	d.client = nil
 	d.changed = make(chan struct{})
+	onClear = d.onClear
 	d.mu.Unlock()
 	close(previous)
+	if onClear != nil {
+		onClear()
+	}
+}
+
+func (d *sessionDialer) setClearHook(hook func()) {
+	d.mu.Lock()
+	d.onClear = hook
+	d.mu.Unlock()
 }
 
 func (d *sessionDialer) DialContext(ctx context.Context, target string) (net.Conn, error) {

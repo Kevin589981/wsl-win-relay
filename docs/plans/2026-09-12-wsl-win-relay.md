@@ -92,6 +92,10 @@
 - [x] Initial session attachment does not reset freshly-created automatic
       mappings, and pending reverse listener OPEN/CLOSE races cancel before a
       Windows socket can be published.
+- [x] Automatic mapping reset is driven directly by session clear callbacks,
+      so rapid broker peer clear/set transitions cannot lose the reset event.
+- [x] Strict lease rebind releases stale peer reservations before replacement
+      binds, preserving leases while preventing stale Windows EADDRINUSE.
 - [x] Broker-mode can be selected from the persistent JSON configuration while
       attach credentials remain environment-only.
 - [x] Optional systemd user broker unit, private token file, and bounded broker
