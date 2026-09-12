@@ -150,6 +150,34 @@ func TestReserveClosesLeaseWhenRequesterDisconnects(t *testing.T) {
 	}
 }
 
+func TestReserveRejectsNilReservation(t *testing.T) {
+	server := &Server{
+		ProcessIdentity: func(int) (string, error) { return "start", nil },
+		Reserve:         func(context.Context, string, string) (Reservation, error) { return nil, nil },
+	}
+	serverSide, clientSide := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		server.handleReserve(context.Background(), serverSide, []string{"RESERVE", "123", "tcp4", "8000"})
+		close(done)
+	}()
+	response := make(chan string, 1)
+	go func() {
+		data, _ := io.ReadAll(clientSide)
+		response <- string(data)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("reserve did not finish")
+	}
+	_ = clientSide.Close()
+	if got := <-response; got != "ERR 5 reservation backend returned nil\n" {
+		t.Fatalf("response=%q", got)
+	}
+	_ = serverSide.Close()
+}
+
 func TestReserveCancelsWhenRequesterDisconnects(t *testing.T) {
 	server := &Server{
 		ProcessIdentity: func(int) (string, error) { return "start", nil },

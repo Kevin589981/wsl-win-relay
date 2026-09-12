@@ -251,6 +251,10 @@ func (s *Server) handleReserve(ctx context.Context, conn net.Conn, parts []strin
 		writeError(conn, errnoFor(err), err.Error())
 		return
 	}
+	if reservation == nil {
+		writeError(conn, 5, "reservation backend returned nil")
+		return
+	}
 	id := s.next.Add(1)
 	s.mu.Lock()
 	s.ensureLeases()
