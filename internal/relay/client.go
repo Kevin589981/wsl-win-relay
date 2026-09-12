@@ -868,6 +868,9 @@ func (s *clientStream) terminalError() error {
 }
 
 func (s *clientStream) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
 	s.readMu.Lock()
 	defer s.readMu.Unlock()
 	for {

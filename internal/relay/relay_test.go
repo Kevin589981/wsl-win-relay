@@ -792,6 +792,29 @@ func TestConcurrentReadsSerializeBufferedData(t *testing.T) {
 	}
 }
 
+func TestZeroLengthReadReturnsImmediately(t *testing.T) {
+	stream := newClientStream(NewClient(&discardReadWriter{}), 1, "example:1")
+	result := make(chan struct {
+		n   int
+		err error
+	}, 1)
+	go func() {
+		n, err := stream.Read(nil)
+		result <- struct {
+			n   int
+			err error
+		}{n: n, err: err}
+	}()
+	select {
+	case got := <-result:
+		if got.n != 0 || got.err != nil {
+			t.Fatalf("zero-length read returned n=%d err=%v", got.n, got.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("zero-length read blocked")
+	}
+}
+
 type discardReadWriter struct{}
 
 func (*discardReadWriter) Read([]byte) (int, error)    { return 0, io.EOF }
