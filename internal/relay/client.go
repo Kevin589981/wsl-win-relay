@@ -765,27 +765,28 @@ func bridge(a, b net.Conn) error {
 }
 
 type clientStream struct {
-	client        *Client
-	id            uint32
-	target        string
-	incoming      chan streamEvent
-	openDone      chan error
-	openOnce      sync.Once
-	closeOnce     sync.Once
-	stateMu       sync.Mutex
-	closedRemote  bool
-	readEOF       bool
-	readBuf       []byte
-	readMu        sync.Mutex
-	deadlineMu    sync.Mutex
-	readDeadline  time.Time
-	writeDeadline time.Time
-	errorMu       sync.Mutex
-	terminalErr   error
-	sendWindow    *flowWindow
-	done          chan struct{}
-	doneOnce      sync.Once
-	halfCloseOnce sync.Once
+	client          *Client
+	id              uint32
+	target          string
+	incoming        chan streamEvent
+	openDone        chan error
+	openOnce        sync.Once
+	closeOnce       sync.Once
+	stateMu         sync.Mutex
+	closedRemote    bool
+	readEOF         bool
+	readBuf         []byte
+	readMu          sync.Mutex
+	deadlineMu      sync.Mutex
+	readDeadline    time.Time
+	writeDeadline   time.Time
+	deadlineChanged chan struct{}
+	errorMu         sync.Mutex
+	terminalErr     error
+	sendWindow      *flowWindow
+	done            chan struct{}
+	doneOnce        sync.Once
+	halfCloseOnce   sync.Once
 }
 
 type streamEvent struct {
@@ -795,7 +796,7 @@ type streamEvent struct {
 
 func newClientStream(c *Client, id uint32, target string) *clientStream {
 	queueSize := protocol.InitialStreamWindow/protocol.MaxDataSize + 2
-	return &clientStream{client: c, id: id, target: target, incoming: make(chan streamEvent, queueSize), openDone: make(chan error, 1), sendWindow: newFlowWindow(), done: make(chan struct{})}
+	return &clientStream{client: c, id: id, target: target, incoming: make(chan streamEvent, queueSize), openDone: make(chan error, 1), sendWindow: newFlowWindow(), done: make(chan struct{}), deadlineChanged: make(chan struct{})}
 }
 
 func (s *clientStream) handle(frame protocol.Frame) {
@@ -894,6 +895,11 @@ func (s *clientStream) Read(p []byte) (int, error) {
 		}
 		s.deadlineMu.Lock()
 		wait := s.readDeadline
+		deadlineChanged := s.deadlineChanged
+		if deadlineChanged == nil {
+			deadlineChanged = make(chan struct{})
+			s.deadlineChanged = deadlineChanged
+		}
 		s.deadlineMu.Unlock()
 		var timer <-chan time.Time
 		var t *time.Timer
@@ -924,6 +930,8 @@ func (s *clientStream) Read(p []byte) (int, error) {
 			}
 		case <-timer:
 			return 0, osTimeout{}
+		case <-deadlineChanged:
+			continue
 		case <-s.done:
 			return 0, s.terminalError()
 		case <-s.client.closed:
@@ -979,19 +987,34 @@ func (s *clientStream) RemoteAddr() net.Addr { return relayAddr(s.target) }
 func (s *clientStream) SetDeadline(t time.Time) error {
 	s.deadlineMu.Lock()
 	s.readDeadline, s.writeDeadline = t, t
+	changed := s.deadlineChanged
+	s.deadlineChanged = make(chan struct{})
 	s.deadlineMu.Unlock()
+	if changed != nil {
+		close(changed)
+	}
 	return nil
 }
 func (s *clientStream) SetReadDeadline(t time.Time) error {
 	s.deadlineMu.Lock()
 	s.readDeadline = t
+	changed := s.deadlineChanged
+	s.deadlineChanged = make(chan struct{})
 	s.deadlineMu.Unlock()
+	if changed != nil {
+		close(changed)
+	}
 	return nil
 }
 func (s *clientStream) SetWriteDeadline(t time.Time) error {
 	s.deadlineMu.Lock()
 	s.writeDeadline = t
+	changed := s.deadlineChanged
+	s.deadlineChanged = make(chan struct{})
 	s.deadlineMu.Unlock()
+	if changed != nil {
+		close(changed)
+	}
 	return nil
 }
 

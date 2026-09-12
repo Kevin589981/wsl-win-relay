@@ -837,6 +837,32 @@ func TestZeroLengthReadReturnsImmediately(t *testing.T) {
 	}
 }
 
+func TestReadDeadlineUpdateWakesBlockedRead(t *testing.T) {
+	stream := newClientStream(NewClient(&discardReadWriter{}), 1, "example:1")
+	if err := stream.SetReadDeadline(time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, err := stream.Read(make([]byte, 1))
+		result <- err
+	}()
+	time.Sleep(10 * time.Millisecond)
+	if err := stream.SetReadDeadline(time.Now().Add(20 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-result:
+		var timeout osTimeout
+		if !errors.As(err, &timeout) {
+			t.Fatalf("read error=%v, want timeout", err)
+		}
+	case <-time.After(time.Second):
+		_ = stream.Close()
+		t.Fatal("blocked read did not observe updated deadline")
+	}
+}
+
 type discardReadWriter struct{}
 
 func (*discardReadWriter) Read([]byte) (int, error)    { return 0, io.EOF }
