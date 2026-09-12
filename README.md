@@ -93,6 +93,9 @@ values; repeated command-line `-reverse` mappings are added to configured
 mappings. SOCKS5 UDP associations are reclaimed after
 `udp_associate_idle_timeout` (default `5m`) without traffic; override it with
 `-udp-associate-idle-timeout` when needed.
+Relay connection setup waits at most `relay_dial_timeout` (default `30s`) for a
+healthy Windows session; override it with `-relay-dial-timeout` when a longer
+recovery window is required.
 
 Set `upstream_proxy` or `-upstream-proxy` when Windows itself should use an
 upstream proxy, for example `socks5h://matebookxpro.local:7890`. The default

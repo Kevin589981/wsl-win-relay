@@ -45,6 +45,7 @@ type options struct {
 	strictListenHost    string
 	strictListenHost6   string
 	udpAssociateIdle    time.Duration
+	relayDialTimeout    time.Duration
 }
 
 var errRelayExited = errors.New("Windows relay exited")
@@ -138,12 +139,17 @@ func parseOptions(args []string) (options, error) {
 	if err != nil {
 		return options{}, err
 	}
+	relayDialTimeout, err := fileConfig.RelayDialDuration()
+	if err != nil {
+		return options{}, err
+	}
 	opts := options{
 		socksListen: fileConfig.SOCKS5Listen, httpListen: fileConfig.HTTPConnectListen,
 		relayExe: fileConfig.RelayExecutable, upstreamProxy: fileConfig.UpstreamProxy, autoForward: fileConfig.AutoForward.Enabled,
 		autoForwardHost: fileConfig.AutoForward.WindowsHost, autoForwardHost6: fileConfig.AutoForward.WindowsHost6, autoForwardInterval: interval,
 		controlSocket: fileConfig.ControlSocket, strictListenHost: fileConfig.StrictListenHost, strictListenHost6: fileConfig.StrictListenHost6,
 		udpAssociateIdle: udpAssociateIdle,
+		relayDialTimeout: relayDialTimeout,
 	}
 	for _, mapping := range fileConfig.Reverse {
 		if err := opts.reverse.Set(mapping); err != nil {
@@ -175,6 +181,7 @@ func parseOptions(args []string) (options, error) {
 	set.StringVar(&opts.strictListenHost, "strict-listen-host", opts.strictListenHost, "Windows bind host for strict listener coordination")
 	set.StringVar(&opts.strictListenHost6, "strict-listen-host6", opts.strictListenHost6, "Windows IPv6 bind host for strict listener coordination")
 	set.DurationVar(&opts.udpAssociateIdle, "udp-associate-idle-timeout", opts.udpAssociateIdle, "idle timeout for SOCKS5 UDP associations")
+	set.DurationVar(&opts.relayDialTimeout, "relay-dial-timeout", opts.relayDialTimeout, "maximum time to wait for a relay session to open a connection")
 	if err := set.Parse(args); err != nil {
 		return options{}, err
 	}
@@ -248,12 +255,12 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 	dialer := newSessionDialer()
 	logger.Printf("SOCKS5 listening on %s", socksListener.Addr())
 	socksDone := make(chan error, 1)
-	proxy := &socks5.Server{Listener: socksListener, Dialer: dialer, Logger: logger, UDPAssociateIdleTimeout: opts.udpAssociateIdle}
+	proxy := &socks5.Server{Listener: socksListener, Dialer: dialer, Logger: logger, UDPAssociateIdleTimeout: opts.udpAssociateIdle, DialTimeout: opts.relayDialTimeout}
 	go func() { socksDone <- proxy.Serve(ctx) }()
 	var httpDone chan error
 	if httpListener != nil {
 		httpDone = make(chan error, 1)
-		httpProxy := &httpproxy.Server{Listener: httpListener, Dialer: dialer, Logger: logger}
+		httpProxy := &httpproxy.Server{Listener: httpListener, Dialer: dialer, Logger: logger, DialTimeout: opts.relayDialTimeout}
 		go func() { httpDone <- httpProxy.Serve(ctx) }()
 		logger.Printf("HTTP CONNECT proxy listening on %s", httpListener.Addr())
 	}

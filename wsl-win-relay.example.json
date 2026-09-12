@@ -6,6 +6,7 @@
   "control_socket": "/tmp/wsl-win-relay-control.sock",
   "strict_listen_host": "127.0.0.1",
   "strict_listen_host6": "::1",
+  "relay_dial_timeout": "30s",
   "udp_associate_idle_timeout": "5m",
   "reverse": [
     "127.0.0.1:8000=127.0.0.1:8000"

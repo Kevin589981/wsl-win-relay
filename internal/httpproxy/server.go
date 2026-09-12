@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"time"
 )
 
 type Dialer interface {
@@ -16,9 +17,10 @@ type Dialer interface {
 }
 
 type Server struct {
-	Listener net.Listener
-	Dialer   Dialer
-	Logger   *log.Logger
+	Listener    net.Listener
+	Dialer      Dialer
+	Logger      *log.Logger
+	DialTimeout time.Duration
 }
 
 func (s *Server) Serve(ctx context.Context) error {
@@ -70,7 +72,9 @@ func (s *Server) ServeConn(ctx context.Context, client net.Conn) error {
 		writeError(client, http.StatusBadRequest)
 		return fmt.Errorf("CONNECT target must be host:port: %w", err)
 	}
-	remote, err := s.Dialer.DialContext(ctx, target)
+	dialCtx, cancel := s.dialContext(ctx)
+	remote, err := s.Dialer.DialContext(dialCtx, target)
+	cancel()
 	if err != nil {
 		writeError(client, http.StatusBadGateway)
 		return err
@@ -80,6 +84,13 @@ func (s *Server) ServeConn(ctx context.Context, client net.Conn) error {
 		return err
 	}
 	return bridge(&bufferedConn{Conn: client, reader: reader}, remote)
+}
+
+func (s *Server) dialContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if s.DialTimeout <= 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, s.DialTimeout)
 }
 
 func writeError(conn net.Conn, status int) {

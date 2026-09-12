@@ -17,6 +17,7 @@ type File struct {
 	ControlSocket     string            `json:"control_socket"`
 	StrictListenHost  string            `json:"strict_listen_host"`
 	StrictListenHost6 string            `json:"strict_listen_host6"`
+	RelayDialTimeout  string            `json:"relay_dial_timeout"`
 	UDPAssociateIdle  string            `json:"udp_associate_idle_timeout"`
 	Reverse           []string          `json:"reverse"`
 	ReverseUDP        []string          `json:"reverse_udp"`
@@ -39,6 +40,7 @@ func Default() File {
 		ControlSocket:     "/tmp/wsl-win-relay-control.sock",
 		StrictListenHost:  "127.0.0.1",
 		StrictListenHost6: "::1",
+		RelayDialTimeout:  "30s",
 		UDPAssociateIdle:  "5m",
 		AutoForward:       AutoForwardConfig{WindowsHost: "127.0.0.1", WindowsHost6: "::1", Interval: "1s"},
 	}
@@ -66,6 +68,9 @@ func Load(path string) (File, error) {
 	if _, err := result.UDPAssociateIdleDuration(); err != nil {
 		return File{}, err
 	}
+	if _, err := result.RelayDialDuration(); err != nil {
+		return File{}, err
+	}
 	return result, nil
 }
 
@@ -81,6 +86,14 @@ func (f File) UDPAssociateIdleDuration() (time.Duration, error) {
 	duration, err := time.ParseDuration(f.UDPAssociateIdle)
 	if err != nil || duration <= 0 {
 		return 0, fmt.Errorf("udp_associate_idle_timeout must be a positive duration")
+	}
+	return duration, nil
+}
+
+func (f File) RelayDialDuration() (time.Duration, error) {
+	duration, err := time.ParseDuration(f.RelayDialTimeout)
+	if err != nil || duration <= 0 {
+		return 0, fmt.Errorf("relay_dial_timeout must be a positive duration")
 	}
 	return duration, nil
 }

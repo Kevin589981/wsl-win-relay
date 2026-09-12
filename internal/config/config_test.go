@@ -17,7 +17,7 @@ func TestLoadMergesDefaultsAndRejectsUnknownFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.SOCKS5Listen != "127.0.0.1:1080" || got.RelayExecutable != "/mnt/c/relay.exe" || got.UpstreamProxy != "socks5h://127.0.0.1:7890" || got.StrictListenHost6 != "::1" || got.AutoForward.WindowsHost6 != "::1" || len(got.ReverseUDP) != 1 || !got.AutoForward.Enabled {
+	if got.SOCKS5Listen != "127.0.0.1:1080" || got.RelayExecutable != "/mnt/c/relay.exe" || got.UpstreamProxy != "socks5h://127.0.0.1:7890" || got.StrictListenHost6 != "::1" || got.RelayDialTimeout != "30s" || got.AutoForward.WindowsHost6 != "::1" || len(got.ReverseUDP) != 1 || !got.AutoForward.Enabled {
 		t.Fatalf("config: %#v", got)
 	}
 	if duration, _ := got.AutoForwardDuration(); duration != 250*time.Millisecond {
@@ -25,6 +25,9 @@ func TestLoadMergesDefaultsAndRejectsUnknownFields(t *testing.T) {
 	}
 	if duration, _ := got.UDPAssociateIdleDuration(); duration != 5*time.Minute {
 		t.Fatalf("UDP idle duration %s", duration)
+	}
+	if duration, _ := got.RelayDialDuration(); duration != 30*time.Second {
+		t.Fatalf("relay dial duration %s", duration)
 	}
 	if err := os.WriteFile(path, []byte(`{"unknown":true}`), 0o600); err != nil {
 		t.Fatal(err)

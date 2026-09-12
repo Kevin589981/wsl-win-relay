@@ -21,11 +21,17 @@ type Dialer interface {
 }
 
 func (s *Server) serveUDPAssociate(ctx context.Context, control net.Conn, packetDialer PacketDialer) error {
-	relayPacket, err := packetDialer.OpenPacketContext(ctx)
+	openCtx, cancel := s.dialContext(ctx)
+	relayPacket, err := packetDialer.OpenPacketContext(openCtx)
+	cancel()
 	if err != nil {
 		_ = writeReply(control, mapDialError(err), nil)
 		return err
 	}
+	return s.serveUDPAssociateWithPacket(ctx, control, relayPacket)
+}
+
+func (s *Server) serveUDPAssociateWithPacket(ctx context.Context, control net.Conn, relayPacket net.PacketConn) error {
 	defer relayPacket.Close()
 	local, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
@@ -216,6 +222,7 @@ type Server struct {
 	Dialer                  Dialer
 	Logger                  *log.Logger
 	UDPAssociateIdleTimeout time.Duration
+	DialTimeout             time.Duration
 }
 
 func (s *Server) Serve(ctx context.Context) error {
@@ -263,13 +270,22 @@ func (s *Server) ServeConn(ctx context.Context, client net.Conn) error {
 			_ = writeReply(client, replyCommandNotSupported, nil)
 			return errors.New("UDP relay is unavailable")
 		}
-		return s.serveUDPAssociate(ctx, client, packetDialer)
+		openCtx, cancel := s.dialContext(ctx)
+		packet, openErr := packetDialer.OpenPacketContext(openCtx)
+		cancel()
+		if openErr != nil {
+			_ = writeReply(client, mapDialError(openErr), nil)
+			return openErr
+		}
+		return s.serveUDPAssociateWithPacket(ctx, client, packet)
 	}
 	if request.command != commandConnect {
 		_ = writeReply(client, replyCommandNotSupported, nil)
 		return errors.New("unsupported SOCKS command")
 	}
-	remote, err := s.Dialer.DialContext(ctx, request.target)
+	dialCtx, cancel := s.dialContext(ctx)
+	remote, err := s.Dialer.DialContext(dialCtx, request.target)
+	cancel()
 	if err != nil {
 		_ = writeReply(client, mapDialError(err), nil)
 		return err
@@ -279,6 +295,13 @@ func (s *Server) ServeConn(ctx context.Context, client net.Conn) error {
 		return err
 	}
 	return proxy(client, remote)
+}
+
+func (s *Server) dialContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if s.DialTimeout <= 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, s.DialTimeout)
 }
 
 func negotiate(conn net.Conn) error {
