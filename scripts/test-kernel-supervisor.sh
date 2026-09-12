@@ -187,9 +187,11 @@ printf '%s\n' \
     '    close(fd); return 0;' \
     '  }' \
     '  if (argc > 1 && strcmp(argv[1], "clone-files-exec-child") == 0) {' \
+    '    struct sockaddr_in address = {0}; address.sin_family = AF_INET; address.sin_port = htons(47150); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
+    '    int probe = socket(AF_INET, SOCK_STREAM, 0); errno = 0; int probe_result = probe < 0 ? -1 : bind(probe, (struct sockaddr *)&address, sizeof(address)); int probe_error = errno; if (probe >= 0) close(probe);' \
+    '    if (probe_result == 0 || probe_error != EADDRINUSE) return 3;' \
     '    char ready = 1; if (write(10, &ready, 1) != 1 || read(9, &ready, 1) != 1) return 4;' \
-    '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0};' \
-    '    address.sin_family = AF_INET; address.sin_port = htons(47150); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
+    '    int fd = socket(AF_INET, SOCK_STREAM, 0);' \
     '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 2;' \
     '    close(fd); return 0;' \
     '  }' \
