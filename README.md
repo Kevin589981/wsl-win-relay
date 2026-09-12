@@ -93,6 +93,12 @@ restart, the running proxy reconnects through the same socket owner and
 reconstructs explicit and automatic mappings when needed. The bridge and owner
 roles have separate token-bound health probes, so stale role processes are
 drained before endpoint reuse.
+
+New broker installations also create `attach.token` with mode `0600` and pass
+that path to the Windows broker. The private environment still contains the
+token value for WSL connector propagation through `WSLENV`; older installations
+without `WSL_WIN_RELAY_ATTACH_TOKEN_FILE` continue to use the legacy
+`-token-hex` fallback until migrated.
 The broker unit uses `KillMode=process` so systemd frontend restarts do not
 terminate the bridge worker, socket-host bridge, or socket owner; a normal stop still shuts them down
 through the private control endpoints.

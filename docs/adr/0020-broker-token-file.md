@@ -25,6 +25,12 @@ passes the token-file path instead of the token contents. The host supervisor
 does the same for the frontend child. Existing `-token-hex` invocations remain
 valid for compatibility and tests.
 
+The WSL systemd broker installer creates a mode-0600 `attach.token` beside its
+private environment and passes that file to the Windows broker. The environment
+continues to carry the token value only because WSL connector children need it
+through `WSLENV`; existing installations without the file retain a legacy
+`-token-hex` service fallback.
+
 The file path itself is not treated as a secret; deployments must protect the
 file with the host's normal user ACLs. Windows ACL enforcement remains a
 deployment responsibility because POSIX mode bits are not reliable on NTFS.

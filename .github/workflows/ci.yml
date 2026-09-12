@@ -74,3 +74,4 @@ jobs:
       - run: GOPROXY=off ./scripts/test-broker-auto-rebind.sh
       - run: GOPROXY=off ./scripts/test-broker-restart.sh
       - run: GOPROXY=off ./scripts/test-broker-supervisor.sh
+      - run: ./scripts/test-broker-service-wrapper.sh

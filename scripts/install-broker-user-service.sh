@@ -6,6 +6,7 @@ bin_dir=$HOME/bin
 service_dir=${XDG_CONFIG_HOME:-"$HOME/.config"}/systemd/user
 config_dir=${XDG_CONFIG_HOME:-"$HOME/.config"}/wsl-win-relay
 env_file=$config_dir/broker.env
+token_file=$config_dir/attach.token
 
 quote_env_value() {
     value=$1
@@ -25,6 +26,10 @@ if [ -L "$env_file" ] || { [ -e "$env_file" ] && [ ! -f "$env_file" ]; }; then
     echo "refusing non-regular broker environment file: $env_file" >&2
     exit 1
 fi
+if [ -L "$token_file" ] || { [ -e "$token_file" ] && [ ! -f "$token_file" ]; }; then
+    echo "refusing non-regular broker token file: $token_file" >&2
+    exit 1
+fi
 
 mkdir -p "$bin_dir" "$service_dir" "$config_dir"
 chmod 700 "$config_dir"
@@ -35,11 +40,13 @@ if [ ! -e "$env_file" ]; then
     token=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
     endpoint=${WSL_WIN_RELAY_BROKER_ENDPOINT:-wsl-win-relay-broker}
     umask 077
+    printf '%s\n' "$token" >"$token_file"
     {
         printf '%s\n' '# Private broker settings; keep mode 0600.'
         printf 'WSL_WIN_RELAY_BROKER_EXE=%s\n' "$(quote_env_value "$WSL_WIN_RELAY_BROKER_EXE")"
         printf 'WSL_WIN_RELAY_BROKER_ENDPOINT=%s\n' "$(quote_env_value "$endpoint")"
         printf 'WSL_WIN_RELAY_ATTACH_TOKEN=%s\n' "$(quote_env_value "$token")"
+        printf 'WSL_WIN_RELAY_ATTACH_TOKEN_FILE=%s\n' "$(quote_env_value "$token_file")"
         printf 'WSL_WIN_RELAY_BROKER_MODE=1\n'
     } >"$env_file"
 fi
@@ -47,6 +54,9 @@ if ! grep -q '^WSL_WIN_RELAY_BROKER_MODE=' "$env_file"; then
     printf '%s\n' 'WSL_WIN_RELAY_BROKER_MODE=1' >>"$env_file"
 fi
 chmod 600 "$env_file"
+if [ -f "$token_file" ]; then
+    chmod 600 "$token_file"
+fi
 
 systemctl --user daemon-reload
 systemctl --user enable wsl-win-relay-broker.service
