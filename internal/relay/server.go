@@ -643,7 +643,20 @@ func (s *Server) send(frame protocol.Frame) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	if s.transport != nil {
-		return s.transport.WriteFrame(frame)
+		for {
+			err := s.transport.WriteFrame(frame)
+			if !errors.Is(err, framed.ErrDetached) {
+				return err
+			}
+			if s.ctx == nil {
+				return err
+			}
+			select {
+			case <-s.ctx.Done():
+				return s.ctx.Err()
+			default:
+			}
+		}
 	}
 	return protocol.Write(s.rw, frame)
 }

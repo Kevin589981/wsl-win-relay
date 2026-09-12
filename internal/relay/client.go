@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Kevin589981/wsl-win-relay/internal/protocol"
+	"github.com/Kevin589981/wsl-win-relay/internal/transport/framed"
 )
 
 var ErrClientClosed = errors.New("relay client is closed")
@@ -20,6 +21,7 @@ var ErrMissingCapabilities = errors.New("Windows relay is missing required capab
 
 type Client struct {
 	rw                io.ReadWriter
+	transport         frameTransport
 	writeMu           sync.Mutex
 	mu                sync.Mutex
 	streams           map[uint32]*clientStream
@@ -35,6 +37,7 @@ type Client struct {
 	helloDone         chan helloResult
 	helloOnce         sync.Once
 	handshakeMu       sync.Mutex
+	helloMu           sync.Mutex
 	peerCapabilities  uint64
 	handshakeComplete bool
 }
@@ -50,6 +53,15 @@ func NewClient(rw io.ReadWriter) *Client {
 	return c
 }
 
+// NewClientWithLink creates a client whose frame transport can be replaced by
+// a reconnecting connector. Use RunAttached and Rehandshake for replacement
+// transports.
+func NewClientWithLink(link *framed.Link) *Client {
+	client := NewClient(nil)
+	client.transport = link
+	return client
+}
+
 func (c *Client) Handshake(ctx context.Context, required uint64) (uint64, error) {
 	c.handshakeMu.Lock()
 	defer c.handshakeMu.Unlock()
@@ -63,7 +75,7 @@ func (c *Client) Handshake(ctx context.Context, required uint64) (uint64, error)
 		return 0, err
 	}
 	select {
-	case result := <-c.helloDone:
+	case result := <-c.helloChannel():
 		if result.err != nil {
 			return 0, result.err
 		}
@@ -77,6 +89,21 @@ func (c *Client) Handshake(ctx context.Context, required uint64) (uint64, error)
 	case <-c.closed:
 		return 0, ErrClientClosed
 	}
+}
+
+// Rehandshake starts a fresh capability exchange after a new Link attachment.
+// Existing stream/listener registries remain intact; the peer's Hello response
+// is routed through the same client dispatcher.
+func (c *Client) Rehandshake(ctx context.Context, required uint64) (uint64, error) {
+	c.handshakeMu.Lock()
+	c.helloMu.Lock()
+	c.handshakeComplete = false
+	c.peerCapabilities = 0
+	c.helloDone = make(chan helloResult, 1)
+	c.helloOnce = sync.Once{}
+	c.helloMu.Unlock()
+	c.handshakeMu.Unlock()
+	return c.Handshake(ctx, required)
 }
 
 func (c *Client) OpenPacketContext(ctx context.Context) (net.PacketConn, error) {
@@ -106,6 +133,9 @@ func (c *Client) OpenPacketContext(ctx context.Context) (net.PacketConn, error) 
 
 // Run reads and dispatches frames until the transport closes or ctx is canceled.
 func (c *Client) Run(ctx context.Context) error {
+	if c.transport != nil {
+		return errors.New("attached relay client requires RunAttached")
+	}
 	started := false
 	c.runOnce.Do(func() { started = true })
 	if !started {
@@ -114,7 +144,7 @@ func (c *Client) Run(ctx context.Context) error {
 	result := make(chan error, 1)
 	go func() {
 		for {
-			frame, err := protocol.Read(c.rw)
+			frame, err := c.readFrame()
 			if err != nil {
 				result <- err
 				return
@@ -133,6 +163,35 @@ func (c *Client) Run(ctx context.Context) error {
 	case <-c.closed:
 		c.closeTransport()
 		return c.closeErr
+	}
+}
+
+// RunAttached keeps the client registry alive while its frame Link is
+// detached. A subsequent attachment can rehandshake and continue using the
+// same stream/listener objects.
+func (c *Client) RunAttached(ctx context.Context) error {
+	if c.transport == nil {
+		return errors.New("attached relay client requires a frame transport")
+	}
+	started := false
+	c.runOnce.Do(func() { started = true })
+	if !started {
+		return ErrClientAlreadyRunning
+	}
+	for {
+		frame, err := c.readFrame()
+		if err != nil {
+			if ctx.Err() != nil {
+				c.fail(ctx.Err())
+				return ctx.Err()
+			}
+			if errors.Is(err, framed.ErrDetached) {
+				continue
+			}
+			c.fail(err)
+			return err
+		}
+		c.dispatch(frame)
 	}
 }
 
@@ -271,6 +330,10 @@ func (c *Client) Close() error {
 
 func (c *Client) closeTransport() {
 	c.transportCloseOne.Do(func() {
+		if closer, ok := c.transport.(io.Closer); ok {
+			_ = closer.Close()
+			return
+		}
 		if closer, ok := c.rw.(io.Closer); ok {
 			_ = closer.Close()
 		}
@@ -280,12 +343,40 @@ func (c *Client) closeTransport() {
 func (c *Client) write(frame protocol.Frame) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
+	if c.transport != nil {
+		for {
+			err := c.transport.WriteFrame(frame)
+			if !errors.Is(err, framed.ErrDetached) {
+				return err
+			}
+			select {
+			case <-c.closed:
+				return ErrClientClosed
+			default:
+			}
+		}
+	}
 	return protocol.Write(c.rw, frame)
+}
+
+func (c *Client) readFrame() (protocol.Frame, error) {
+	if c.transport != nil {
+		return c.transport.ReadFrame()
+	}
+	return protocol.Read(c.rw)
+}
+
+func (c *Client) helloChannel() <-chan helloResult {
+	c.helloMu.Lock()
+	defer c.helloMu.Unlock()
+	return c.helloDone
 }
 
 func (c *Client) dispatch(frame protocol.Frame) {
 	if frame.Type == protocol.TypeHelloOK {
+		c.helloMu.Lock()
 		c.helloOnce.Do(func() { c.helloDone <- helloResult{capabilities: protocol.DecodeCapabilities(frame.Payload)} })
+		c.helloMu.Unlock()
 		return
 	}
 	if frame.Type == protocol.TypeListenDatagramOK || frame.Type == protocol.TypeListenDatagramError || frame.Type == protocol.TypeListenDatagramData || frame.Type == protocol.TypeListenDatagramClose {
@@ -361,7 +452,9 @@ func (c *Client) fail(err error) {
 	c.closeOne.Do(func() {
 		c.closeErr = err
 		close(c.closed)
+		c.helloMu.Lock()
 		c.helloOnce.Do(func() { c.helloDone <- helloResult{err: err} })
+		c.helloMu.Unlock()
 		c.mu.Lock()
 		streams := make([]*clientStream, 0, len(c.streams))
 		for _, s := range c.streams {

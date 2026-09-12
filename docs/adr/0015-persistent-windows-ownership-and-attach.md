@@ -4,8 +4,9 @@
 
 In progress: attach registry, resume wire contract, local IPC abstraction,
 transport-independent broker session core, and server-side transport
-replacement are implemented; client registry resume and socket migration are
-still pending.
+replacement are implemented. The relay client can now retain its registry and
+rehandshake over a replacement Link, but `wsl-proxy` integration and full
+socket/registry resume are still pending.
 
 ## Context
 

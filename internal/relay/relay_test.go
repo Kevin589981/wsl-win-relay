@@ -56,6 +56,90 @@ func TestClientServerEcho(t *testing.T) {
 	}
 }
 
+func TestAttachedClientAndServerPreserveStreamAcrossReplacement(t *testing.T) {
+	clientLink := framed.New()
+	serverLink := framed.New()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := NewServerWithLink(serverLink, func(context.Context, string) (net.Conn, error) {
+		local, remote := net.Pipe()
+		go func() {
+			buffer := make([]byte, 32*1024)
+			for {
+				count, err := remote.Read(buffer)
+				if count > 0 {
+					if _, writeErr := remote.Write(buffer[:count]); writeErr != nil {
+						return
+					}
+				}
+				if err != nil {
+					return
+				}
+			}
+		}()
+		return local, nil
+	}, nil)
+	client := NewClientWithLink(clientLink)
+	serverDone := make(chan error, 1)
+	clientDone := make(chan error, 1)
+	go func() { serverDone <- server.ServeAttached(ctx) }()
+	go func() { clientDone <- client.RunAttached(ctx) }()
+
+	clientEndpoint, serverEndpoint := net.Pipe()
+	if _, err := clientLink.Attach(clientEndpoint); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := serverLink.Attach(serverEndpoint); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Handshake(ctx, protocol.CapabilityTCP); err != nil {
+		t.Fatal(err)
+	}
+	stream, err := client.DialContext(ctx, "attached.example:443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Write([]byte("before")); err != nil {
+		t.Fatal(err)
+	}
+	buffer := make([]byte, len("before"))
+	if _, err := io.ReadFull(stream, buffer); err != nil || string(buffer) != "before" {
+		t.Fatalf("before read=%q err=%v", buffer, err)
+	}
+
+	newClientEndpoint, newServerEndpoint := net.Pipe()
+	if _, err := clientLink.Attach(newClientEndpoint); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := serverLink.Attach(newServerEndpoint); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Rehandshake(ctx, protocol.CapabilityTCP); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Write([]byte("after")); err != nil {
+		t.Fatal(err)
+	}
+	buffer = make([]byte, len("after"))
+	if _, err := io.ReadFull(stream, buffer); err != nil || string(buffer) != "after" {
+		t.Fatalf("after read=%q err=%v", buffer, err)
+	}
+	_ = stream.Close()
+	_ = client.Close()
+	_ = serverLink.Close()
+	select {
+	case <-clientDone:
+	case <-time.After(time.Second):
+		t.Fatal("attached client did not stop")
+	}
+	cancel()
+	select {
+	case <-serverDone:
+	case <-time.After(time.Second):
+		t.Fatal("attached server did not stop")
+	}
+}
+
 func TestHandshakeIsIdempotent(t *testing.T) {
 	clientSide, serverSide := net.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())
