@@ -7,6 +7,8 @@ import (
 	"io"
 	"net"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,7 +17,7 @@ import (
 )
 
 func TestConnectCompletesAttachAndResume(t *testing.T) {
-	endpoint := filepath.Join(t.TempDir(), "broker.sock")
+	endpoint := testEndpoint(t)
 	listener, err := localipc.Listen(endpoint)
 	if err != nil {
 		t.Fatal(err)
@@ -52,7 +54,7 @@ func TestConnectCompletesAttachAndResume(t *testing.T) {
 }
 
 func TestConnectCancellationClosesInProgressHandshake(t *testing.T) {
-	endpoint := filepath.Join(t.TempDir(), "broker.sock")
+	endpoint := testEndpoint(t)
 	listener, err := localipc.Listen(endpoint)
 	if err != nil {
 		t.Fatal(err)
@@ -84,6 +86,14 @@ func TestConnectCancellationClosesInProgressHandshake(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("server did not observe connector connection")
 	}
+}
+
+func testEndpoint(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		return "wsl-win-relay-connector-test-" + strings.ReplaceAll(t.Name(), "/", "-")
+	}
+	return filepath.Join(t.TempDir(), "broker.sock")
 }
 
 func TestBridgeCopiesBothDirections(t *testing.T) {
