@@ -150,6 +150,32 @@ func TestReserveClosesLeaseWhenRequesterDisconnects(t *testing.T) {
 	}
 }
 
+func TestReserveCancelsWhenRequesterDisconnects(t *testing.T) {
+	server := &Server{
+		ProcessIdentity: func(int) (string, error) { return "start", nil },
+		Reserve: func(ctx context.Context, _, _ string) (Reservation, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	}
+	serverSide, clientSide := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		server.handle(context.Background(), serverSide)
+		close(done)
+	}()
+	if _, err := io.WriteString(clientSide, "RESERVE 123 tcp4 8000\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = clientSide.Close()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("reserve handler did not cancel after requester disconnect")
+	}
+	_ = serverSide.Close()
+}
+
 func TestReapsLeaseWhenProcessIdentityDisappears(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "control.sock")
 	reservation := &fakeReservation{}

@@ -146,7 +146,11 @@ func cleanupSocketPath(path string) {
 }
 
 func (s *Server) handle(ctx context.Context, conn net.Conn) {
-	defer conn.Close()
+	requestCtx, cancel := context.WithCancel(ctx)
+	defer func() {
+		cancel()
+		_ = conn.Close()
+	}()
 	line, err := bufio.NewReader(io.LimitReader(conn, 4097)).ReadString('\n')
 	if err != nil {
 		return
@@ -156,9 +160,20 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 		writeError(conn, 22, "empty request")
 		return
 	}
+	// A RESERVE can wait for a replacement relay session. Watch the request
+	// connection so a disconnected interposer does not leave that wait alive.
+	go func() {
+		var probe [1]byte
+		for {
+			if _, err := conn.Read(probe[:]); err != nil {
+				cancel()
+				return
+			}
+		}
+	}()
 	switch parts[0] {
 	case "RESERVE":
-		s.handleReserve(ctx, conn, parts)
+		s.handleReserve(requestCtx, conn, parts)
 	case "COMMIT":
 		s.handleCommit(conn, parts)
 	case "ADOPT":
