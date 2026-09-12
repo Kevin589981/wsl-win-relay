@@ -43,7 +43,7 @@ int main(void) {
     }
     address.sin_port = htons(47125);
     if (bind(rejected, (struct sockaddr *)&address, sizeof(address)) < 0 ||
-        listen(rejected, 16) == 0 || errno != EADDRINUSE) {
+        syscall(SYS_listen, rejected, 16) == 0 || errno != EADDRINUSE) {
         close(rejected);
         close(fd);
         return 13;
