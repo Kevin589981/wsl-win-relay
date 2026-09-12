@@ -258,7 +258,8 @@ func (w *Watcher) sync(ctx context.Context) error {
 		}
 		var closeAfterUnlock io.Closer
 		w.mu.Lock()
-		if _, stillDesired := desired[key]; stillDesired {
+		desiredListener, stillDesired := desired[key]
+		if generation == w.generation && stillDesired && desiredListener == listener {
 			w.active[key] = activeMapping{listener: listener, closer: closer}
 		} else {
 			closeAfterUnlock = closer
