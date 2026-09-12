@@ -56,6 +56,17 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+wait_for_socket() {
+	path=$1
+	for _ in $(seq 1 100); do
+		[ -S "$path" ] && return 0
+		sleep 0.1
+	done
+	cat "$tmp_dir/broker.log" "$tmp_dir/proxy.log" 2>/dev/null || true
+	ss -ltnp || true
+	return 1
+}
+
 GOPROXY=off go build -o "$tmp_dir/win-broker" "$repo_dir/cmd/win-broker"
 GOPROXY=off go build -o "$tmp_dir/win-connector" "$repo_dir/cmd/win-connector"
 GOPROXY=off go build -o "$tmp_dir/wsl-proxy" "$repo_dir/cmd/wsl-proxy"
@@ -112,10 +123,10 @@ WSL_WIN_RELAY_BROKER_ENDPOINT="$tmp_dir/broker.sock" \
     >"$tmp_dir/broker.log" 2>&1 &
 broker_pid=$!
 for _ in $(seq 1 100); do
-    [ -S "$tmp_dir/broker.sock" ] && break
-    sleep 0.1
+	[ -S "$tmp_dir/broker.sock" ] && break
+	sleep 0.1
 done
-[ -S "$tmp_dir/broker.sock" ]
+wait_for_socket "$tmp_dir/broker.sock"
 
 WSL_WIN_RELAY_ATTACH_TOKEN=$token \
 WSL_WIN_RELAY_BROKER_ENDPOINT="$tmp_dir/broker.sock" \
@@ -209,10 +220,10 @@ WSL_WIN_RELAY_BROKER_ENDPOINT="$tmp_dir/broker.sock" \
     >>"$tmp_dir/broker.log" 2>&1 &
 broker_pid=$!
 for _ in $(seq 1 100); do
-    [ -S "$tmp_dir/broker.sock" ] && break
-    sleep 0.1
+	[ -S "$tmp_dir/broker.sock" ] && break
+	sleep 0.1
 done
-[ -S "$tmp_dir/broker.sock" ]
+wait_for_socket "$tmp_dir/broker.sock"
 
 for _ in $(seq 1 450); do
     if probe >"$tmp_dir/second.out" 2>"$tmp_dir/second.err"; then
