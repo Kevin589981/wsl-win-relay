@@ -42,6 +42,10 @@ shutdown sends `STOP` over the private control endpoint before exiting.
 The frontend bridge is byte-transparent. Attach authentication and protocol
 validation remain solely in the worker, avoiding a second implementation of
 the wire contract and keeping stale connector teardown semantics unchanged.
+When the frontend starts a worker it owns the child process and continuously
+reaps its exit status; a replacement worker is started only after that owned
+child has been stopped or observed to exit. A frontend that merely reuses an
+already-running worker does not claim or terminate that process.
 
 ## Consequences
 
@@ -60,7 +64,8 @@ the wire contract and keeping stale connector teardown semantics unchanged.
 - A worker crash still loses sockets; this decision isolates frontend failure,
   not arbitrary kernel or host failure.
 - Worker lifecycle and orphan cleanup must be tested for graceful stop, stale
-  endpoints, and frontend restart.
+  endpoints, frontend restart, and abnormal child exit; the supervisor now
+  reaps workers it started while preserving reuse of externally-owned workers.
 
 ## Rollout
 

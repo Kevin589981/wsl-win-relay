@@ -69,11 +69,13 @@ func runFrontend(opts options, logger *log.Logger) error {
 }
 
 type workerSupervisor struct {
+	ensureMu sync.Mutex
 	mu       sync.Mutex
 	opts     options
 	endpoint string
 	logger   *log.Logger
 	cmd      *exec.Cmd
+	done     chan struct{}
 }
 
 func newWorkerSupervisor(opts options, endpoint string, logger *log.Logger) *workerSupervisor {
@@ -81,8 +83,9 @@ func newWorkerSupervisor(opts options, endpoint string, logger *log.Logger) *wor
 }
 
 func (s *workerSupervisor) ensure(ctx context.Context) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.ensureMu.Lock()
+	defer s.ensureMu.Unlock()
+
 	probeCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
 	conn, err := localipc.Dial(probeCtx, s.endpoint)
 	cancel()
@@ -90,17 +93,54 @@ func (s *workerSupervisor) ensure(ctx context.Context) error {
 		_ = conn.Close()
 		return nil
 	}
-	if s.cmd != nil {
-		_ = s.cmd.Process.Kill()
-		_, _ = s.cmd.Process.Wait()
-		s.cmd = nil
-	}
+	s.stopOwnedWorker()
 	cmd, err := ensureWorker(ctx, s.opts, s.endpoint, s.logger)
 	if err != nil {
 		return err
 	}
-	s.cmd = cmd
+	if cmd != nil {
+		done := make(chan struct{})
+		s.mu.Lock()
+		s.cmd = cmd
+		s.done = done
+		s.mu.Unlock()
+		go s.watchWorker(cmd, done)
+	}
 	return nil
+}
+
+func (s *workerSupervisor) stopOwnedWorker() {
+	s.mu.Lock()
+	cmd, done := s.cmd, s.done
+	s.cmd = nil
+	s.done = nil
+	s.mu.Unlock()
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	_ = cmd.Process.Kill()
+	if done == nil {
+		_, _ = cmd.Process.Wait()
+		return
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		s.logger.Printf("timed out waiting for broker worker to exit")
+	}
+}
+
+func (s *workerSupervisor) watchWorker(cmd *exec.Cmd, done chan struct{}) {
+	if _, err := cmd.Process.Wait(); err != nil {
+		s.logger.Printf("broker worker exited: %v", err)
+	}
+	s.mu.Lock()
+	if s.cmd == cmd {
+		s.cmd = nil
+		s.done = nil
+	}
+	s.mu.Unlock()
+	close(done)
 }
 
 func (s *workerSupervisor) bridge(ctx context.Context, client net.Conn) {
@@ -126,24 +166,10 @@ func (s *workerSupervisor) bridge(ctx context.Context, client net.Conn) {
 }
 
 func (s *workerSupervisor) stop() {
+	s.ensureMu.Lock()
+	defer s.ensureMu.Unlock()
 	requestWorkerStop(s.endpoint)
-	s.mu.Lock()
-	cmd := s.cmd
-	s.cmd = nil
-	s.mu.Unlock()
-	if cmd == nil || cmd.Process == nil {
-		return
-	}
-	_ = cmd.Process.Kill()
-	waitDone := make(chan struct{})
-	go func() {
-		_, _ = cmd.Process.Wait()
-		close(waitDone)
-	}()
-	select {
-	case <-waitDone:
-	case <-time.After(time.Second):
-	}
+	s.stopOwnedWorker()
 }
 
 func ensureWorker(ctx context.Context, opts options, endpoint string, logger *log.Logger) (*exec.Cmd, error) {

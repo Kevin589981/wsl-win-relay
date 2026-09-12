@@ -96,6 +96,8 @@
       delayed stream while the frontend is force-killed.
 - [x] Broker systemd unit uses `KillMode=process` so frontend restart does not
       terminate the socket-owning worker; normal stop uses worker control.
+- [x] Frontend supervisors continuously reap workers they start and keep
+      externally-owned workers reusable without claiming their lifecycle.
 - [ ] Worker crash recovery still requires a separate host-level recovery
       boundary because the worker owns the kernel sockets.
 
