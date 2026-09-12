@@ -207,6 +207,11 @@ Useful controls:
 
 The SOCKS5 listener and explicit reverse-forward destinations are excluded automatically. Automatic mappings are removed when their WSL listener disappears. The watcher lives for the whole proxy process: when the Windows relay child is replaced, old mappings are closed and recreated on the replacement session after it becomes ready.
 
+To run the real WSL/Windows recovery check after building both binaries, use
+`./scripts/test-auto-rebind.sh`. It requires WSL Windows interop (`powershell.exe`)
+and verifies that an allowlisted Windows mapping becomes reachable again after
+the relay child is terminated.
+
 IPv4 and IPv6 Windows bind hosts are configured independently. The defaults are
 `127.0.0.1` and `::1`; set `-strict-listen-host6` and/or `-auto-forward-host6`
 when the Windows-facing IPv6 bind should use another address.
