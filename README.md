@@ -381,11 +381,11 @@ for Linux amd64 targets, including process-style `fork()` children:
 ```
 
 It coordinates direct TCP/UDP `bind()` and TCP `listen()` syscalls through the
-same control socket. Process-style `fork()`, `clone(SIGCHLD)`, and non-thread
-`clone3()` children are attached and inherit lease ownership with
-`ADOPT`/`RELEASE`. The kernel adapter is deliberately opt-in and currently
-rejects `vfork()` and `CLONE_THREAD` with `ENOTSUP`; thread-group descriptor inheritance and
-non-amd64 targets remain unsupported. Setuid/setgid targets are rejected in
+same control socket. Process-style `fork()`, `clone(SIGCHLD)`, non-thread
+`clone3()`, and ordinary `CLONE_THREAD` pthreads are attached with task/group
+state and inherit lease ownership with `ADOPT`/`RELEASE`. The kernel adapter is
+deliberately opt-in and currently rejects `vfork()` with `ENOTSUP`; unusual
+thread-group teardown and non-amd64 targets remain unsupported. Setuid/setgid targets are rejected in
 both launcher modes because ptrace cannot preserve their privilege semantics.
 Use the default interposer for dynamically linked applications.
 
@@ -431,7 +431,8 @@ and ordinary `fork()` descriptor inheritance, plus process-style `clone()`,
 child-side networking before `vfork()` `exec`/`_exit` should use automatic
 polling until a kernel-aware adapter is available. Ordinary pthread/`CLONE_THREAD`
 listeners share the process lease by design and are covered; unusual
-thread-group teardown patterns still require separate kernel-level validation.
+thread-group teardown patterns are covered by the opt-in kernel supervisor's
+shared-group path; unusual signal/exec interactions still require validation.
 The native interposer targets the Linux
 amd64 build produced by the WSL scripts. The daemon tracks multiple process
 owners and reaps leases from processes that exit without closing their

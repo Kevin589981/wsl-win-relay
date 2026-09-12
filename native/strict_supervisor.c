@@ -28,6 +28,7 @@ enum pending_kind {
     PENDING_TCP_LISTEN,
     PENDING_CLOSE,
     PENDING_DUP,
+    PENDING_CREATE,
     PENDING_DENY,
 };
 
@@ -53,11 +54,17 @@ struct pending {
     uint64_t lease;
 };
 
+struct task_group {
+    pid_t owner_pid;
+    unsigned refs;
+    struct binding *bindings;
+};
+
 static const char *control_path;
 struct task {
     pid_t pid;
     int entering;
-    struct binding *bindings;
+    struct task_group *group;
     struct pending pending;
     struct task *next;
 };
@@ -194,7 +201,7 @@ static int parse_response(const char *response, unsigned long long *value) {
 static int reserve_lease(const char *network, const char *host, uint16_t port, uint64_t *lease) {
     char request[256];
     char response[512];
-    snprintf(request, sizeof(request), "RESERVE %ld %s %u %s\n", (long)active_task->pid, network, (unsigned)port, host);
+    snprintf(request, sizeof(request), "RESERVE %ld %s %u %s\n", (long)active_task->group->owner_pid, network, (unsigned)port, host);
     unsigned long long value;
     if (control_request(request, response, sizeof(response)) < 0 || parse_response(response, &value) < 0) {
         return -1;
@@ -224,7 +231,7 @@ static int owner_lease_operation(const char *operation, pid_t pid, uint64_t leas
 }
 
 static struct binding *find_binding(int fd) {
-    for (struct binding *binding = active_task->bindings; binding != NULL; binding = binding->next) {
+    for (struct binding *binding = active_task->group->bindings; binding != NULL; binding = binding->next) {
         if (binding->fd == fd) {
             return binding;
         }
@@ -241,13 +248,13 @@ static struct binding *add_binding(int fd, int type, int family) {
     binding->type = type;
     binding->family = family;
     binding->refs = 1;
-    binding->next = active_task->bindings;
-    active_task->bindings = binding;
+    binding->next = active_task->group->bindings;
+    active_task->group->bindings = binding;
     return binding;
 }
 
 static int lease_is_referenced(uint64_t lease) {
-    for (struct binding *binding = active_task->bindings; binding != NULL; binding = binding->next) {
+    for (struct binding *binding = active_task->group->bindings; binding != NULL; binding = binding->next) {
         if (binding->lease == lease) {
             return 1;
         }
@@ -264,27 +271,44 @@ static struct task *find_task(pid_t pid) {
     return NULL;
 }
 
-static struct task *add_task(pid_t pid) {
+static struct task_group *new_group(pid_t owner_pid) {
+    struct task_group *group = calloc(1, sizeof(*group));
+    if (group != NULL) {
+        group->owner_pid = owner_pid;
+    }
+    return group;
+}
+
+static struct task *add_task(pid_t pid, struct task_group *group) {
     struct task *task = calloc(1, sizeof(*task));
     if (task == NULL) {
         return NULL;
     }
     task->pid = pid;
     task->entering = 1;
+    task->group = group;
+    if (group != NULL) {
+        group->refs++;
+    }
     task->next = tasks;
     tasks = task;
     return task;
 }
 
-static int adopt_task_bindings(struct task *parent, struct task *child) {
+static struct task_group *clone_group(struct task_group *parent, pid_t owner_pid) {
+    struct task_group *group = new_group(owner_pid);
+    if (group == NULL) {
+        return NULL;
+    }
     for (struct binding *source = parent->bindings; source != NULL; source = source->next) {
         struct binding *copy = calloc(1, sizeof(*copy));
         if (copy == NULL) {
-            return -1;
+            free(group);
+            return NULL;
         }
         *copy = *source;
-        copy->next = child->bindings;
-        child->bindings = copy;
+        copy->next = group->bindings;
+        group->bindings = copy;
         int seen = 0;
         for (struct binding *prior = parent->bindings; prior != source; prior = prior->next) {
             if (prior->lease == source->lease) {
@@ -295,30 +319,97 @@ static int adopt_task_bindings(struct task *parent, struct task *child) {
         if (source->lease == 0 || seen) {
             continue;
         }
-        if (owner_lease_operation("ADOPT", child->pid, source->lease) < 0) {
-            return -1;
+        if (owner_lease_operation("ADOPT", owner_pid, source->lease) < 0) {
+            while (group->bindings != NULL) {
+                struct binding *next = group->bindings->next;
+                free(group->bindings);
+                group->bindings = next;
+            }
+            free(group);
+            return NULL;
         }
     }
-    return 0;
+    return group;
 }
 
-static void release_task(struct task *task) {
-    active_task = task;
-    while (task->bindings != NULL) {
-        struct binding *next = task->bindings->next;
-        uint64_t lease = task->bindings->lease;
+static void release_group(struct task_group *group) {
+    active_task = NULL;
+    while (group->bindings != NULL) {
+        struct binding *next = group->bindings->next;
+        uint64_t lease = group->bindings->lease;
         int seen = 0;
-        for (struct binding *prior = task->bindings->next; prior != NULL; prior = prior->next) {
+        for (struct binding *prior = group->bindings->next; prior != NULL; prior = prior->next) {
             if (prior->lease == lease) {
                 seen = 1;
                 break;
             }
         }
         if (lease != 0 && !seen) {
-            (void)owner_lease_operation("RELEASE", task->pid, lease);
+            (void)owner_lease_operation("RELEASE", group->owner_pid, lease);
         }
-        free(task->bindings);
-        task->bindings = next;
+        free(group->bindings);
+        group->bindings = next;
+    }
+    free(group);
+}
+
+static int migrate_group_owner(struct task_group *group, pid_t new_owner) {
+    if (debug_enabled()) {
+        fprintf(stderr, "strict-supervisor: migrate owner %ld -> %ld\n", (long)group->owner_pid, (long)new_owner);
+    }
+    for (struct binding *binding = group->bindings; binding != NULL; binding = binding->next) {
+        if (binding->lease == 0) {
+            continue;
+        }
+        int seen = 0;
+        for (struct binding *prior = group->bindings; prior != binding; prior = prior->next) {
+            if (prior->lease == binding->lease) {
+                seen = 1;
+                break;
+            }
+        }
+        if (!seen && owner_lease_operation("ADOPT", new_owner, binding->lease) < 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static void release_group_owner(struct task_group *group, pid_t owner) {
+    if (debug_enabled()) {
+        fprintf(stderr, "strict-supervisor: release owner %ld\n", (long)owner);
+    }
+    for (struct binding *binding = group->bindings; binding != NULL; binding = binding->next) {
+        if (binding->lease == 0) {
+            continue;
+        }
+        int seen = 0;
+        for (struct binding *prior = group->bindings; prior != binding; prior = prior->next) {
+            if (prior->lease == binding->lease) {
+                seen = 1;
+                break;
+            }
+        }
+        if (!seen) {
+            (void)owner_lease_operation("RELEASE", owner, binding->lease);
+        }
+    }
+}
+
+static void maybe_migrate_owner(struct task *task) {
+    struct task_group *group = task->group;
+    if (group == NULL || group->owner_pid != task->pid || group->refs <= 1) {
+        return;
+    }
+    for (struct task *candidate = tasks; candidate != NULL; candidate = candidate->next) {
+        if (candidate == task || candidate->group != group) {
+            continue;
+        }
+        if (migrate_group_owner(group, candidate->pid) == 0) {
+            group->owner_pid = candidate->pid;
+            release_group_owner(group, task->pid);
+        }
+        return;
     }
 }
 
@@ -327,7 +418,14 @@ static void remove_task(struct task *task) {
     while (*cursor != NULL) {
         if (*cursor == task) {
             *cursor = task->next;
-            release_task(task);
+            struct task_group *group = task->group;
+            maybe_migrate_owner(task);
+            if (group != NULL && group->refs > 0) {
+                group->refs--;
+                if (group->refs == 0) {
+                    release_group(group);
+                }
+            }
             free(task);
             active_task = NULL;
             return;
@@ -344,7 +442,7 @@ static void cleanup_tasks(void) {
 }
 
 static void remove_binding(int fd) {
-    struct binding **cursor = &active_task->bindings;
+    struct binding **cursor = &active_task->group->bindings;
     while (*cursor != NULL) {
         if ((*cursor)->fd == fd) {
             struct binding *removed = *cursor;
@@ -440,18 +538,26 @@ static int handle_entry(struct user_regs_struct *regs) {
     if (syscall_number == SYS_vfork) {
         return stop_syscall(regs, ENOTSUP);
     }
-    if (syscall_number == SYS_clone && ((unsigned long)regs->rdi & CLONE_THREAD) != 0) {
-        return stop_syscall(regs, ENOTSUP);
+    if (syscall_number == SYS_fork) {
+        pending_call.kind = PENDING_CREATE;
+        pending_call.type = 0;
+        return 0;
+    }
+    if (syscall_number == SYS_clone) {
+        pending_call.kind = PENDING_CREATE;
+        pending_call.type = ((unsigned long)regs->rdi & CLONE_THREAD) != 0;
+        return 0;
     }
 #ifdef SYS_clone3
     if (syscall_number == SYS_clone3) {
         struct clone_args arguments;
         memset(&arguments, 0, sizeof(arguments));
         if (regs->rsi < sizeof(arguments.flags) ||
-            read_target_memory(regs->rdi, &arguments, regs->rsi < sizeof(arguments) ? regs->rsi : sizeof(arguments)) < 0 ||
-            (arguments.flags & CLONE_THREAD) != 0) {
+            read_target_memory(regs->rdi, &arguments, regs->rsi < sizeof(arguments) ? regs->rsi : sizeof(arguments)) < 0) {
             return stop_syscall(regs, ENOTSUP);
         }
+        pending_call.kind = PENDING_CREATE;
+        pending_call.type = (arguments.flags & CLONE_THREAD) != 0;
     }
 #endif
     if (syscall_number == SYS_socket) {
@@ -600,6 +706,8 @@ static int handle_exit(struct user_regs_struct *regs) {
             }
         }
         break;
+    case PENDING_CREATE:
+        break;
     default:
         break;
     }
@@ -612,12 +720,14 @@ static int trace_target(void) {
     if (waitpid(root_pid, &status, 0) < 0 || !WIFSTOPPED(status)) {
         return -1;
     }
-    struct task *root = add_task(root_pid);
+    struct task_group *root_group = new_group(root_pid);
+    struct task *root = root_group == NULL ? NULL : add_task(root_pid, root_group);
     if (root == NULL) {
+        free(root_group);
         return -1;
     }
     active_task = root;
-    long options = PTRACE_O_EXITKILL | PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEFORK | PTRACE_O_TRACECLONE;
+    long options = PTRACE_O_EXITKILL | PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEFORK | PTRACE_O_TRACECLONE | PTRACE_O_TRACEEXIT;
     if (ptrace(PTRACE_SETOPTIONS, root_pid, 0, options) < 0 ||
         ptrace(PTRACE_SYSCALL, root_pid, 0, 0) < 0) {
         return -1;
@@ -637,6 +747,7 @@ static int trace_target(void) {
         }
         active_task = task;
         if (WIFEXITED(status)) {
+            if (debug_enabled()) fprintf(stderr, "strict-supervisor: task %ld exited %d\n", (long)pid, WEXITSTATUS(status));
             if (pid == root_pid) {
                 root_status = WEXITSTATUS(status);
                 root_done = 1;
@@ -646,6 +757,7 @@ static int trace_target(void) {
             continue;
         }
         if (WIFSIGNALED(status)) {
+            if (debug_enabled()) fprintf(stderr, "strict-supervisor: task %ld signaled %d\n", (long)pid, WTERMSIG(status));
             if (pid == root_pid) {
                 root_status = 128 + WTERMSIG(status);
                 root_done = 1;
@@ -660,11 +772,21 @@ static int trace_target(void) {
         if (signal_number == SIGTRAP && (event == PTRACE_EVENT_FORK || event == PTRACE_EVENT_CLONE)) {
             unsigned long child_value = 0;
             if (ptrace(PTRACE_GETEVENTMSG, pid, 0, &child_value) < 0) return -1;
-            struct task *child = add_task((pid_t)child_value);
-            if (child == NULL) return -1;
-            if (adopt_task_bindings(task, child) < 0) return -1;
+            int thread_child = event == PTRACE_EVENT_CLONE && task->pending.kind == PENDING_CREATE && task->pending.type != 0;
+            if (debug_enabled()) fprintf(stderr, "strict-supervisor: task %ld created %ld thread=%d\n", (long)pid, (long)child_value, thread_child);
+            struct task_group *child_group = thread_child ? task->group : clone_group(task->group, (pid_t)child_value);
+            struct task *child = child_group == NULL ? NULL : add_task((pid_t)child_value, child_group);
+            if (child == NULL) {
+                if (!thread_child) free(child_group);
+                return -1;
+            }
             if (ptrace(PTRACE_SETOPTIONS, child->pid, 0, options) < 0 ||
                 ptrace(PTRACE_SYSCALL, child->pid, 0, 0) < 0) return -1;
+            if (ptrace(PTRACE_SYSCALL, pid, 0, 0) < 0) return -1;
+            continue;
+        }
+        if (signal_number == SIGTRAP && event == PTRACE_EVENT_EXIT) {
+            maybe_migrate_owner(task);
             if (ptrace(PTRACE_SYSCALL, pid, 0, 0) < 0) return -1;
             continue;
         }

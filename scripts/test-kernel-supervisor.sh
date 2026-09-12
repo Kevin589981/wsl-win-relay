@@ -25,9 +25,11 @@ printf '%s\n' \
     '#include <sys/socket.h>' \
     '#include <errno.h>' \
     '#include <linux/sched.h>' \
+    '#include <pthread.h>' \
     '#include <sys/syscall.h>' \
     '#include <sys/wait.h>' \
     '#include <unistd.h>' \
+    'static void *thread_close(void *argument) { usleep(1000000); close(*(int *)argument); return NULL; }' \
     'int main(int argc, char **argv) {' \
     '  if (argc > 1 && strcmp(argv[1], "env") == 0) return getenv("LD_PRELOAD") == NULL ? 0 : 8;' \
     '  if (argc > 1 && strcmp(argv[1], "fork") == 0) {' \
@@ -49,6 +51,20 @@ printf '%s\n' \
     '    if (child == 0) { usleep(100000); close(fd); _exit(0); }' \
     '    close(fd); return waitpid((pid_t)child, 0, 0) == (pid_t)child ? 0 : 6;' \
     '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "thread") == 0) {' \
+    '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0}; pthread_t thread;' \
+    '    address.sin_family = AF_INET; address.sin_port = htons(47130); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
+    '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 2;' \
+    '    if (pthread_create(&thread, NULL, thread_close, &fd) != 0) return 4;' \
+    '    return pthread_join(thread, NULL) == 0 ? 0 : 5;' \
+    '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "leader-sys-exit") == 0) {' \
+    '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0}; pthread_t thread;' \
+    '    address.sin_family = AF_INET; address.sin_port = htons(47132); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
+    '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 2;' \
+    '    if (pthread_create(&thread, NULL, thread_close, &fd) != 0) return 4;' \
+    '    syscall(SYS_exit, 0); return 6;' \
+    '  }' \
     '  int duplicate = argc > 1 && strcmp(argv[1], "dup") == 0;' \
     '  int udp = argc > 1 && strcmp(argv[1], "udp") == 0;' \
     '  int ipv6 = argc > 1 && strcmp(argv[1], "tcp6") == 0;' \
@@ -63,7 +79,7 @@ printf '%s\n' \
     '  if (duplicate) { int alias = dup(fd); if (alias < 0) return 4; close(fd); usleep(100000); close(alias); return 0; }' \
     '  usleep(100000); close(fd); return 0;' \
     '}' >"$tmp_dir/target.c"
-gcc -static -O2 -o "$tmp_dir/static-target" "$tmp_dir/target.c"
+gcc -static -O2 -pthread -o "$tmp_dir/static-target" "$tmp_dir/target.c"
 
 start_control() {
     socket_path=$1
@@ -136,6 +152,20 @@ if [ "$clone3_status" -eq 0 ]; then
     grep -q 'RESERVE .* tcp4 47129' "$tmp_dir/clone3.log"
     grep -q '^ADOPT ' "$tmp_dir/clone3.log"
 fi
+stop_control
+
+start_control "$tmp_dir/thread.sock" "$tmp_dir/thread.log"
+WSL_WIN_RELAY_CONTROL="$tmp_dir/thread.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" thread
+grep -q 'RESERVE .* tcp4 47130' "$tmp_dir/thread.log"
+grep -q '^COMMIT ' "$tmp_dir/thread.log"
+test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/thread.log")" -eq 1
+stop_control
+
+start_control "$tmp_dir/leader-sys-exit.sock" "$tmp_dir/leader-sys-exit.log"
+WSL_WIN_RELAY_CONTROL="$tmp_dir/leader-sys-exit.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" leader-sys-exit
+grep -q 'RESERVE .* tcp4 47132' "$tmp_dir/leader-sys-exit.log"
+grep -q '^ADOPT ' "$tmp_dir/leader-sys-exit.log"
+test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/leader-sys-exit.log")" -eq 2
 stop_control
 
 start_control "$tmp_dir/env.sock" "$tmp_dir/env.log"

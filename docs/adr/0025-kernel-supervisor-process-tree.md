@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted, process-child support implemented; thread-group follow-up
+Accepted, process and ordinary thread support implemented; unusual teardown follow-up
 
 ## Context
 
@@ -18,23 +18,27 @@ the lease owner known to the control server.
 ## Decision
 
 Phase two introduces an explicit supervisor process table. The first increment
-implements process-style `fork()`/`clone(SIGCHLD)` and non-thread `clone3()`
-children; the remaining
-thread-group work follows the same model:
+implements process-style `fork()`/`clone(SIGCHLD)`, non-thread `clone3()`
+children, and ordinary `CLONE_THREAD` tasks; unusual thread-group teardown
+work follows the same model:
 
-- Every traced task has its own pid/tid, syscall-entry state, pending record,
-  and fd table keyed by `(task id, fd)`.
+- Every traced task has its own pid/tid, syscall-entry state, and pending
+  record. Process children have a copied fd table; `CLONE_THREAD` tasks share
+  their group's fd table, so descriptor numbers retain Linux thread-group
+  semantics.
 - `PTRACE_O_TRACEFORK` and `PTRACE_O_TRACECLONE` attach process-style children
   before they can execute another syscall. The event handler clones inherited
   fd state and issues `ADOPT child-pid lease` once per inherited lease.
-- `CLONE_THREAD` and `vfork()` remain fail-closed until their distinct
-  shared-address-space lifecycle semantics are implemented.
+- `vfork()` remains fail-closed until its shared-address-space lifecycle
+  semantics are implemented. Ordinary `CLONE_THREAD` tasks share the binding
+  table and migrate the group owner at `PTRACE_EVENT_EXIT`; unusual exec and
+  signal interactions remain follow-up validation.
 - Lease teardown will use owner-scoped `RELEASE pid lease`; a lease is closed
   by the control server only after its final owner disappears. `CLOSE` remains
   reserved for a lease with no child owner.
-- `CLONE_THREAD` tasks share the process lease owner but keep separate fd and
-  pending-syscall state. Thread-group exit must release only descriptors owned
-  by the exiting task and leave sibling state intact.
+- `CLONE_THREAD` tasks share the process lease owner and fd/binding table but
+  keep separate pending-syscall state. Group exit releases the binding table
+  only after the final task exits; a leader exit migrates ownership first.
 - `vfork()` remains fail-closed until the shared-address-space and exec/
   `_exit` lifecycle is modeled; it must not be treated as an ordinary fork.
 - The adapter remains opt-in. Unsupported architectures and unrecognized

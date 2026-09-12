@@ -68,22 +68,23 @@
 - [x] Parent-side `vfork()` lease adoption is covered by the native lifecycle
       smoke test; child-side pre-exec networking remains unsupported by the
       shared-address-space contract.
-- [ ] Kernel-level coverage for unusual thread-group ownership, vfork/clone3,
+- [ ] Kernel-level coverage for unusual thread-group ownership and vfork,
       and non-amd64 targets; setuid/setgid binaries remain intentionally
       rejected because neither launcher path can preserve their semantics.
 - [x] Phase-one opt-in ptrace supervisor (`wsl-win-relay-run --kernel`) now
       coordinates direct single-process static amd64 TCP/UDP `bind/listen`
-      syscalls through the existing lease protocol; it rejects fork/clone/
-      thread-group creation until inheritance is implemented, while non-amd64
-      coverage remains follow-up work.
+      syscalls through the existing lease protocol; process-tree ownership is
+      now handled by the phase-two task/group model, while non-amd64 coverage
+      remains follow-up work.
 - [x] Phase-two process-tree ownership model is documented in ADR-0025:
       per-task fd state, ptrace fork/clone events, and owner-scoped
       `ADOPT`/`RELEASE` semantics define the implementation baseline for
       static child-process support.
 - [x] Static process-style `fork()`/`clone(SIGCHLD)` children are now traced,
-      inherit fd state, and adopt/release Windows lease ownership; vfork,
-      `CLONE_THREAD`, and unusual thread-group ownership remain fail-closed
-      follow-up boundaries; non-thread `clone3()` is traced when supported.
+      inherit fd state, and adopt/release Windows lease ownership; vfork and
+      unusual thread-group ownership remain fail-closed follow-up boundaries;
+      non-thread `clone3()` and ordinary `CLONE_THREAD` are traced when
+      supported.
 - [x] The strict launcher now fails closed for directly executed static ELF
       and setuid/setgid targets instead of silently implying interposition;
       true kernel-level coverage remains a separate adapter boundary.
