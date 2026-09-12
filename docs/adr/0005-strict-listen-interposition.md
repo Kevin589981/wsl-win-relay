@@ -60,9 +60,12 @@ Provide `libwsl_win_relay_listen.so` and a `wsl-win-relay-run` launcher. The int
   `fcntl(F_DUPFD*)`, ordinary `fork()`, process-style `clone()`/`clone3()`,
   and ordinary pthread/`CLONE_THREAD` listeners are covered. A parent-side
   `vfork()` wrapper adopts inherited leases after the child returns when the
-  platform permits `vfork`; the smoke test tolerates sandboxed kernels that
-  return `ENOSYS`, `EPERM`, or `EINVAL`. The current native build is Linux
-  amd64, matching the supported WSL binary target.
+  platform permits `vfork`; the dynamic path rejects process-style
+  `CLONE_FILES` in both raw/libc `clone()` and safely inspected `clone3()`
+  calls because its fd table is process-local. The smoke test tolerates
+  sandboxed kernels that return `ENOSYS`, `EPERM`, `EINVAL`, or `ENOTSUP` for
+  unavailable clone operations. The current native build is Linux amd64,
+  matching the supported WSL binary target.
 - The interposer does not perform child-side bookkeeping during `vfork()`.
   `vfork()` is a `returns_twice` operation with a shared address space, so
   applications that run networking code before `exec` remain unsupported.
