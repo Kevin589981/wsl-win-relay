@@ -50,6 +50,8 @@
       enforcement and Windows named-pipe security descriptor.
 - [x] Transport-independent broker core with stable entry registration,
       summary snapshots, attach/resume acceptance, and stale-session isolation.
+- [x] Broker listener lifecycle with active connector tracking, cancellation
+      teardown, and handler draining before service return.
 - [x] Non-zero normal Windows relay exit status is classified as fatal instead
       of causing an unbounded restart loop.
 - [ ] Kernel-level coverage for static binaries and `vfork()` ownership

@@ -4,8 +4,10 @@
 package broker
 
 import (
+	"context"
 	"errors"
 	"io"
+	"net"
 	"sort"
 	"sync"
 
@@ -23,6 +25,7 @@ type Broker struct {
 	capabilities uint64
 	nextID       uint64
 	entries      map[uint64]attach.RegistryEntry
+	connections  map[net.Conn]struct{}
 	closed       bool
 }
 
@@ -35,7 +38,7 @@ func New(capabilities uint64) (*Broker, error) {
 }
 
 func NewWithRegistry(registry *attach.Registry, capabilities uint64) *Broker {
-	return &Broker{registry: registry, capabilities: capabilities, entries: make(map[uint64]attach.RegistryEntry)}
+	return &Broker{registry: registry, capabilities: capabilities, entries: make(map[uint64]attach.RegistryEntry), connections: make(map[net.Conn]struct{})}
 }
 
 func (b *Broker) Token() []byte {
@@ -149,6 +152,91 @@ func (b *Broker) Accept(rw io.ReadWriter) (*Session, error) {
 	return &Session{broker: b, attachment: attachment, peerCapabilities: peerCapabilities, lastEpoch: lastEpoch}, nil
 }
 
+// Serve accepts connector transports until ctx is canceled or the listener
+// fails. The handler owns the session after the resume handshake returns; a
+// nil handler keeps an attached session alive until cancellation, which is
+// useful for a broker health endpoint before relay dispatch is installed.
+func (b *Broker) Serve(ctx context.Context, listener net.Listener, handler func(context.Context, *Session, net.Conn) error) error {
+	if listener == nil {
+		return errors.New("broker listener is nil")
+	}
+	serveCtx, cancel := context.WithCancel(ctx)
+	var handlers sync.WaitGroup
+	defer func() {
+		cancel()
+		_ = listener.Close()
+		b.closeConnections()
+		handlers.Wait()
+	}()
+	go func() {
+		<-serveCtx.Done()
+		_ = listener.Close()
+		b.closeConnections()
+	}()
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			if serveCtx.Err() != nil {
+				return serveCtx.Err()
+			}
+			if networkErr, ok := err.(net.Error); ok && networkErr.Temporary() {
+				continue
+			}
+			return err
+		}
+		b.trackConnection(conn)
+		handlers.Add(1)
+		go func() {
+			defer handlers.Done()
+			b.serveConnection(serveCtx, conn, handler)
+		}()
+	}
+}
+
+func (b *Broker) serveConnection(ctx context.Context, conn net.Conn, handler func(context.Context, *Session, net.Conn) error) {
+	defer func() {
+		b.untrackConnection(conn)
+		_ = conn.Close()
+	}()
+	session, err := b.Accept(conn)
+	if err != nil {
+		return
+	}
+	defer session.Close()
+	if handler != nil {
+		_ = handler(ctx, session, conn)
+		return
+	}
+	<-ctx.Done()
+}
+
+func (b *Broker) trackConnection(conn net.Conn) {
+	b.mu.Lock()
+	if b.connections == nil {
+		b.connections = make(map[net.Conn]struct{})
+	}
+	b.connections[conn] = struct{}{}
+	b.mu.Unlock()
+}
+
+func (b *Broker) untrackConnection(conn net.Conn) {
+	b.mu.Lock()
+	delete(b.connections, conn)
+	b.mu.Unlock()
+}
+
+func (b *Broker) closeConnections() {
+	b.mu.Lock()
+	connections := make([]net.Conn, 0, len(b.connections))
+	for conn := range b.connections {
+		connections = append(connections, conn)
+	}
+	b.mu.Unlock()
+	for _, conn := range connections {
+		_ = conn.Close()
+	}
+}
+
 func (b *Broker) Close() {
 	b.mu.Lock()
 	if b.closed {
@@ -157,6 +245,7 @@ func (b *Broker) Close() {
 	}
 	b.closed = true
 	b.mu.Unlock()
+	b.closeConnections()
 	if b.registry != nil {
 		b.registry.Close()
 	}

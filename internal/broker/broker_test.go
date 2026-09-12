@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"context"
 	"errors"
 	"net"
 	"testing"
@@ -114,5 +115,46 @@ func TestBrokerCloseRejectsNewEntriesAndSessions(t *testing.T) {
 	defer right.Close()
 	if _, err := broker.Accept(right); !errors.Is(err, ErrBrokerClosed) {
 		t.Fatalf("accept after close err=%v", err)
+	}
+}
+
+func TestBrokerServeTracksConnectorUntilCancellation(t *testing.T) {
+	broker, err := New(0x40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	handlerEntered := make(chan *Session, 1)
+	serveDone := make(chan error, 1)
+	go func() {
+		serveDone <- broker.Serve(ctx, listener, func(ctx context.Context, session *Session, _ net.Conn) error {
+			handlerEntered <- session
+			<-ctx.Done()
+			return nil
+		})
+	}()
+	conn, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, _, _, err := attach.ClientResumeHandshake(conn, broker.Token(), 0x12, 0); err != nil {
+		t.Fatal(err)
+	}
+	session := <-handlerEntered
+	if !session.Current() {
+		t.Fatal("served session is not current")
+	}
+	cancel()
+	if err := <-serveDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("serve err=%v", err)
+	}
+	if session.Current() {
+		t.Fatal("session remained current after broker cancellation")
 	}
 }
