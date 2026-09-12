@@ -62,9 +62,11 @@
       both-end transport replacement.
 - [x] Non-zero normal Windows relay exit status is classified as fatal instead
       of causing an unbounded restart loop.
-- [ ] Kernel-level coverage for static binaries and `vfork()` ownership
-      patterns; ordinary pthread/`CLONE_THREAD` listeners are covered by the
-      native lifecycle smoke test, while unusual thread-group teardown remains.
+- [x] Parent-side `vfork()` lease adoption is covered by the native lifecycle
+      smoke test; child-side pre-exec networking remains unsupported by the
+      shared-address-space contract.
+- [ ] Kernel-level coverage for static binaries and unusual thread-group
+      ownership patterns; static/setuid binaries remain outside LD_PRELOAD.
 - [x] Opt-in broker-mode hot reconnect preserves existing TCP streams across
       connector/stdio replacement; a real delayed HTTP stream test covers the
       connector process boundary.

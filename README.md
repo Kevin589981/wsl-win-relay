@@ -333,12 +333,13 @@ default control socket and shared-library paths.
 Strict mode currently covers dynamically linked applications using libc or
 direct `syscall(SYS_listen/SYS_bind)` calls, including TCP `listen()`, non-zero
 UDP `bind()`, `dup()`, `dup2()`, `dup3()`, `fcntl(F_DUPFD*)`, `close_range()`,
-and ordinary `fork()` descriptor inheritance, plus process-style `clone()` and
-`clone3()` children. Static or setuid binaries, `CLONE_THREAD`-specific
-ownership, and `vfork()` patterns should use automatic polling until a
-kernel-aware adapter is available. Ordinary pthread/`CLONE_THREAD` listeners
-share the process lease by design and are covered; unusual thread-group
-teardown patterns still require separate kernel-level validation. The native interposer targets the Linux
+and ordinary `fork()` descriptor inheritance, plus process-style `clone()`,
+`clone3()`, and parent-side `vfork()` adoption. Static or setuid binaries and
+child-side networking before `vfork()` `exec`/`_exit` should use automatic
+polling until a kernel-aware adapter is available. Ordinary pthread/`CLONE_THREAD`
+listeners share the process lease by design and are covered; unusual
+thread-group teardown patterns still require separate kernel-level validation.
+The native interposer targets the Linux
 amd64 build produced by the WSL scripts. The daemon tracks multiple process
 owners and reaps leases from processes that exit without closing their
 descriptors.

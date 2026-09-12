@@ -188,6 +188,18 @@ int main(void) {
         return 21;
     }
 #endif
+    pid_t vforked = vfork();
+    if (vforked < 0) {
+        close_range((unsigned int)fd, (unsigned int)fd, 0);
+        return 25;
+    }
+    if (vforked == 0) {
+        _exit(0);
+    }
+    if (waitpid(vforked, NULL, 0) != vforked) {
+        close_range((unsigned int)fd, (unsigned int)fd, 0);
+        return 26;
+    }
     int thread_result = -1;
     pthread_t thread;
     if (pthread_create(&thread, NULL, thread_child, &thread_result) != 0 ||

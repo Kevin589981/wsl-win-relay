@@ -28,6 +28,7 @@ typedef int (*dup_fn)(int);
 typedef int (*dup2_fn)(int, int);
 typedef int (*dup3_fn)(int, int, int);
 typedef pid_t (*fork_fn)(void);
+typedef pid_t (*vfork_fn)(void);
 typedef int (*close_range_fn)(unsigned int, unsigned int, int);
 typedef int (*fcntl_fn)(int, int, ...);
 typedef long (*syscall_fn)(long, ...);
@@ -48,6 +49,7 @@ static dup_fn real_dup;
 static dup2_fn real_dup2;
 static dup3_fn real_dup3;
 static fork_fn real_fork;
+static vfork_fn real_vfork;
 static close_range_fn real_close_range;
 static fcntl_fn real_fcntl;
 static syscall_fn real_syscall;
@@ -155,6 +157,7 @@ static void initialize(void) {
     real_dup2 = (dup2_fn)dlsym(RTLD_NEXT, "dup2");
     real_dup3 = (dup3_fn)dlsym(RTLD_NEXT, "dup3");
     real_fork = (fork_fn)dlsym(RTLD_NEXT, "fork");
+    real_vfork = (vfork_fn)dlsym(RTLD_NEXT, "vfork");
     real_close_range = (close_range_fn)dlsym(RTLD_NEXT, "close_range");
     real_fcntl = (fcntl_fn)dlsym(RTLD_NEXT, "fcntl");
     real_syscall = (syscall_fn)dlsym(RTLD_NEXT, "syscall");
@@ -755,6 +758,24 @@ pid_t fork(void) {
         return -1;
     }
     pid_t child = real_fork();
+    if (child > 0) {
+        adopt_tracked_for_pid(child);
+    }
+    return child;
+}
+
+/*
+ * vfork() suspends the parent while the child shares its address space until
+ * exec/_exit. Adoption therefore belongs in the parent after vfork returns;
+ * the child must not run interposer bookkeeping before that point.
+ */
+pid_t vfork(void) {
+    pthread_once(&init_once, initialize);
+    if (real_vfork == NULL) {
+        errno = ENOSYS;
+        return -1;
+    }
+    pid_t child = real_vfork();
     if (child > 0) {
         adopt_tracked_for_pid(child);
     }

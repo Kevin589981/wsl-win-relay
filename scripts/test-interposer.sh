@@ -36,6 +36,6 @@ adopt_count=$(awk '$1 == "ADOPT" { count++ } END { print count + 0 }' "$request_
 release_count=$(awk '$1 == "RELEASE" { count++ } END { print count + 0 }' "$request_log")
 [ "$reserve_count" -eq 9 ] || { echo "expected nine RESERVE requests including the delayed retry, raw syscall, pthread, and rejection paths, got $reserve_count" >&2; exit 1; }
 [ "$commit_count" -eq 5 ] || { echo "expected five COMMIT requests including the delayed retry, raw, pthread, and delayed listen, got $commit_count" >&2; exit 1; }
-[ "$adopt_count" -ge 2 ] || { echo "expected parent and child ADOPT, got $adopt_count" >&2; exit 1; }
+[ "$adopt_count" -ge 3 ] || { echo "expected fork, clone, and vfork ADOPT, got $adopt_count" >&2; exit 1; }
 [ "$release_count" -ge 9 ] && [ "$release_count" -le 10 ] || { echo "expected all TCP/UDP leases including delayed retry, clone, and pthread owners to RELEASE, got $release_count" >&2; exit 1; }
-echo "native interposer TCP/UDP, raw syscall, clone, clone3, and pthread lifecycle passed"
+echo "native interposer TCP/UDP, raw syscall, clone, clone3, vfork, and pthread lifecycle passed"
