@@ -16,6 +16,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 gcc -O2 -Wall -Wextra -Werror \
+    -pthread \
     -o "$tmp_dir/interposer-smoke" "$repo_dir/native/interposer_smoke.c"
 # Start the application first so the interposer's bounded retry path covers a
 # relay control socket that is still coming up.
@@ -32,8 +33,8 @@ reserve_count=$(awk '$1 == "RESERVE" { count++ } END { print count + 0 }' "$requ
 commit_count=$(awk '$1 == "COMMIT" { count++ } END { print count + 0 }' "$request_log")
 adopt_count=$(awk '$1 == "ADOPT" { count++ } END { print count + 0 }' "$request_log")
 release_count=$(awk '$1 == "RELEASE" { count++ } END { print count + 0 }' "$request_log")
-[ "$reserve_count" -eq 5 ] || { echo "expected five RESERVE requests including raw syscall paths and rejection, got $reserve_count" >&2; exit 1; }
-[ "$commit_count" -eq 2 ] || { echo "expected two COMMIT requests including raw listen, got $commit_count" >&2; exit 1; }
+[ "$reserve_count" -eq 7 ] || { echo "expected seven RESERVE requests including raw syscall and pthread paths and rejection, got $reserve_count" >&2; exit 1; }
+[ "$commit_count" -eq 3 ] || { echo "expected three COMMIT requests including raw and pthread listen, got $commit_count" >&2; exit 1; }
 [ "$adopt_count" -ge 2 ] || { echo "expected parent and child ADOPT, got $adopt_count" >&2; exit 1; }
-[ "$release_count" -ge 6 ] && [ "$release_count" -le 7 ] || { echo "expected all TCP/UDP leases including clone owners to RELEASE, got $release_count" >&2; exit 1; }
-echo "native interposer TCP/UDP, raw syscall, clone, and clone3 lifecycle passed"
+[ "$release_count" -ge 8 ] && [ "$release_count" -le 9 ] || { echo "expected all TCP/UDP leases including clone and pthread owners to RELEASE, got $release_count" >&2; exit 1; }
+echo "native interposer TCP/UDP, raw syscall, clone, clone3, and pthread lifecycle passed"

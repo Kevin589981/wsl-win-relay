@@ -262,7 +262,9 @@ UDP `bind()`, `dup()`, `dup2()`, `dup3()`, `fcntl(F_DUPFD*)`, `close_range()`,
 and ordinary `fork()` descriptor inheritance, plus process-style `clone()` and
 `clone3()` children. Static or setuid binaries, `CLONE_THREAD`-specific
 ownership, and `vfork()` patterns should use automatic polling until a
-kernel-aware adapter is available. The native interposer targets the Linux
+kernel-aware adapter is available. Ordinary pthread/`CLONE_THREAD` listeners
+share the process lease by design and are covered; unusual thread-group
+teardown patterns still require separate kernel-level validation. The native interposer targets the Linux
 amd64 build produced by the WSL scripts. The daemon tracks multiple process
 owners and reaps leases from processes that exit without closing their
 descriptors.

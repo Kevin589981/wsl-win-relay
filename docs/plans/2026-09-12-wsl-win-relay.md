@@ -34,8 +34,9 @@
       dialer for new requests during relay restarts.
 - [x] Non-zero normal Windows relay exit status is classified as fatal instead
       of causing an unbounded restart loop.
-- [ ] Kernel-level coverage for static binaries, `CLONE_THREAD`, and `vfork()`
-      ownership patterns.
+- [ ] Kernel-level coverage for static binaries and `vfork()` ownership
+      patterns; ordinary pthread/`CLONE_THREAD` listeners are covered by the
+      native lifecycle smoke test, while unusual thread-group teardown remains.
 - [ ] In-process hot reconnect that preserves existing connections across a
       broken stdio session.
 

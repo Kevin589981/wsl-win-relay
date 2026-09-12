@@ -4,7 +4,9 @@
 #include <fcntl.h>
 #include <linux/sched.h>
 #include <netinet/in.h>
+#include <pthread.h>
 #include <sched.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
@@ -18,6 +20,41 @@
 static int clone_child(void *argument) {
     int fd = *(int *)argument;
     return close_range((unsigned int)fd, (unsigned int)fd, 0) == 0 ? 0 : 1;
+}
+
+static void *thread_child(void *argument) {
+    int *result = (int *)argument;
+    struct sockaddr_in address = {0};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+    int tcp = socket(AF_INET, SOCK_STREAM, 0);
+    if (tcp < 0) {
+        *result = 1;
+        return NULL;
+    }
+    address.sin_port = htons(47128);
+    if (bind(tcp, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(tcp, 16) < 0) {
+        close(tcp);
+        *result = 2;
+        return NULL;
+    }
+    close(tcp);
+
+    int udp = socket(AF_INET, SOCK_DGRAM, 0);
+    if (udp < 0) {
+        *result = 3;
+        return NULL;
+    }
+    address.sin_port = htons(47129);
+    if (bind(udp, (struct sockaddr *)&address, sizeof(address)) < 0) {
+        close(udp);
+        *result = 4;
+        return NULL;
+    }
+    close(udp);
+    *result = 0;
+    return NULL;
 }
 
 int main(void) {
@@ -139,6 +176,13 @@ int main(void) {
         return 21;
     }
 #endif
+    int thread_result = -1;
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, thread_child, &thread_result) != 0 ||
+        pthread_join(thread, NULL) != 0 || thread_result != 0) {
+        close_range((unsigned int)fd, (unsigned int)fd, 0);
+        return 22;
+    }
     pid_t child = fork();
     if (child < 0) {
         close_range((unsigned int)fd, (unsigned int)fd, 0);
