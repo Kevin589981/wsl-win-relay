@@ -888,7 +888,10 @@ static int trace_target(void) {
         }
         struct task *task = find_task(pid);
         if (task == NULL) {
-            continue;
+            if (debug_enabled()) {
+                fprintf(stderr, "strict-supervisor: status for unknown task %ld\n", (long)pid);
+            }
+            return -1;
         }
         active_task = task;
         if (WIFEXITED(status)) {
@@ -973,6 +976,12 @@ static int trace_target(void) {
             task->entering = !task->entering;
             if (ptrace(PTRACE_SYSCALL, pid, 0, 0) < 0) return -1;
         } else {
+            if (signal_number == SIGTRAP && event != 0) {
+                if (debug_enabled()) {
+                    fprintf(stderr, "strict-supervisor: unsupported ptrace event %u for task %ld\n", event, (long)pid);
+                }
+                return -1;
+            }
             int deliver = signal_number == SIGTRAP ? 0 : signal_number;
             if (ptrace(PTRACE_SYSCALL, pid, 0, deliver) < 0) return -1;
         }
