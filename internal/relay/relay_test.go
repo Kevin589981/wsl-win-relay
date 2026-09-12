@@ -353,7 +353,9 @@ func TestReverseForward(t *testing.T) {
 	windowsAddr := probe.Addr().String()
 	_ = probe.Close()
 
-	forward, err := client.ReverseForward(ctx, windowsAddr, local.Addr().String())
+	reservationCtx, reservationCancel := context.WithCancel(ctx)
+	forward, err := client.ReverseForward(reservationCtx, windowsAddr, local.Addr().String())
+	reservationCancel()
 	if err != nil {
 		t.Fatal(err)
 	}

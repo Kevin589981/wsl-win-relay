@@ -73,6 +73,9 @@
       after reconnect.
 - [x] Broker-mode preserves an allowlisted reverse-UDP flow through connector
       replacement; the integration test verifies the response path.
+- [x] Broker-mode preserves a procfs-discovered automatic WSL listener mapping
+      through connector replacement; the integration test exercises the
+      Windows-facing listener after reconnect.
 - [x] Broker-mode can be selected from the persistent JSON configuration while
       attach credentials remain environment-only.
 - [ ] Broker-process crash recovery and making broker-mode the service default;

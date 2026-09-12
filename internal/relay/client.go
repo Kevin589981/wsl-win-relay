@@ -284,17 +284,20 @@ func (c *Client) ReserveReverseForward(ctx context.Context, windowsAddr, target 
 		return nil, fmt.Errorf("invalid reverse-forward address")
 	}
 	id := c.nextID.Add(2)
-	l := &clientListener{id: id, client: c, target: target, ctx: ctx, ready: make(chan error, 1)}
+	listenerCtx, listenerCancel := context.WithCancel(context.Background())
+	l := &clientListener{id: id, client: c, target: target, ctx: listenerCtx, cancel: listenerCancel, ready: make(chan error, 1)}
 	c.mu.Lock()
 	c.listeners[id] = l
 	c.mu.Unlock()
 	if err := c.write(protocol.Frame{Type: protocol.TypeListenOpen, StreamID: id, Payload: []byte(windowsAddr)}); err != nil {
+		listenerCancel()
 		c.removeListener(id)
 		return nil, err
 	}
 	select {
 	case err := <-l.ready:
 		if err != nil {
+			listenerCancel()
 			c.removeListener(id)
 			return nil, err
 		}
@@ -303,6 +306,7 @@ func (c *Client) ReserveReverseForward(ctx context.Context, windowsAddr, target 
 		_ = l.Close()
 		return nil, ctx.Err()
 	case <-c.closed:
+		listenerCancel()
 		return nil, ErrClientClosed
 	}
 }
@@ -474,6 +478,10 @@ func (c *Client) fail(err error) {
 			streams = append(streams, s)
 		}
 		c.streams = make(map[uint32]*clientStream)
+		listeners := make([]*clientListener, 0, len(c.listeners))
+		for _, listener := range c.listeners {
+			listeners = append(listeners, listener)
+		}
 		c.listeners = make(map[uint32]*clientListener)
 		datagrams := make([]*clientPacketConn, 0, len(c.datagrams))
 		for _, packet := range c.datagrams {
@@ -488,6 +496,9 @@ func (c *Client) fail(err error) {
 		c.mu.Unlock()
 		for _, s := range streams {
 			s.fail(err)
+		}
+		for _, listener := range listeners {
+			listener.cancel()
 		}
 		for _, packet := range datagrams {
 			packet.fail(err)
@@ -873,12 +884,14 @@ type clientListener struct {
 	client *Client
 	target string
 	ctx    context.Context
+	cancel context.CancelFunc
 	ready  chan error
 	once   sync.Once
 }
 
 func (l *clientListener) Close() error {
 	l.once.Do(func() {
+		l.cancel()
 		l.client.removeListener(l.id)
 		_ = l.client.write(protocol.Frame{Type: protocol.TypeListenClose, StreamID: l.id})
 	})

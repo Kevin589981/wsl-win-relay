@@ -58,6 +58,10 @@ accepts a new stream after replacement. The same test covers a reverse-UDP
 echo flow after replacement. A crash of the broker process itself still loses
 kernel socket ownership and is a separate recovery problem.
 
+`scripts/test-broker-auto-rebind.sh` separately verifies that a procfs-discovered
+WSL listener remains reachable through its automatically created Windows port
+after the connector is replaced.
+
 Set `"broker_mode": true` in the JSON configuration to persist this mode for
 the systemd user service. Keep `WSL_WIN_RELAY_ATTACH_TOKEN` and
 `WSL_WIN_RELAY_BROKER_ENDPOINT` in the service environment; the token is
