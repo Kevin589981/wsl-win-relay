@@ -42,6 +42,8 @@
       persistent Windows broker).
 - [x] Versioned attach-control wire handshake with bounded framing,
       capability exchange, token authentication, and generation acknowledgements.
+- [x] Stable registry-entry summary and resume-ack codecs with deterministic
+      ordering and bounded entry counts.
 - [x] Non-zero normal Windows relay exit status is classified as fatal instead
       of causing an unbounded restart loop.
 - [ ] Kernel-level coverage for static binaries and `vfork()` ownership
