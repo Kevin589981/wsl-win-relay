@@ -997,6 +997,14 @@ static int trace_target(void) {
             if (ptrace(PTRACE_SYSCALL, pid, 0, 0) < 0) return -1;
             continue;
         }
+        if (signal_number == SIGTRAP && event == PTRACE_EVENT_VFORK_DONE) {
+            /* VFORK_DONE is a notification for the parent after the child
+             * releases the shared address space. It carries no syscall or
+             * descriptor state of its own, but must not be treated as an
+             * unsupported ptrace event. */
+            if (ptrace(PTRACE_SYSCALL, pid, 0, 0) < 0) return -1;
+            continue;
+        }
         if (signal_number == SIGTRAP && event == PTRACE_EVENT_EXEC) {
             remove_close_on_exec_bindings();
             if (ptrace(PTRACE_SYSCALL, pid, 0, 0) < 0) return -1;

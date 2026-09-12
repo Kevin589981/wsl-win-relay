@@ -68,6 +68,9 @@
 - [x] Parent-side `vfork()` lease adoption is covered by the native lifecycle
       smoke test; child-side pre-exec networking remains unsupported by the
       shared-address-space contract.
+- [x] The kernel supervisor explicitly handles the `PTRACE_EVENT_VFORK_DONE`
+      notification emitted for traced `vfork()` parents instead of treating it
+      as an unknown event.
 - [ ] Kernel-level coverage for unusual thread-group ownership and non-direct
       vfork libc interactions; setuid/setgid binaries remain intentionally
       rejected because neither launcher path can preserve their semantics.

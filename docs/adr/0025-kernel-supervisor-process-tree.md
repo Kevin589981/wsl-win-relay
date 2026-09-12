@@ -42,8 +42,9 @@ work follows the same model:
   fd state and issues `ADOPT child-pid lease` once per inherited lease.
 - `vfork()` uses `PTRACE_EVENT_VFORK` and a copied process group, so child-side
   `bind/listen` before `_exit` is coordinated. Ordinary `CLONE_THREAD` tasks share the binding
-  table and migrate the group owner at `PTRACE_EVENT_EXIT`; unusual exec and
-  signal interactions remain follow-up validation.
+  table and migrate the group owner at `PTRACE_EVENT_EXIT`; the paired
+  `PTRACE_EVENT_VFORK_DONE` parent notification is accepted explicitly. Unusual
+  exec and signal interactions remain follow-up validation.
 - Lease teardown will use owner-scoped `RELEASE pid lease`; a lease is closed
   by the control server only after its final owner disappears. `CLOSE` remains
   reserved for a lease with no child owner.
