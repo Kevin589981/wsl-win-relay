@@ -108,6 +108,8 @@
       socket-host crash boundary.
 - [x] Broker connector credentials are propagated through a normalized,
       flag-free `WSLENV` entry; the contract is documented in ADR-0017.
+- [x] Private worker/socket-host health probes are token-bound and reject stale
+      same-endpoint processes owned by a different broker identity.
 - [ ] Socket-host crash recovery still requires a separate host-level recovery
       boundary to preserve already-established streams because the socket host
       owns the kernel sockets.

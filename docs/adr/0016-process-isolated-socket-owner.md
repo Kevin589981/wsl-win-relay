@@ -54,7 +54,9 @@ Processes that merely reuse an already-running role are not claimed or
 terminated by the new parent. Bridge workers also probe the socket-host control
 endpoint periodically; a failed probe terminates the bridge so the frontend
 supervisor can rebuild the host and registrations instead of publishing a
-dead endpoint indefinitely.
+dead endpoint indefinitely. Role probes include the attach token and are
+validated with a constant-time comparison, so an endpoint left behind by a
+different broker identity is not mistaken for a reusable worker or socket host.
 
 ## Consequences
 
