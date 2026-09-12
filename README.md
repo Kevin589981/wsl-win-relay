@@ -54,8 +54,9 @@ down broker-side sockets immediately. In `-broker-mode`, WSL also keeps one
 relay client and stream registry, rehandshakes the replacement connector, and
 preserves in-flight TCP streams. `scripts/test-broker-reconnect.sh` verifies
 this with a delayed HTTP response and a broker-owned reverse listener that
-accepts a new stream after replacement. A crash of the broker process itself
-still loses kernel socket ownership and is a separate recovery problem.
+accepts a new stream after replacement. The same test covers a reverse-UDP
+echo flow after replacement. A crash of the broker process itself still loses
+kernel socket ownership and is a separate recovery problem.
 
 Set `"broker_mode": true` in the JSON configuration to persist this mode for
 the systemd user service. Keep `WSL_WIN_RELAY_ATTACH_TOKEN` and

@@ -6,20 +6,26 @@ tmp_dir=$(mktemp -d)
 broker_pid=
 proxy_pid=
 http_pid=
+udp_pid=
 curl_pid=
 reverse_curl_pid=
+udp_check_pid=
 
 cleanup() {
     [ -z "$curl_pid" ] || kill "$curl_pid" 2>/dev/null || true
     [ -z "$reverse_curl_pid" ] || kill "$reverse_curl_pid" 2>/dev/null || true
+    [ -z "$udp_check_pid" ] || kill "$udp_check_pid" 2>/dev/null || true
     [ -z "$proxy_pid" ] || kill "$proxy_pid" 2>/dev/null || true
     [ -z "$broker_pid" ] || kill "$broker_pid" 2>/dev/null || true
     [ -z "$http_pid" ] || kill "$http_pid" 2>/dev/null || true
+    [ -z "$udp_pid" ] || kill "$udp_pid" 2>/dev/null || true
     [ -z "$curl_pid" ] || wait "$curl_pid" 2>/dev/null || true
     [ -z "$reverse_curl_pid" ] || wait "$reverse_curl_pid" 2>/dev/null || true
+    [ -z "$udp_check_pid" ] || wait "$udp_check_pid" 2>/dev/null || true
     [ -z "$proxy_pid" ] || wait "$proxy_pid" 2>/dev/null || true
     [ -z "$broker_pid" ] || wait "$broker_pid" 2>/dev/null || true
     [ -z "$http_pid" ] || wait "$http_pid" 2>/dev/null || true
+    [ -z "$udp_pid" ] || wait "$udp_pid" 2>/dev/null || true
     rm -rf "$tmp_dir"
 }
 trap cleanup EXIT INT TERM
@@ -50,6 +56,18 @@ http.server.ThreadingHTTPServer(("127.0.0.1", 18082), Handler).serve_forever()
 PY
 http_pid=$!
 
+python3 - >"$tmp_dir/udp.log" 2>&1 <<'PY' &
+import socket
+
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.bind(("127.0.0.1", 18085))
+while True:
+    data, address = sock.recvfrom(65535)
+    print("udp-started", flush=True)
+    sock.sendto(data, address)
+PY
+udp_pid=$!
+
 token=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
 WSL_WIN_RELAY_ATTACH_TOKEN=$token \
 WSL_WIN_RELAY_BROKER_ENDPOINT="$tmp_dir/broker.sock" \
@@ -67,6 +85,7 @@ WSL_WIN_RELAY_BROKER_ENDPOINT="$tmp_dir/broker.sock" \
     "$tmp_dir/wsl-proxy" -broker-mode -relay-exe "$tmp_dir/win-connector" \
     -listen 127.0.0.1:18083 -control-socket "$tmp_dir/control.sock" \
     -reverse 127.0.0.1:18084=127.0.0.1:18082 \
+    -reverse-udp 127.0.0.1:18086=127.0.0.1:18085 \
     >"$tmp_dir/proxy.log" 2>&1 &
 proxy_pid=$!
 
@@ -118,8 +137,20 @@ curl --noproxy '*' --silent --show-error --fail --max-time 20 \
     http://127.0.0.1:18084/ >"$tmp_dir/reverse-curl.out" 2>"$tmp_dir/reverse-curl.err" &
 reverse_curl_pid=$!
 
+python3 - >"$tmp_dir/udp-check.out" 2>"$tmp_dir/udp-check.err" <<'PY' &
+import socket
+
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.settimeout(20)
+sock.sendto(b"udp-reconnect", ("127.0.0.1", 18086))
+data, _ = sock.recvfrom(65535)
+if data != b"udp-reconnect":
+    raise SystemExit("unexpected UDP response: %r" % (data,))
+PY
+udp_check_pid=$!
+
 for _ in $(seq 1 300); do
-    if ! kill -0 "$curl_pid" 2>/dev/null && ! kill -0 "$reverse_curl_pid" 2>/dev/null; then
+    if ! kill -0 "$curl_pid" 2>/dev/null && ! kill -0 "$reverse_curl_pid" 2>/dev/null && ! kill -0 "$udp_check_pid" 2>/dev/null; then
         break
     fi
     sleep 0.1
@@ -132,6 +163,10 @@ if kill -0 "$reverse_curl_pid" 2>/dev/null; then
     cat "$tmp_dir/broker.log" "$tmp_dir/proxy.log" "$tmp_dir/reverse-curl.err"
     exit 1
 fi
+if kill -0 "$udp_check_pid" 2>/dev/null; then
+    cat "$tmp_dir/broker.log" "$tmp_dir/proxy.log" "$tmp_dir/udp-check.err"
+    exit 1
+fi
 wait "$curl_pid"
 grep -qx "reconnect-ok" "$tmp_dir/curl.out"
 if ! wait "$reverse_curl_pid"; then
@@ -139,4 +174,5 @@ if ! wait "$reverse_curl_pid"; then
     exit 1
 fi
 grep -qx "reconnect-ok" "$tmp_dir/reverse-curl.out"
-echo "broker connector preserved in-flight and reverse-listener streams across connector restart"
+wait "$udp_check_pid"
+echo "broker connector preserved TCP, reverse-listener, and reverse-UDP flows across connector restart"

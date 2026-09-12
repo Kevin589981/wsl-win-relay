@@ -71,6 +71,8 @@
 - [x] Broker-mode keeps an already-bound reverse listener usable through
       connector replacement; the integration test covers a new accepted stream
       after reconnect.
+- [x] Broker-mode preserves an allowlisted reverse-UDP flow through connector
+      replacement; the integration test verifies the response path.
 - [x] Broker-mode can be selected from the persistent JSON configuration while
       attach credentials remain environment-only.
 - [ ] Broker-process crash recovery and making broker-mode the service default;
