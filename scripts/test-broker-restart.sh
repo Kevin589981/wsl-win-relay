@@ -4,10 +4,13 @@ set -eu
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 tmp_dir=$(mktemp -d)
 broker_pid=
+worker_pid=
 proxy_pid=
 http_pid=
 http2_pid=
 http3_pid=
+delayed_pid=
+delayed_curl_pid=
 service_port=$(python3 -c 'import socket
 while True:
     s=socket.socket(); s.bind(("127.0.0.1", 0)); p=s.getsockname()[1]; s.close()
@@ -18,18 +21,25 @@ explicit_target_port=$((service_port + 1))
 explicit_port=$((service_port + 2))
 socks_port=$((service_port + 3))
 strict_port=$((service_port + 4))
+delayed_port=$((service_port + 5))
 
 cleanup() {
     [ -z "${proxy_pid:-}" ] || kill "$proxy_pid" 2>/dev/null || true
     [ -z "${broker_pid:-}" ] || kill "$broker_pid" 2>/dev/null || true
+    [ -z "${worker_pid:-}" ] || kill "$worker_pid" 2>/dev/null || true
     [ -z "${http_pid:-}" ] || kill "$http_pid" 2>/dev/null || true
     [ -z "${http2_pid:-}" ] || kill "$http2_pid" 2>/dev/null || true
     [ -z "${http3_pid:-}" ] || kill "$http3_pid" 2>/dev/null || true
+    [ -z "${delayed_pid:-}" ] || kill "$delayed_pid" 2>/dev/null || true
+    [ -z "${delayed_curl_pid:-}" ] || kill "$delayed_curl_pid" 2>/dev/null || true
     [ -z "${proxy_pid:-}" ] || wait "$proxy_pid" 2>/dev/null || true
     [ -z "${broker_pid:-}" ] || wait "$broker_pid" 2>/dev/null || true
+    [ -z "${worker_pid:-}" ] || wait "$worker_pid" 2>/dev/null || true
     [ -z "${http_pid:-}" ] || wait "$http_pid" 2>/dev/null || true
     [ -z "${http2_pid:-}" ] || wait "$http2_pid" 2>/dev/null || true
     [ -z "${http3_pid:-}" ] || wait "$http3_pid" 2>/dev/null || true
+    [ -z "${delayed_pid:-}" ] || wait "$delayed_pid" 2>/dev/null || true
+    [ -z "${delayed_curl_pid:-}" ] || wait "$delayed_curl_pid" 2>/dev/null || true
     rm -rf "$tmp_dir"
 }
 trap cleanup EXIT INT TERM
@@ -51,6 +61,30 @@ fi
 http2_pid=$!
 (cd "$tmp_dir" && python3 -m http.server "$strict_port" --bind 127.0.0.1) >"$tmp_dir/http3.log" 2>&1 &
 http3_pid=$!
+python3 - "$delayed_port" >"$tmp_dir/delayed.log" 2>&1 <<'PY' &
+import http.server
+import sys
+import time
+
+port = int(sys.argv[1])
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        print("delayed-request", flush=True)
+        body = b"broker-frontend-crash-ok\n"
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        time.sleep(5)
+        self.wfile.write(body)
+        self.wfile.flush()
+
+    def log_message(self, format, *args):
+        pass
+
+http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+PY
+delayed_pid=$!
 
 token=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
 WSL_WIN_RELAY_ATTACH_TOKEN=$token \
@@ -70,6 +104,7 @@ WSL_WIN_RELAY_BROKER_ENDPOINT="$tmp_dir/broker.sock" \
     -listen "127.0.0.1:$socks_port" -auto-forward \
     -auto-forward-host 127.0.0.2 -auto-forward-include "$service_port" \
     -auto-forward-interval 100ms -reverse "127.0.0.2:$explicit_port=127.0.0.1:$explicit_target_port" \
+    -reverse "127.0.0.2:$delayed_port=127.0.0.1:$delayed_port" \
     -strict-listen-host 127.0.0.2 \
     -control-socket "$tmp_dir/control.sock" >"$tmp_dir/proxy.log" 2>&1 &
 proxy_pid=$!
@@ -133,6 +168,18 @@ for _ in $(seq 1 150); do
 done
 grep -qx "broker-restart-ok" "$tmp_dir/strict-first.out"
 
+curl --noproxy '*' --silent --show-error --fail --max-time 20 \
+    "http://127.0.0.2:$delayed_port/" >"$tmp_dir/delayed.out" 2>"$tmp_dir/delayed.err" &
+delayed_curl_pid=$!
+for _ in $(seq 1 150); do
+    grep -q delayed-request "$tmp_dir/delayed.log" && break
+    sleep 0.1
+done
+if ! grep -q delayed-request "$tmp_dir/delayed.log"; then
+    cat "$tmp_dir/broker.log" "$tmp_dir/proxy.log" "$tmp_dir/delayed.err" "$tmp_dir/delayed.log"
+    exit 1
+fi
+
 kill -9 "$broker_pid"
 wait "$broker_pid" 2>/dev/null || true
 broker_pid=
@@ -180,5 +227,47 @@ if ! grep -qx "broker-restart-ok" "$tmp_dir/strict-second.out"; then
     cat "$tmp_dir/broker.log" "$tmp_dir/proxy.log" "$tmp_dir/strict-second.err"
     exit 1
 fi
+if ! wait "$delayed_curl_pid"; then
+    cat "$tmp_dir/broker.log" "$tmp_dir/proxy.log" "$tmp_dir/delayed.err"
+    exit 1
+fi
+grep -qx "broker-frontend-crash-ok" "$tmp_dir/delayed.out"
+
+worker_pid=$(ps -eo pid=,args= | awk -v exe="$tmp_dir/win-broker" '$0 ~ exe " -worker" {print $1; exit}')
+if [ -z "$worker_pid" ]; then
+    cat "$tmp_dir/broker.log" "$tmp_dir/proxy.log"
+    exit 1
+fi
+kill -9 "$worker_pid"
+wait "$worker_pid" 2>/dev/null || true
+worker_pid=
+
+for _ in $(seq 1 450); do
+    if probe >"$tmp_dir/worker-restart.out" 2>"$tmp_dir/worker-restart.err"; then
+        break
+    fi
+    sleep 0.1
+done
+if ! grep -qx "broker-restart-ok" "$tmp_dir/worker-restart.out"; then
+    cat "$tmp_dir/broker.log" "$tmp_dir/proxy.log" "$tmp_dir/worker-restart.err"
+    exit 1
+fi
+for _ in $(seq 1 150); do
+    if curl --noproxy '*' --silent --show-error --fail --max-time 2 \
+        "http://127.0.0.2:$explicit_port/" >"$tmp_dir/explicit-worker.out" 2>"$tmp_dir/explicit-worker.err"; then
+        break
+    fi
+    sleep 0.1
+done
+grep -qx "broker-restart-ok" "$tmp_dir/explicit-worker.out"
+for _ in $(seq 1 150); do
+    if curl --noproxy '*' --silent --show-error --fail --max-time 2 \
+        "http://127.0.0.2:$strict_port/" >"$tmp_dir/strict-worker.out" 2>"$tmp_dir/strict-worker.err"; then
+        break
+    fi
+    sleep 0.1
+done
+grep -qx "broker-restart-ok" "$tmp_dir/strict-worker.out"
 grep -q "broker instance changed" "$tmp_dir/proxy.log"
-echo "broker restart rebuilt automatic, explicit, and strict mappings"
+grep -q "start broker worker" "$tmp_dir/broker.log" || grep -q "broker worker listening" "$tmp_dir/broker.log"
+echo "broker frontend crash preserved stream; worker restart rebuilt automatic, explicit, and strict mappings"

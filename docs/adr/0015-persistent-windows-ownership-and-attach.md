@@ -10,9 +10,11 @@ reverse-UDP flows across connector replacement. Automatic polling mappings are
 rebound by the long-lived WSL watcher after a connector replacement. A broker
 instance ID now lets the WSL proxy detect a broker process restart and rebuild
 stale peer state plus mappings without restarting the proxy. Established
-sockets still end when the broker process crashes. The broker installer now
-selects broker mode as the proxy service default through a private environment
-flag, while JSON and command-line settings remain explicit overrides.
+sockets still end when the broker process crashes. ADR-0016 introduces a
+process-isolated worker so a frontend crash no longer tears down worker-owned
+sockets; a worker crash remains destructive. The broker installer selects
+broker mode as the proxy service default through a private environment flag,
+while JSON and command-line settings remain explicit overrides.
 
 ## Context
 
@@ -112,4 +114,6 @@ alive and makes the connector retry with bounded backoff.
    making broker mode the long-running-service default. The optional systemd
    broker unit now supplies the supervisor and private default flag, and
    instance-loss detection rebuilds mappings after restart; established
-   broker-owned sockets remain unrecoverable.
+   broker-owned sockets remain unrecoverable when the worker itself crashes.
+7. Split the broker into a replaceable frontend and persistent socket-owning
+   worker as specified by [ADR-0016](0016-process-isolated-socket-owner.md).

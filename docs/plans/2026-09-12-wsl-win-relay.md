@@ -2,7 +2,7 @@
 
 **Goal:** Build a durable emergency network relay that exposes a SOCKS5 proxy in WSL while a Windows process performs outbound TCP connections.
 
-**Architecture:** A versioned multiplexed frame protocol runs over the Windows process stdin/stdout pipes. The WSL process owns the local proxy listener and relay client; the Windows process owns outbound sockets and relay server state. Protocol, transport, relay, and proxy layers are separate so later transparent TCP/UDP adapters can reuse the relay.
+**Architecture:** A versioned multiplexed frame protocol runs over the Windows process stdin/stdout pipes. The WSL process owns the local proxy listener and relay client; stdio mode keeps relay state in the Windows child, while broker mode moves it into a persistent socket-owning worker behind a replaceable frontend. Protocol, transport, relay, and proxy layers are separate so later transparent TCP/UDP adapters can reuse the relay.
 
 **Tech Stack:** Go standard library, cross-compiled Windows/Linux binaries, `go test`.
 
@@ -87,8 +87,13 @@
 - [x] Broker-mode becomes the proxy service default when the broker installer
       provisions `WSL_WIN_RELAY_BROKER_MODE=1` in the private environment; JSON
       and command-line configuration remain available for explicit control.
-- [ ] Preserve already-established sockets across a broker process crash; the
-      latter requires moving kernel socket ownership outside the broker process.
+- [x] Process-isolated broker frontend/worker design is documented in
+      ADR-0016; the worker owns relay state and the frontend is replaceable.
+- [x] Frontend crash recovery preserves established worker-owned sockets and
+      automatic/explicit/strict mappings; the integration test covers a live
+      delayed stream while the frontend is force-killed.
+- [ ] Worker crash recovery still requires a separate host-level recovery
+      boundary because the worker owns the kernel sockets.
 
 The hot-reconnect item is intentionally staged behind [ADR-0015](../adr/0015-persistent-windows-ownership-and-attach.md): it requires moving socket ownership into a persistent Windows broker before a connector can safely resume protocol state.
 
