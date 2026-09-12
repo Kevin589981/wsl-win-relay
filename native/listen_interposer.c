@@ -684,6 +684,12 @@ long syscall(long number, ...) {
             return result;
         }
 #endif
+#ifdef SYS_vfork
+        /* vfork has no syscall arguments; never consume phantom varargs. */
+        if (number == SYS_vfork) {
+            return real_syscall(SYS_vfork);
+        }
+#endif
     }
 
     /* Linux syscall(2) accepts at most six register-sized arguments. */
