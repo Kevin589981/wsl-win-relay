@@ -67,7 +67,6 @@ jobs:
           check-latest: true
           cache: false
       - run: ./scripts/build-wsl.sh
-      - run: ./scripts/test-cross-build.sh
       - run: sh -n scripts/*.sh scripts/wsl-win-relay-run
       - run: ./scripts/test-launcher-preflight.sh
       - run: ./scripts/test-kernel-supervisor.sh

@@ -90,9 +90,6 @@
 - [x] ptrace register access is isolated for amd64 and aarch64 in
       `native/strict_supervisor_regs.h`; unsupported architectures fail at
       compile time until a dedicated adapter is added.
-- [x] Go relay artifacts have an isolated output-directory build path and an
-      arm64 cross-build smoke test; native ptrace runtime validation remains a
-      separate target because the supervisor must match the running kernel.
 - [x] The strict launcher now fails closed for directly executed static ELF
       and setuid/setgid targets instead of silently implying interposition;
       true kernel-level coverage remains a separate adapter boundary.

@@ -177,6 +177,9 @@ WSL_WIN_RELAY_CONTROL="$tmp_dir/thread.sock" "$repo_dir/scripts/wsl-win-relay-ru
 grep -q 'RESERVE .* tcp4 47130' "$tmp_dir/thread.log"
 grep -q '^COMMIT ' "$tmp_dir/thread.log"
 test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/thread.log")" -eq 1
+thread_owner=$(sed -n 's/^RESERVE \([0-9][0-9]*\) .*/\1/p' "$tmp_dir/thread.log" | head -n 1)
+thread_release=$(sed -n 's/^RELEASE \([0-9][0-9]*\) .*/\1/p' "$tmp_dir/thread.log" | head -n 1)
+test -n "$thread_owner" && test "$thread_owner" = "$thread_release"
 stop_control
 
 start_control "$tmp_dir/leader-sys-exit.sock" "$tmp_dir/leader-sys-exit.log"

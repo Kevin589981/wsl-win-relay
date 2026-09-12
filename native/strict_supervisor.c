@@ -442,13 +442,16 @@ static void cleanup_tasks(void) {
 }
 
 static void remove_binding(int fd) {
-    struct binding **cursor = &active_task->group->bindings;
+    struct task_group *group = active_task->group;
+    struct binding **cursor = &group->bindings;
     while (*cursor != NULL) {
         if ((*cursor)->fd == fd) {
             struct binding *removed = *cursor;
             *cursor = removed->next;
             if (removed->lease != 0 && !lease_is_referenced(removed->lease)) {
-                (void)owner_lease_operation("RELEASE", active_task->pid, removed->lease);
+                /* CLONE_THREAD tasks share one descriptor table and one
+                 * lease owner. The ptrace task TID is not a valid owner. */
+                (void)owner_lease_operation("RELEASE", group->owner_pid, removed->lease);
             }
             free(removed);
             return;
