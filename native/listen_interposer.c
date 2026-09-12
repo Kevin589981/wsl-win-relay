@@ -108,6 +108,25 @@ static int control_retry_attempts(void) {
     return (int)(seconds * 10) + 1;
 }
 
+static int control_error_retryable(int error) {
+    switch (error) {
+    case ENOENT:
+    case ECONNREFUSED:
+    case ECONNRESET:
+    case ETIMEDOUT:
+        return 1;
+#if defined(EAGAIN) && (!defined(EWOULDBLOCK) || EWOULDBLOCK != EAGAIN)
+    case EAGAIN:
+#endif
+#if defined(EWOULDBLOCK)
+    case EWOULDBLOCK:
+#endif
+        return 1;
+    default:
+        return 0;
+    }
+}
+
 static void initialize(void) {
     real_listen = (listen_fn)dlsym(RTLD_NEXT, "listen");
     real_bind = (bind_fn)dlsym(RTLD_NEXT, "bind");
@@ -225,7 +244,7 @@ static int reserve_listener(const char *network, uint16_t port, const char *host
             *lease = (uint64_t)value;
             return 0;
         }
-        if (errno != ENOENT && errno != ECONNREFUSED && errno != ECONNRESET) {
+        if (!control_error_retryable(errno)) {
             return -1;
         }
         if (attempt + 1 < attempts) {

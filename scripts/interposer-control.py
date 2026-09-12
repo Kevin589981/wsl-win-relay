@@ -2,10 +2,14 @@
 import pathlib
 import socket
 import sys
+import time
 
 path = pathlib.Path(sys.argv[1])
 log_path = pathlib.Path(sys.argv[2])
 reject_port = sys.argv[3] if len(sys.argv) > 3 else None
+delay_port = sys.argv[4] if len(sys.argv) > 4 else None
+delay_seconds = float(sys.argv[5]) if len(sys.argv) > 5 else 0
+delayed = False
 path.unlink(missing_ok=True)
 server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 server.bind(str(path))
@@ -30,6 +34,15 @@ with server:
                 if reject_port is not None and len(fields) > 3 and fields[3] == reject_port:
                     connection.sendall(b"ERR 98 address already in use\n")
                 else:
-                    connection.sendall(b"OK 1\n")
+                    if not delayed and delay_port is not None and len(fields) > 3 and fields[3] == delay_port:
+                        delayed = True
+                        time.sleep(delay_seconds)
+                    try:
+                        connection.sendall(b"OK 1\n")
+                    except OSError:
+                        pass
             else:
-                connection.sendall(b"OK\n")
+                try:
+                    connection.sendall(b"OK\n")
+                except OSError:
+                    pass

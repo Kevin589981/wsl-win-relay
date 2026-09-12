@@ -146,6 +146,18 @@ int main(void) {
         return 17;
     }
     close(raw_udp);
+    int delayed = socket(AF_INET, SOCK_STREAM, 0);
+    if (delayed < 0) {
+        close(fd);
+        return 23;
+    }
+    address.sin_port = htons(47130);
+    if (bind(delayed, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(delayed, 16) < 0) {
+        close(delayed);
+        close(fd);
+        return 24;
+    }
+    close(delayed);
     void *clone_stack = malloc(65536);
     if (clone_stack == NULL) {
         close(fd);

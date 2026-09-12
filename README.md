@@ -240,7 +240,8 @@ service can therefore be exposed on the same Windows port without a manual
 UDP clients are not mirrored.
 
 If the control socket is briefly unavailable while the relay is starting or
-recovering, the interposer retries the reservation for up to two seconds.
+recovering, or a request times out while the relay session is being replaced,
+the interposer retries the reservation for up to two seconds.
 Definitive Windows bind errors are returned immediately. Set
 `WSL_WIN_RELAY_CONTROL_RETRY_SECONDS` to extend this window (up to 60 seconds)
 when the relay supervisor uses a longer restart backoff; the strict launcher
