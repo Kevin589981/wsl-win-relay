@@ -666,17 +666,23 @@ func (s *Server) send(frame protocol.Frame) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	if s.transport != nil {
+		ctx := s.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		if contextTransport, ok := s.transport.(interface {
+			WriteFrameContext(context.Context, protocol.Frame) error
+		}); ok {
+			return contextTransport.WriteFrameContext(ctx, frame)
+		}
 		for {
 			err := s.transport.WriteFrame(frame)
 			if !errors.Is(err, framed.ErrDetached) {
 				return err
 			}
-			if s.ctx == nil {
-				return err
-			}
 			select {
-			case <-s.ctx.Done():
-				return s.ctx.Err()
+			case <-ctx.Done():
+				return ctx.Err()
 			default:
 			}
 		}

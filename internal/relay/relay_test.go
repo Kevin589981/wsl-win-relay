@@ -271,6 +271,27 @@ func TestServerServeAttachedSurvivesConnectorReplacement(t *testing.T) {
 	}
 }
 
+func TestServerSendCancellationWhileDetached(t *testing.T) {
+	link := framed.New()
+	server := NewServerWithLink(link, nil, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	server.ctx = ctx
+	done := make(chan error, 1)
+	go func() {
+		done <- server.send(protocol.Frame{Type: protocol.TypeData, StreamID: 1, Payload: []byte("blocked")})
+	}()
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("detached send err=%v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("detached send did not honor server context cancellation")
+	}
+	_ = link.Close()
+}
+
 func TestStreamCloseUnblocksRead(t *testing.T) {
 	writer := &blockingWriteReadWriter{unblock: make(chan struct{})}
 	stream := newClientStream(NewClient(writer), 1, "example:1")
