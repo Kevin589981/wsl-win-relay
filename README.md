@@ -48,9 +48,11 @@ An opt-in broker transport is available for integration testing. Build with
 `WSL_WIN_RELAY_ATTACH_TOKEN` and endpoint, then set the same token and
 `WSL_WIN_RELAY_BROKER_ENDPOINT` in WSL and configure `relay_exe` as
 `wsl-win-connector.exe`. The connector performs attach/resume before forwarding
-the existing relay byte stream. The broker currently recreates its relay server
-for each connector, so connector replacement is transport-safe but does not yet
-resume in-flight stream state; that is the next socket-ownership milestone.
+the existing relay byte stream. The broker now keeps one relay server alive and
+swaps the attached connector transport, so a connector break no longer tears
+down broker-side sockets immediately. The WSL-side client registry and protocol
+resume are still pending, so existing WSL connections are not yet restored
+after a connector restart; that is the next socket-ownership milestone.
 
 ## Security model
 

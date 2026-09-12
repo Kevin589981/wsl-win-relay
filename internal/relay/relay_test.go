@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Kevin589981/wsl-win-relay/internal/protocol"
+	"github.com/Kevin589981/wsl-win-relay/internal/transport/framed"
 )
 
 func TestClientServerEcho(t *testing.T) {
@@ -94,6 +95,43 @@ func TestServerServeRejectsSecondReader(t *testing.T) {
 	}
 	if err := server.Serve(context.Background()); !errors.Is(err, ErrServerAlreadyRunning) {
 		t.Fatalf("second serve: %v", err)
+	}
+}
+
+func TestServerServeAttachedSurvivesConnectorReplacement(t *testing.T) {
+	link := framed.New()
+	server := NewServerWithLink(link, nil, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	serverDone := make(chan error, 1)
+	go func() { serverDone <- server.ServeAttached(ctx) }()
+
+	firstReader, firstWriter := net.Pipe()
+	if _, err := link.Attach(firstReader); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		_ = protocol.Write(firstWriter, protocol.Frame{Type: protocol.TypeHello, Payload: protocol.EncodeCapabilities(protocol.CapabilityTCP)})
+	}()
+	if frame, err := protocol.Read(firstWriter); err != nil || frame.Type != protocol.TypeHelloOK {
+		t.Fatalf("first hello response=%+v err=%v", frame, err)
+	}
+	_ = firstWriter.Close()
+
+	secondReader, secondWriter := net.Pipe()
+	if _, err := link.Attach(secondReader); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		_ = protocol.Write(secondWriter, protocol.Frame{Type: protocol.TypeHello, Payload: protocol.EncodeCapabilities(protocol.CapabilityTCP)})
+	}()
+	if frame, err := protocol.Read(secondWriter); err != nil || frame.Type != protocol.TypeHelloOK {
+		t.Fatalf("replacement hello response=%+v err=%v", frame, err)
+	}
+	cancel()
+	_ = secondWriter.Close()
+	if err := <-serverDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("serve attached err=%v", err)
 	}
 }
 

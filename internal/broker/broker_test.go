@@ -6,7 +6,9 @@ import (
 	"net"
 	"testing"
 
+	"github.com/Kevin589981/wsl-win-relay/internal/protocol"
 	"github.com/Kevin589981/wsl-win-relay/internal/transport/attach"
+	"github.com/Kevin589981/wsl-win-relay/internal/transport/framed"
 )
 
 func TestBrokerAssignsStableSortedEntries(t *testing.T) {
@@ -156,5 +158,59 @@ func TestBrokerServeTracksConnectorUntilCancellation(t *testing.T) {
 	}
 	if session.Current() {
 		t.Fatal("session remained current after broker cancellation")
+	}
+}
+
+func TestBrokerServeAttachedReplacesLinkWithoutStoppingListener(t *testing.T) {
+	broker, err := New(0x40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := framed.New()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- broker.ServeAttached(ctx, listener, link) }()
+
+	first, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := attach.ClientResumeHandshake(first, broker.Token(), 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		_ = protocol.Write(first, protocol.Frame{Type: protocol.TypeHello, Payload: protocol.EncodeCapabilities(0)})
+	}()
+	if frame, err := link.ReadFrame(); err != nil || frame.Type != protocol.TypeHello {
+		t.Fatalf("first relay frame=%+v err=%v", frame, err)
+	}
+	_ = first.Close()
+	if _, err := link.ReadFrame(); !errors.Is(err, framed.ErrDetached) {
+		t.Fatalf("first detach err=%v", err)
+	}
+
+	second, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	if _, _, _, err := attach.ClientResumeHandshake(second, broker.Token(), 0, 1); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		_ = protocol.Write(second, protocol.Frame{Type: protocol.TypeHello, Payload: protocol.EncodeCapabilities(0)})
+	}()
+	if frame, err := link.ReadFrame(); err != nil || frame.Type != protocol.TypeHello {
+		t.Fatalf("replacement relay frame=%+v err=%v", frame, err)
+	}
+	cancel()
+	_ = second.Close()
+	if err := <-serveDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("serve attached err=%v", err)
 	}
 }

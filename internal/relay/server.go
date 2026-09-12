@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Kevin589981/wsl-win-relay/internal/protocol"
+	"github.com/Kevin589981/wsl-win-relay/internal/transport/framed"
 )
 
 type DialContextFunc func(context.Context, string) (net.Conn, error)
@@ -21,6 +22,7 @@ type targetPacketWriter interface {
 
 type Server struct {
 	rw               io.ReadWriter
+	transport        frameTransport
 	dial             DialContextFunc
 	packetDial       PacketDialContextFunc
 	writeMu          sync.Mutex
@@ -33,6 +35,11 @@ type Server struct {
 	ctx              context.Context
 	cancel           context.CancelFunc
 	serveOnce        sync.Once
+}
+
+type frameTransport interface {
+	ReadFrame() (protocol.Frame, error)
+	WriteFrame(protocol.Frame) error
 }
 
 var ErrServerAlreadyRunning = errors.New("relay server is already running")
@@ -80,7 +87,18 @@ func NewServerWithPacketDialer(rw io.ReadWriter, dial DialContextFunc, packetDia
 	return &Server{rw: rw, dial: dial, packetDial: packetDial, streams: make(map[uint32]*serverStream), listeners: make(map[uint32]*serverListener), datagrams: make(map[uint32]*serverDatagram), reverseDatagrams: make(map[uint32]*serverReverseDatagram)}
 }
 
+// NewServerWithLink creates a server whose frame transport can be replaced by
+// a reconnecting connector. Use ServeAttached instead of Serve.
+func NewServerWithLink(link *framed.Link, dial DialContextFunc, packetDial PacketDialContextFunc) *Server {
+	server := NewServerWithPacketDialer(nil, dial, packetDial)
+	server.transport = link
+	return server
+}
+
 func (s *Server) Serve(ctx context.Context) error {
+	if s.transport != nil {
+		return errors.New("attached relay server requires ServeAttached")
+	}
 	started := false
 	s.serveOnce.Do(func() { started = true })
 	if !started {
@@ -105,6 +123,48 @@ func (s *Server) Serve(ctx context.Context) error {
 		if err != nil {
 			if serveCtx.Err() != nil {
 				return serveCtx.Err()
+			}
+			return err
+		}
+		s.handle(frame)
+	}
+}
+
+// ServeAttached keeps broker-owned streams and listeners alive while a frame
+// transport is detached. The next attachment can resume frame processing;
+// only context cancellation or a non-recoverable protocol error shuts down
+// the remote sockets.
+func (s *Server) ServeAttached(ctx context.Context) error {
+	if s.transport == nil {
+		return errors.New("attached relay server requires a frame transport")
+	}
+	started := false
+	s.serveOnce.Do(func() { started = true })
+	if !started {
+		return ErrServerAlreadyRunning
+	}
+	serveCtx, cancel := context.WithCancel(ctx)
+	s.ctx, s.cancel = serveCtx, cancel
+	defer s.shutdown()
+	transportDone := make(chan struct{})
+	defer close(transportDone)
+	go func() {
+		select {
+		case <-serveCtx.Done():
+			if closer, ok := s.transport.(io.Closer); ok {
+				_ = closer.Close()
+			}
+		case <-transportDone:
+		}
+	}()
+	for {
+		frame, err := s.transport.ReadFrame()
+		if err != nil {
+			if serveCtx.Err() != nil {
+				return serveCtx.Err()
+			}
+			if errors.Is(err, framed.ErrDetached) {
+				continue
 			}
 			return err
 		}
@@ -582,6 +642,9 @@ func (s *Server) reset(id uint32, err error) {
 func (s *Server) send(frame protocol.Frame) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	if s.transport != nil {
+		return s.transport.WriteFrame(frame)
+	}
 	return protocol.Write(s.rw, frame)
 }
 

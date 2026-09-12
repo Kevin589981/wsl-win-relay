@@ -2,8 +2,9 @@
 
 ## Status
 
-In progress: attach registry, resume wire contract, local IPC abstraction, and
-transport-independent broker session core are implemented; socket migration is
+In progress: attach registry, resume wire contract, local IPC abstraction,
+transport-independent broker session core, and server-side transport
+replacement are implemented; client registry resume and socket migration are
 still pending.
 
 ## Context

@@ -55,6 +55,8 @@
 - [x] Opt-in broker and connector executables bridge stdio to local IPC and
       run the existing relay server after attach; offline WSL SOCKS5 integration
       is covered by `scripts/test-broker-connector.sh`.
+- [x] Frame-aware replaceable Link and `relay.Server.ServeAttached` keep the
+      broker server lifecycle alive across connector transport replacement.
 - [x] Non-zero normal Windows relay exit status is classified as fatal instead
       of causing an unbounded restart loop.
 - [ ] Kernel-level coverage for static binaries and `vfork()` ownership

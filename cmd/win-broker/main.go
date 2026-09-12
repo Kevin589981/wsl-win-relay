@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -19,6 +18,7 @@ import (
 	"github.com/Kevin589981/wsl-win-relay/internal/broker"
 	"github.com/Kevin589981/wsl-win-relay/internal/relay"
 	"github.com/Kevin589981/wsl-win-relay/internal/transport/attach"
+	"github.com/Kevin589981/wsl-win-relay/internal/transport/framed"
 	"github.com/Kevin589981/wsl-win-relay/internal/transport/localipc"
 	"github.com/Kevin589981/wsl-win-relay/internal/upstream"
 )
@@ -60,11 +60,17 @@ func main() {
 	service, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	b := broker.NewWithRegistry(registry, 0)
+	link := framed.New()
+	server := relay.NewServerWithLink(link, upstreamDialer.DialContext, upstreamDialer.OpenPacketContext)
+	serverDone := make(chan error, 1)
+	go func() { serverDone <- server.ServeAttached(service) }()
 	logger.Printf("broker listening on %s", opts.endpoint)
-	err = b.Serve(service, listener, func(ctx context.Context, _ *broker.Session, conn net.Conn) error {
-		server := relay.NewServerWithPacketDialer(conn, upstreamDialer.DialContext, upstreamDialer.OpenPacketContext)
-		return server.Serve(ctx)
-	})
+	err = b.ServeAttached(service, listener, link)
+	_ = link.Close()
+	serverErr := <-serverDone
+	if err == nil && serverErr != nil && !errors.Is(serverErr, context.Canceled) && !errors.Is(serverErr, framed.ErrClosed) {
+		err = serverErr
+	}
 	if err != nil && !errors.Is(err, context.Canceled) {
 		logger.Printf("stopped: %v", err)
 		os.Exit(1)

@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/Kevin589981/wsl-win-relay/internal/transport/attach"
+	"github.com/Kevin589981/wsl-win-relay/internal/transport/framed"
 )
 
 var (
@@ -190,6 +191,54 @@ func (b *Broker) Serve(ctx context.Context, listener net.Listener, handler func(
 			defer handlers.Done()
 			b.serveConnection(serveCtx, conn, handler)
 		}()
+	}
+}
+
+// ServeAttached accepts connector control handshakes and installs each
+// resulting transport into link. The link itself is consumed by a single
+// relay.Server.ServeAttached loop, so replacing a connector does not shut down
+// broker-owned sockets.
+func (b *Broker) ServeAttached(ctx context.Context, listener net.Listener, link *framed.Link) error {
+	if listener == nil {
+		return errors.New("broker listener is nil")
+	}
+	if link == nil {
+		return errors.New("broker frame link is nil")
+	}
+	serveCtx, cancel := context.WithCancel(ctx)
+	defer func() {
+		cancel()
+		_ = listener.Close()
+		_ = link.Close()
+		b.closeConnections()
+	}()
+	go func() {
+		select {
+		case <-serveCtx.Done():
+			_ = listener.Close()
+			_ = link.Close()
+			b.closeConnections()
+		}
+	}()
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			if serveCtx.Err() != nil {
+				return serveCtx.Err()
+			}
+			if networkErr, ok := err.(net.Error); ok && networkErr.Temporary() {
+				continue
+			}
+			return err
+		}
+		if _, err := b.Accept(conn); err != nil {
+			_ = conn.Close()
+			continue
+		}
+		if _, err := link.Attach(conn); err != nil {
+			_ = conn.Close()
+			continue
+		}
 	}
 }
 
