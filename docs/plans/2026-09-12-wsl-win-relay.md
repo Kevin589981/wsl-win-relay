@@ -75,6 +75,10 @@
       syscalls through the existing lease protocol; it rejects fork/clone/
       thread-group creation until inheritance is implemented, while non-amd64
       coverage remains follow-up work.
+- [x] Phase-two process-tree ownership model is documented in ADR-0025:
+      per-task fd state, ptrace fork/clone events, and owner-scoped
+      `ADOPT`/`RELEASE` semantics are required before static child processes
+      can be enabled.
 - [x] The strict launcher now fails closed for directly executed static ELF
       and setuid/setgid targets instead of silently implying interposition;
       true kernel-level coverage remains a separate adapter boundary.
