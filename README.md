@@ -37,9 +37,11 @@ Automatic discovery is available as an opt-in polling mode. It mirrors detected 
 The persistent-broker foundation is now staged in `internal/transport/attach`:
 it provides a per-instance token, generation-safe ownership, a bounded versioned
 attach handshake, and deterministic registry-summary/resume-ack messages. The
-Windows broker/connector that owns sockets across connector restarts is not yet
-enabled by default. Until that layer is complete, a broken stdio session still
-ends in-flight connections while new requests and mappings recover normally.
+transport-independent broker core in `internal/broker` now accepts those
+sessions and tracks stable entry IDs. The Windows broker/connector that owns
+sockets across connector restarts is not yet enabled by default. Until that
+layer is complete, a broken stdio session still ends in-flight connections
+while new requests and mappings recover normally.
 
 ## Security model
 

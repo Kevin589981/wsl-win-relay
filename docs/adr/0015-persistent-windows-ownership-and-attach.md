@@ -2,7 +2,9 @@
 
 ## Status
 
-Proposed implementation direction
+In progress: attach registry, resume wire contract, local IPC abstraction, and
+transport-independent broker session core are implemented; socket migration is
+still pending.
 
 ## Context
 
@@ -99,4 +101,3 @@ alive and makes the connector retry with bounded backoff.
 4. Migrate reverse TCP/UDP listeners and automatic mapping registry entries.
 5. Make broker mode opt-in, run real HNS-failure and connector-restart tests,
    then consider making it the long-running-service default.
-

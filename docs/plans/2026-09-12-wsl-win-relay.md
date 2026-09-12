@@ -48,6 +48,8 @@
       connector's epoch and acknowledged stable IDs before session activation.
 - [x] Per-user local IPC transport abstraction with `0600` Unix-socket
       enforcement and Windows named-pipe security descriptor.
+- [x] Transport-independent broker core with stable entry registration,
+      summary snapshots, attach/resume acceptance, and stale-session isolation.
 - [x] Non-zero normal Windows relay exit status is classified as fatal instead
       of causing an unbounded restart loop.
 - [ ] Kernel-level coverage for static binaries and `vfork()` ownership
