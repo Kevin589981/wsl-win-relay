@@ -627,6 +627,7 @@ static int handle_entry(wwr_regs *regs) {
         pending_call.kind = PENDING_SOCKET;
         pending_call.family = (int)WWR_ARG(regs, 0);
         pending_call.type = (int)WWR_ARG(regs, 1) & 0xf;
+        pending_call.flags = (int)WWR_ARG(regs, 1) & SOCK_CLOEXEC;
         return 0;
     }
     if (syscall_number == SYS_close) {
@@ -754,6 +755,7 @@ static int handle_exit(wwr_regs *regs) {
             if (add_binding((int)result, pending_call.type, pending_call.family) == NULL) {
                 return -1;
             }
+            find_binding((int)result)->close_on_exec = pending_call.flags != 0;
         }
         break;
     case PENDING_UDP_BIND: {

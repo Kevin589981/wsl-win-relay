@@ -113,6 +113,18 @@ printf '%s\n' \
     '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 6;' \
     '    close(fd); return 0;' \
     '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "socket-cloexec") == 0) {' \
+    '    int fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0); struct sockaddr_in address = {0};' \
+    '    address.sin_family = AF_INET; address.sin_port = htons(47138); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
+    '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 2;' \
+    '    execl("/proc/self/exe", argv[0], "post-exec-socket", (char *)NULL); return 5;' \
+    '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "post-exec-socket") == 0) {' \
+    '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0};' \
+    '    address.sin_family = AF_INET; address.sin_port = htons(47138); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
+    '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 6;' \
+    '    close(fd); return 0;' \
+    '  }' \
     '  int duplicate = argc > 1 && strcmp(argv[1], "dup") == 0;' \
     '  int udp = argc > 1 && strcmp(argv[1], "udp") == 0;' \
     '  int ipv6 = argc > 1 && strcmp(argv[1], "tcp6") == 0;' \
@@ -245,6 +257,13 @@ WSL_WIN_RELAY_CONTROL="$tmp_dir/close-range-cloexec.sock" "$repo_dir/scripts/wsl
 grep -q 'RESERVE .* tcp4 47137' "$tmp_dir/close-range-cloexec.log"
 test "$(grep -Ec '^RESERVE ' "$tmp_dir/close-range-cloexec.log")" -eq 1
 test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/close-range-cloexec.log")" -eq 1
+stop_control
+
+start_control "$tmp_dir/socket-cloexec.sock" "$tmp_dir/socket-cloexec.log"
+WSL_WIN_RELAY_CONTROL="$tmp_dir/socket-cloexec.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" socket-cloexec
+grep -q 'RESERVE .* tcp4 47138' "$tmp_dir/socket-cloexec.log"
+grep -q 'RESERVE .* tcp4 47138' "$tmp_dir/socket-cloexec.log"
+test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/socket-cloexec.log")" -eq 2
 stop_control
 
 start_control "$tmp_dir/leader-sys-exit.sock" "$tmp_dir/leader-sys-exit.log"

@@ -28,11 +28,11 @@ work follows the same model:
   semantics.
 - Descriptor lifecycle also covers `fcntl(F_DUPFD*)` and `close_range()` so
   static applications do not leave Windows mappings behind after bulk or
-  libc-level descriptor cleanup. `CLOSE_RANGE_CLOEXEC` keeps the binding
-  tracked until exec-time descriptor teardown or an actual close; the
-  `PTRACE_EVENT_EXEC` handler releases those leases. `CLOSE_RANGE_UNSHARE` is
-  rejected because it changes the calling task's descriptor-table ownership
-  model.
+  libc-level descriptor cleanup. `SOCK_CLOEXEC` and `CLOSE_RANGE_CLOEXEC`
+  keep bindings tracked until exec-time descriptor teardown or an actual
+  close; the `PTRACE_EVENT_EXEC` handler releases those leases.
+  `CLOSE_RANGE_UNSHARE` is rejected because it changes the calling task's
+  descriptor-table ownership model.
 - `PTRACE_O_TRACEFORK` and `PTRACE_O_TRACECLONE` attach process-style children
   before they can execute another syscall. The event handler clones inherited
   fd state and issues `ADOPT child-pid lease` once per inherited lease.
