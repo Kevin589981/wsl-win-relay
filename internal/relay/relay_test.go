@@ -730,6 +730,68 @@ func TestStreamEOFIsPersistentAfterHalfClose(t *testing.T) {
 	}
 }
 
+func TestHalfClosePublishesEOFBeforeMarkingReadState(t *testing.T) {
+	client := NewClient(&discardReadWriter{})
+	stream := newClientStream(client, 1, "example:1")
+	stream.incoming = make(chan streamEvent)
+	done := make(chan struct{})
+	go func() {
+		stream.handle(protocol.Frame{Type: protocol.TypeHalfClose})
+		close(done)
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+	stream.stateMu.Lock()
+	readEOF := stream.readEOF
+	stream.stateMu.Unlock()
+	if readEOF {
+		t.Fatal("read EOF state was published before the EOF event")
+	}
+
+	select {
+	case event := <-stream.incoming:
+		if event.err != io.EOF {
+			t.Fatalf("event error=%v, want EOF", event.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("half-close event was not published")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("half-close handler did not finish")
+	}
+	stream.stateMu.Lock()
+	readEOF = stream.readEOF
+	stream.stateMu.Unlock()
+	if !readEOF {
+		t.Fatal("read EOF state was not published after the event")
+	}
+}
+
+func TestConcurrentReadsSerializeBufferedData(t *testing.T) {
+	stream := newClientStream(NewClient(&discardReadWriter{}), 1, "example:1")
+	stream.handle(protocol.Frame{Type: protocol.TypeData, StreamID: 1, Payload: []byte("abc")})
+	stream.handle(protocol.Frame{Type: protocol.TypeData, StreamID: 1, Payload: []byte("def")})
+
+	results := make(chan string, 2)
+	for range 2 {
+		go func() {
+			buffer := make([]byte, 3)
+			count, err := stream.Read(buffer)
+			if err != nil {
+				results <- "error: " + err.Error()
+				return
+			}
+			results <- string(buffer[:count])
+		}()
+	}
+	first, second := <-results, <-results
+	if (first != "abc" || second != "def") && (first != "def" || second != "abc") {
+		t.Fatalf("concurrent reads returned %q and %q", first, second)
+	}
+}
+
 type discardReadWriter struct{}
 
 func (*discardReadWriter) Read([]byte) (int, error)    { return 0, io.EOF }
