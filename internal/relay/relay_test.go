@@ -180,6 +180,29 @@ func TestClientRunCancellationClosesTransport(t *testing.T) {
 	}
 }
 
+func TestServerServeCancellationClosesTransport(t *testing.T) {
+	transport := &blockingReadCloser{unblock: make(chan struct{}), closed: make(chan struct{})}
+	server := NewServer(transport, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() { result <- server.Serve(ctx) }()
+	time.Sleep(10 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("server run: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server did not stop after cancellation")
+	}
+	select {
+	case <-transport.closed:
+	case <-time.After(time.Second):
+		t.Fatal("server did not close transport")
+	}
+}
+
 func TestReverseForward(t *testing.T) {
 	clientSide, serverSide := net.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())

@@ -86,11 +86,26 @@ func (s *Server) Serve(ctx context.Context) error {
 	if !started {
 		return ErrServerAlreadyRunning
 	}
-	s.ctx, s.cancel = context.WithCancel(ctx)
+	serveCtx, cancel := context.WithCancel(ctx)
+	s.ctx, s.cancel = serveCtx, cancel
 	defer s.shutdown()
+	transportDone := make(chan struct{})
+	defer close(transportDone)
+	go func() {
+		select {
+		case <-serveCtx.Done():
+			if closer, ok := s.rw.(io.Closer); ok {
+				_ = closer.Close()
+			}
+		case <-transportDone:
+		}
+	}()
 	for {
 		frame, err := protocol.Read(s.rw)
 		if err != nil {
+			if serveCtx.Err() != nil {
+				return serveCtx.Err()
+			}
 			return err
 		}
 		s.handle(frame)
