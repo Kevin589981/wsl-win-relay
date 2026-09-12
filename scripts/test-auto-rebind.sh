@@ -69,7 +69,7 @@ if ! wait_for_mapping 150; then
 	exit 1
 fi
 
-relay_pid=$(pgrep -f 'wsl-win-relay\.exe' | head -n 1 || true)
+relay_pid=$(pgrep -P "$proxy_pid" -f 'wsl-win-relay\.exe' | head -n 1 || true)
 if [ -z "$relay_pid" ]; then
 	echo "could not locate the Windows relay child" >&2
 	cat "$work/proxy.log" >&2 || true
