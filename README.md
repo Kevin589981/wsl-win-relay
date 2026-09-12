@@ -253,11 +253,12 @@ default control socket and shared-library paths.
 Strict mode currently covers dynamically linked applications using libc or
 direct `syscall(SYS_listen/SYS_bind)` calls, including TCP `listen()`, non-zero
 UDP `bind()`, `dup()`, `dup2()`, `dup3()`, `fcntl(F_DUPFD*)`, `close_range()`,
-and ordinary `fork()` descriptor inheritance. Static or setuid binaries and
-`clone()`/`vfork()`-specific ownership patterns should use automatic polling
-until a kernel-aware adapter is available. The native interposer targets the
-Linux amd64 build produced by the WSL scripts. The daemon tracks multiple
-process owners and reaps leases from processes that exit without closing their
+and ordinary `fork()` descriptor inheritance, plus process-style `clone()`
+children. Static or setuid binaries, `clone3()`, `CLONE_THREAD`-specific
+ownership, and `vfork()` patterns should use automatic polling until a
+kernel-aware adapter is available. The native interposer targets the Linux
+amd64 build produced by the WSL scripts. The daemon tracks multiple process
+owners and reaps leases from processes that exit without closing their
 descriptors.
 
 The native lifecycle regression test can be run offline with

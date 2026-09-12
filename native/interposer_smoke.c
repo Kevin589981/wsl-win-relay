@@ -3,6 +3,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <sched.h>
+#include <stdlib.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
@@ -11,6 +13,11 @@
 #ifndef CLOSE_RANGE_CLOEXEC
 #define CLOSE_RANGE_CLOEXEC (1U << 2)
 #endif
+
+static int clone_child(void *argument) {
+    int fd = *(int *)argument;
+    return close_range((unsigned int)fd, (unsigned int)fd, 0) == 0 ? 0 : 1;
+}
 
 int main(void) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -101,6 +108,18 @@ int main(void) {
         return 17;
     }
     close(raw_udp);
+    void *clone_stack = malloc(65536);
+    if (clone_stack == NULL) {
+        close(fd);
+        return 18;
+    }
+    pid_t cloned = clone(clone_child, (char *)clone_stack + 65536, SIGCHLD, &fd);
+    if (cloned < 0 || waitpid(cloned, NULL, 0) != cloned) {
+        free(clone_stack);
+        close(fd);
+        return 19;
+    }
+    free(clone_stack);
     pid_t child = fork();
     if (child < 0) {
         close_range((unsigned int)fd, (unsigned int)fd, 0);

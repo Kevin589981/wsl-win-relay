@@ -35,5 +35,5 @@ release_count=$(awk '$1 == "RELEASE" { count++ } END { print count + 0 }' "$requ
 [ "$reserve_count" -eq 5 ] || { echo "expected five RESERVE requests including raw syscall paths and rejection, got $reserve_count" >&2; exit 1; }
 [ "$commit_count" -eq 2 ] || { echo "expected two COMMIT requests including raw listen, got $commit_count" >&2; exit 1; }
 [ "$adopt_count" -ge 2 ] || { echo "expected parent and child ADOPT, got $adopt_count" >&2; exit 1; }
-[ "$release_count" -eq 5 ] || { echo "expected all TCP/UDP leases to RELEASE, got $release_count" >&2; exit 1; }
-echo "native interposer TCP/UDP and raw syscall lifecycle passed"
+[ "$release_count" -eq 6 ] || { echo "expected all TCP/UDP leases including clone owner to RELEASE, got $release_count" >&2; exit 1; }
+echo "native interposer TCP/UDP, raw syscall, and clone lifecycle passed"

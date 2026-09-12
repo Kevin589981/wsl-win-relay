@@ -17,6 +17,8 @@
       native launcher/interposer, including descriptor ownership cleanup.
 - [x] Direct `syscall(SYS_listen/SYS_bind)` coordination for dynamically linked
       Linux amd64 applications.
+- [x] Lease adoption for process-style `clone()` children, in addition to
+      ordinary `fork()`.
 - [x] Explicitly allowlisted UDP polling for common unconnected services, with
       a documented procfs ambiguity boundary.
 - [x] Process-boundary recovery that recreates mappings after broken relay
@@ -28,8 +30,8 @@
       listener mappings.
 - [x] Session-independent local SOCKS5/HTTP listeners with a reconnecting
       dialer for new requests during relay restarts.
-- [ ] Kernel-level coverage for static binaries and all `clone()`/`vfork()`
-      ownership patterns.
+- [ ] Kernel-level coverage for static binaries, `clone3()`/`CLONE_THREAD`, and
+      `vfork()` ownership patterns.
 - [ ] In-process hot reconnect that preserves existing connections across a
       broken stdio session.
 

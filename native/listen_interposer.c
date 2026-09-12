@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <pthread.h>
+#include <sched.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,6 +30,7 @@ typedef pid_t (*fork_fn)(void);
 typedef int (*close_range_fn)(unsigned int, unsigned int, int);
 typedef int (*fcntl_fn)(int, int, ...);
 typedef long (*syscall_fn)(long, ...);
+typedef int (*clone_fn)(int (*)(void *), void *, int, void *, ...);
 
 struct tracked_lease { uint64_t id; unsigned refs; };
 
@@ -48,6 +50,7 @@ static fork_fn real_fork;
 static close_range_fn real_close_range;
 static fcntl_fn real_fcntl;
 static syscall_fn real_syscall;
+static clone_fn real_clone;
 static pthread_once_t init_once = PTHREAD_ONCE_INIT;
 static pthread_mutex_t tracked_mu = PTHREAD_MUTEX_INITIALIZER;
 static struct tracked_fd *tracked;
@@ -115,6 +118,7 @@ static void initialize(void) {
     real_close_range = (close_range_fn)dlsym(RTLD_NEXT, "close_range");
     real_fcntl = (fcntl_fn)dlsym(RTLD_NEXT, "fcntl");
     real_syscall = (syscall_fn)dlsym(RTLD_NEXT, "syscall");
+    real_clone = (clone_fn)dlsym(RTLD_NEXT, "clone");
     (void)pthread_atfork(atfork_prepare, atfork_parent, atfork_child);
 }
 
@@ -677,6 +681,41 @@ pid_t fork(void) {
     }
     pid_t child = real_fork();
     if (child > 0) {
+        adopt_tracked_for_pid(child);
+    }
+    return child;
+}
+
+/*
+ * Process-style clone() creates a separate PID while inheriting tracked file
+ * descriptors. Register that PID as an owner from the parent, just as the
+ * fork wrapper does. CLONE_THREAD is intentionally excluded because it
+ * shares the thread-group PID and the existing owner already covers the
+ * shared descriptor table; clone3() and vfork() remain outside this wrapper.
+ */
+int clone(int (*function)(void *), void *stack, int flags, void *argument, ...) {
+    pthread_once(&init_once, initialize);
+    if (real_clone == NULL) {
+        errno = ENOSYS;
+        return -1;
+    }
+    pid_t *parent_tid = NULL;
+    void *tls = NULL;
+    pid_t *child_tid = NULL;
+    va_list arguments;
+    va_start(arguments, argument);
+    if (flags & CLONE_PARENT_SETTID) {
+        parent_tid = va_arg(arguments, pid_t *);
+    }
+    if (flags & CLONE_SETTLS) {
+        tls = va_arg(arguments, void *);
+    }
+    if (flags & CLONE_CHILD_SETTID) {
+        child_tid = va_arg(arguments, pid_t *);
+    }
+    va_end(arguments);
+    pid_t child = real_clone(function, stack, flags, argument, parent_tid, tls, child_tid);
+    if (child > 0 && (flags & CLONE_THREAD) == 0) {
         adopt_tracked_for_pid(child);
     }
     return child;
