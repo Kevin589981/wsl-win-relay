@@ -57,6 +57,15 @@ static void *thread_child(void *argument) {
     return NULL;
 }
 
+static int wait_for_child(pid_t child) {
+    int status;
+    pid_t result;
+    do {
+        result = waitpid(child, &status, 0);
+    } while (result < 0 && errno == EINTR);
+    return result == child ? 0 : -1;
+}
+
 int main(void) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) return 1;
@@ -164,7 +173,7 @@ int main(void) {
         return 18;
     }
     pid_t cloned = clone(clone_child, (char *)clone_stack + 65536, SIGCHLD, &fd);
-    if (cloned < 0 || waitpid(cloned, NULL, 0) != cloned) {
+    if (cloned < 0 || wait_for_child(cloned) < 0) {
         free(clone_stack);
         close(fd);
         return 19;
@@ -179,7 +188,7 @@ int main(void) {
         _exit(0);
     }
     if (clone3_result > 0) {
-        if (waitpid((pid_t)clone3_result, NULL, 0) != clone3_result) {
+        if (wait_for_child((pid_t)clone3_result) < 0) {
             close(fd);
             return 20;
         }
@@ -202,7 +211,7 @@ int main(void) {
     }
     if (child > 0) {
         close_range((unsigned int)fd, (unsigned int)fd, 0);
-        if (waitpid(child, NULL, 0) != child) {
+        if (wait_for_child(child) < 0) {
             return 4;
         }
         pid_t vforked = vfork();
@@ -214,7 +223,7 @@ int main(void) {
             if (vforked == 0) {
                 _exit(0);
             }
-            if (waitpid(vforked, NULL, 0) != vforked) {
+            if (wait_for_child(vforked) < 0) {
                 return 26;
             }
         }
