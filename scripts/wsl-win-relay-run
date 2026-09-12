@@ -29,6 +29,7 @@ if [ "$kernel_mode" -eq 1 ]; then
         echo "kernel strict supervisor not found: $kernel_supervisor (run scripts/build-wsl.sh)" >&2
         exit 1
     fi
+    unset LD_PRELOAD
     export WSL_WIN_RELAY_CONTROL=$control
     exec "$kernel_supervisor" "$@"
 fi

@@ -27,6 +27,7 @@ printf '%s\n' \
     '#include <sys/wait.h>' \
     '#include <unistd.h>' \
     'int main(int argc, char **argv) {' \
+    '  if (argc > 1 && strcmp(argv[1], "env") == 0) return getenv("LD_PRELOAD") == NULL ? 0 : 8;' \
     '  if (argc > 1 && strcmp(argv[1], "fork") == 0) {' \
     '    pid_t child = fork();' \
     '    if (child >= 0) { if (child == 0) _exit(9); waitpid(child, 0, 0); return 8; }' \
@@ -89,6 +90,10 @@ if WSL_WIN_RELAY_CONTROL="$tmp_dir/reject.sock" "$repo_dir/scripts/wsl-win-relay
 fi
 grep -q 'RESERVE .* tcp4 47125' "$tmp_dir/reject.log"
 ! grep -q '^COMMIT ' "$tmp_dir/reject.log"
+
+start_control "$tmp_dir/env.sock" "$tmp_dir/env.log"
+LD_PRELOAD=/definitely/not-loaded WSL_WIN_RELAY_CONTROL="$tmp_dir/env.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" env
+stop_control
 
 start_control "$tmp_dir/fork.sock" "$tmp_dir/fork.log"
 WSL_WIN_RELAY_CONTROL="$tmp_dir/fork.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" fork
