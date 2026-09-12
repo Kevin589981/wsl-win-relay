@@ -41,11 +41,11 @@ func runPersistent(parent context.Context, opts options, logger *log.Logger, dia
 		_ = link.Close()
 	}()
 	return supervise(ctx, opts, logger, func(sessionCtx context.Context, sessionOpts options, sessionLogger *log.Logger) error {
-		return runPersistentConnector(sessionCtx, sessionOpts, sessionLogger, dialer, link, client, relayDone, &initialized, &reverseForwards, &reverseDatagramForwards, control)
+		return runPersistentConnector(sessionCtx, ctx, sessionOpts, sessionLogger, dialer, link, client, relayDone, &initialized, &reverseForwards, &reverseDatagramForwards, control)
 	}, relayRestartDelay)
 }
 
-func runPersistentConnector(parent context.Context, opts options, logger *log.Logger, dialer *sessionDialer, link *framed.Link, client *relay.Client, relayDone <-chan error, initialized *bool, reverseForwards **forward.Set, reverseDatagramForwards **forward.Set, control *listencontrol.Server) error {
+func runPersistentConnector(parent, mappingCtx context.Context, opts options, logger *log.Logger, dialer *sessionDialer, link *framed.Link, client *relay.Client, relayDone <-chan error, initialized *bool, reverseForwards **forward.Set, reverseDatagramForwards **forward.Set, control *listencontrol.Server) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, opts.relayExe, relayArguments(opts)...)
@@ -120,7 +120,7 @@ func runPersistentConnector(parent context.Context, opts options, logger *log.Lo
 	}
 	if !*initialized {
 		dialer.set(client)
-		*reverseForwards, *reverseDatagramForwards, err = registerMappings(ctx, opts, logger, client, control)
+		*reverseForwards, *reverseDatagramForwards, err = registerMappings(mappingCtx, opts, logger, client, control)
 		if err != nil {
 			return err
 		}

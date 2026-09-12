@@ -7,13 +7,16 @@ broker_pid=
 proxy_pid=
 http_pid=
 curl_pid=
+reverse_curl_pid=
 
 cleanup() {
     [ -z "$curl_pid" ] || kill "$curl_pid" 2>/dev/null || true
+    [ -z "$reverse_curl_pid" ] || kill "$reverse_curl_pid" 2>/dev/null || true
     [ -z "$proxy_pid" ] || kill "$proxy_pid" 2>/dev/null || true
     [ -z "$broker_pid" ] || kill "$broker_pid" 2>/dev/null || true
     [ -z "$http_pid" ] || kill "$http_pid" 2>/dev/null || true
     [ -z "$curl_pid" ] || wait "$curl_pid" 2>/dev/null || true
+    [ -z "$reverse_curl_pid" ] || wait "$reverse_curl_pid" 2>/dev/null || true
     [ -z "$proxy_pid" ] || wait "$proxy_pid" 2>/dev/null || true
     [ -z "$broker_pid" ] || wait "$broker_pid" 2>/dev/null || true
     [ -z "$http_pid" ] || wait "$http_pid" 2>/dev/null || true
@@ -63,6 +66,7 @@ WSL_WIN_RELAY_ATTACH_TOKEN=$token \
 WSL_WIN_RELAY_BROKER_ENDPOINT="$tmp_dir/broker.sock" \
     "$tmp_dir/wsl-proxy" -broker-mode -relay-exe "$tmp_dir/win-connector" \
     -listen 127.0.0.1:18083 -control-socket "$tmp_dir/control.sock" \
+    -reverse 127.0.0.1:18084=127.0.0.1:18082 \
     >"$tmp_dir/proxy.log" 2>&1 &
 proxy_pid=$!
 
@@ -76,18 +80,63 @@ for _ in $(seq 1 100); do
 done
 grep -q request-started "$tmp_dir/http.log"
 
+# Confirm the broker-owned Windows listener exists before replacing the
+# connector. The probe sends no HTTP bytes, so it does not consume the
+# delayed-response request used by the in-flight stream assertion.
+for _ in $(seq 1 100); do
+    if python3 - <<'PY'
+import socket
+
+sock = socket.socket()
+sock.settimeout(0.2)
+try:
+    sock.connect(("127.0.0.1", 18084))
+except OSError:
+    raise SystemExit(1)
+finally:
+    sock.close()
+PY
+    then
+        break
+    fi
+    sleep 0.1
+done
+python3 - <<'PY'
+import socket
+
+sock = socket.socket()
+sock.settimeout(1)
+sock.connect(("127.0.0.1", 18084))
+sock.close()
+PY
+
 connector_pid=$(ps -o pid= --ppid "$proxy_pid" | awk 'NF {print $1; exit}')
 [ -n "$connector_pid" ]
 kill "$connector_pid"
 
+curl --noproxy '*' --silent --show-error --fail --max-time 20 \
+    http://127.0.0.1:18084/ >"$tmp_dir/reverse-curl.out" 2>"$tmp_dir/reverse-curl.err" &
+reverse_curl_pid=$!
+
 for _ in $(seq 1 300); do
-    kill -0 "$curl_pid" 2>/dev/null || break
+    if ! kill -0 "$curl_pid" 2>/dev/null && ! kill -0 "$reverse_curl_pid" 2>/dev/null; then
+        break
+    fi
     sleep 0.1
 done
 if kill -0 "$curl_pid" 2>/dev/null; then
-    cat "$tmp_dir/broker.log" "$tmp_dir/proxy.log" "$tmp_dir/curl.err"
+    cat "$tmp_dir/broker.log" "$tmp_dir/proxy.log" "$tmp_dir/curl.err" "$tmp_dir/reverse-curl.err"
+    exit 1
+fi
+if kill -0 "$reverse_curl_pid" 2>/dev/null; then
+    cat "$tmp_dir/broker.log" "$tmp_dir/proxy.log" "$tmp_dir/reverse-curl.err"
     exit 1
 fi
 wait "$curl_pid"
 grep -qx "reconnect-ok" "$tmp_dir/curl.out"
-echo "broker connector preserved in-flight SOCKS5 stream across connector restart"
+if ! wait "$reverse_curl_pid"; then
+    cat "$tmp_dir/broker.log" "$tmp_dir/proxy.log" "$tmp_dir/http.log" "$tmp_dir/reverse-curl.err"
+    exit 1
+fi
+grep -qx "reconnect-ok" "$tmp_dir/reverse-curl.out"
+echo "broker connector preserved in-flight and reverse-listener streams across connector restart"
