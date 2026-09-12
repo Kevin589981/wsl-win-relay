@@ -607,8 +607,16 @@ static int handle_entry(wwr_regs *regs) {
 #ifndef CLOSE_RANGE_UNSHARE
 #define CLOSE_RANGE_UNSHARE (1U << 1)
 #endif
-        if ((flags & CLOSE_RANGE_UNSHARE) != 0 || first > UINT_MAX || last > UINT_MAX) {
+#ifndef CLOSE_RANGE_CLOEXEC
+#define CLOSE_RANGE_CLOEXEC (1U << 2)
+#endif
+        if ((flags & CLOSE_RANGE_UNSHARE) != 0 ||
+            (flags & ~(unsigned long)CLOSE_RANGE_CLOEXEC) != 0 ||
+            first > UINT_MAX || last > UINT_MAX) {
             return stop_syscall(regs, ENOTSUP);
+        }
+        if ((flags & CLOSE_RANGE_CLOEXEC) != 0) {
+            return 0;
         }
         pending_call.kind = PENDING_CLOSE_RANGE;
         pending_call.range_first = (unsigned)first;

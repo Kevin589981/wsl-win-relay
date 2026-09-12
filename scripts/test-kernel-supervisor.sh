@@ -97,6 +97,16 @@ printf '%s\n' \
     '    errno = 0; long result = syscall(SYS_close_range, (unsigned int)fd, (unsigned int)fd, 2);' \
     '    return result < 0 && errno == ENOTSUP ? 0 : 4;' \
     '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "close-range-cloexec") == 0) {' \
+    '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0};' \
+    '    address.sin_family = AF_INET; address.sin_port = htons(47137); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
+    '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 2;' \
+    '    if (syscall(SYS_close_range, (unsigned int)fd, (unsigned int)fd, 4) < 0) return 4;' \
+    '    int second = socket(AF_INET, SOCK_STREAM, 0); errno = 0;' \
+    '    int result = second < 0 ? -1 : bind(second, (struct sockaddr *)&address, sizeof(address));' \
+    '    int error = errno; if (second >= 0) close(second); close(fd);' \
+    '    return result < 0 && error == EADDRINUSE ? 0 : 5;' \
+    '  }' \
     '  int duplicate = argc > 1 && strcmp(argv[1], "dup") == 0;' \
     '  int udp = argc > 1 && strcmp(argv[1], "udp") == 0;' \
     '  int ipv6 = argc > 1 && strcmp(argv[1], "tcp6") == 0;' \
@@ -222,6 +232,13 @@ WSL_WIN_RELAY_CONTROL="$tmp_dir/close-range-unshare.sock" "$repo_dir/scripts/wsl
 grep -q 'RESERVE .* tcp4 47136' "$tmp_dir/close-range-unshare.log"
 grep -q '^COMMIT ' "$tmp_dir/close-range-unshare.log"
 test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/close-range-unshare.log")" -eq 1
+stop_control
+
+start_control "$tmp_dir/close-range-cloexec.sock" "$tmp_dir/close-range-cloexec.log"
+WSL_WIN_RELAY_CONTROL="$tmp_dir/close-range-cloexec.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" close-range-cloexec
+grep -q 'RESERVE .* tcp4 47137' "$tmp_dir/close-range-cloexec.log"
+test "$(grep -Ec '^RESERVE ' "$tmp_dir/close-range-cloexec.log")" -eq 1
+test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/close-range-cloexec.log")" -eq 1
 stop_control
 
 start_control "$tmp_dir/leader-sys-exit.sock" "$tmp_dir/leader-sys-exit.log"
