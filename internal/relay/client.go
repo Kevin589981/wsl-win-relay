@@ -996,12 +996,20 @@ func (s *clientStream) Write(p []byte) (int, error) {
 	for len(p) > 0 {
 		s.deadlineMu.Lock()
 		deadline := s.writeDeadline
+		deadlineChanged := s.deadlineChanged
+		if deadlineChanged == nil {
+			deadlineChanged = make(chan struct{})
+			s.deadlineChanged = deadlineChanged
+		}
 		s.deadlineMu.Unlock()
 		n := len(p)
 		if n > protocol.MaxDataSize {
 			n = protocol.MaxDataSize
 		}
-		n, err := s.sendWindow.take(n, s.done, deadline)
+		n, err := s.sendWindow.take(n, s.done, deadlineChanged, deadline)
+		if errors.Is(err, errDeadlineChanged) {
+			continue
+		}
 		if err != nil {
 			return written, err
 		}

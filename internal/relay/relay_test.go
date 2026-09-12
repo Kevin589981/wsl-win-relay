@@ -883,6 +883,35 @@ func TestPacketReadDeadlineUpdateWakesBlockedRead(t *testing.T) {
 	}
 }
 
+func TestWriteDeadlineUpdateWakesBlockedWrite(t *testing.T) {
+	stream := newClientStream(NewClient(&discardReadWriter{}), 1, "example:1")
+	stream.sendWindow.mu.Lock()
+	stream.sendWindow.available = 0
+	stream.sendWindow.mu.Unlock()
+	if err := stream.SetWriteDeadline(time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, err := stream.Write([]byte("x"))
+		result <- err
+	}()
+	time.Sleep(10 * time.Millisecond)
+	if err := stream.SetWriteDeadline(time.Now().Add(20 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-result:
+		var timeout osTimeout
+		if !errors.As(err, &timeout) {
+			t.Fatalf("write error=%v, want timeout", err)
+		}
+	case <-time.After(time.Second):
+		_ = stream.Close()
+		t.Fatal("blocked write did not observe updated deadline")
+	}
+}
+
 type discardReadWriter struct{}
 
 func (*discardReadWriter) Read([]byte) (int, error)    { return 0, io.EOF }

@@ -1,12 +1,15 @@
 package relay
 
 import (
+	"errors"
 	"io"
 	"sync"
 	"time"
 
 	"github.com/Kevin589981/wsl-win-relay/internal/protocol"
 )
+
+var errDeadlineChanged = errors.New("flow window deadline changed")
 
 type flowWindow struct {
 	mu        sync.Mutex
@@ -36,7 +39,7 @@ func (w *flowWindow) add(count uint32) bool {
 	return true
 }
 
-func (w *flowWindow) take(max int, done <-chan struct{}, deadline time.Time) (int, error) {
+func (w *flowWindow) take(max int, done, deadlineChanged <-chan struct{}, deadline time.Time) (int, error) {
 	for {
 		w.mu.Lock()
 		if w.available > 0 {
@@ -69,6 +72,11 @@ func (w *flowWindow) take(max int, done <-chan struct{}, deadline time.Time) (in
 				timer.Stop()
 			}
 			return 0, io.ErrClosedPipe
+		case <-deadlineChanged:
+			if timer != nil {
+				timer.Stop()
+			}
+			return 0, errDeadlineChanged
 		case <-timeout:
 			return 0, osTimeout{}
 		}

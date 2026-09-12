@@ -521,7 +521,7 @@ func (s *Server) copyToClient(id uint32, conn net.Conn) {
 			if stream == nil {
 				return
 			}
-			if _, creditErr := stream.sendWindow.take(n, stream.done, time.Time{}); creditErr != nil {
+			if _, creditErr := stream.sendWindow.take(n, stream.done, nil, time.Time{}); creditErr != nil {
 				return
 			}
 			if sendErr := s.send(protocol.Frame{Type: protocol.TypeData, StreamID: id, Payload: append([]byte(nil), buf[:n]...)}); sendErr != nil {
