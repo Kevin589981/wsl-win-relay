@@ -119,4 +119,4 @@ Integrate a pinned tun2socks release as an external TUN adapter. Provide route/D
 
 ### Task 13: Long-running service integration
 
-Provide a systemd user unit and idempotent installer. Restart the proxy after child-process failure, preserve private configuration permissions, and verify that startup handshake and all mappings are recreated after a restart.
+Provide a systemd user unit and idempotent installer. Restart the proxy after child-process failure, preserve private configuration permissions, and verify that startup handshake and explicit mappings are recreated after a restart while strict listener leases are rebound when the control socket remains alive.
