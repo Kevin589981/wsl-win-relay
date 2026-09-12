@@ -104,8 +104,14 @@ printf '%s\n' \
     '    if (syscall(SYS_close_range, (unsigned int)fd, (unsigned int)fd, 4) < 0) return 4;' \
     '    int second = socket(AF_INET, SOCK_STREAM, 0); errno = 0;' \
     '    int result = second < 0 ? -1 : bind(second, (struct sockaddr *)&address, sizeof(address));' \
-    '    int error = errno; if (second >= 0) close(second); close(fd);' \
-    '    return result < 0 && error == EADDRINUSE ? 0 : 5;' \
+    '    int error = errno; if (second >= 0) close(second); if (result == 0 || error != EADDRINUSE) return 5;' \
+    '    execl("/proc/self/exe", argv[0], "post-exec", (char *)NULL); return 5;' \
+    '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "post-exec") == 0) {' \
+    '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0};' \
+    '    address.sin_family = AF_INET; address.sin_port = htons(47137); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
+    '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 6;' \
+    '    close(fd); return 0;' \
     '  }' \
     '  int duplicate = argc > 1 && strcmp(argv[1], "dup") == 0;' \
     '  int udp = argc > 1 && strcmp(argv[1], "udp") == 0;' \

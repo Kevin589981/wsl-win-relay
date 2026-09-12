@@ -21,6 +21,13 @@
 #include <time.h>
 #include "strict_supervisor_regs.h"
 
+#ifndef CLOSE_RANGE_UNSHARE
+#define CLOSE_RANGE_UNSHARE (1U << 1)
+#endif
+#ifndef CLOSE_RANGE_CLOEXEC
+#define CLOSE_RANGE_CLOEXEC (1U << 2)
+#endif
+
 enum pending_kind {
     PENDING_NONE,
     PENDING_SOCKET,
@@ -31,6 +38,7 @@ enum pending_kind {
     PENDING_CLOSE_RANGE,
     PENDING_DUP,
     PENDING_FCNTL_DUP,
+    PENDING_FCNTL_FLAGS,
     PENDING_CREATE,
     PENDING_DENY,
 };
@@ -42,6 +50,7 @@ struct binding {
     char host[INET6_ADDRSTRLEN];
     uint16_t port;
     int bound;
+    int close_on_exec;
     uint64_t lease;
     unsigned refs;
     struct binding *next;
@@ -52,6 +61,7 @@ struct pending {
     int fd;
     int oldfd;
     int newfd;
+    int flags;
     unsigned range_first;
     unsigned range_last;
     int family;
@@ -483,6 +493,31 @@ static void remove_bindings_range(unsigned first, unsigned last) {
     }
 }
 
+static void mark_bindings_close_on_exec(unsigned first, unsigned last) {
+    for (struct binding *binding = active_task->group->bindings; binding != NULL; binding = binding->next) {
+        unsigned fd = (unsigned)binding->fd;
+        if (fd >= first && fd <= last) {
+            binding->close_on_exec = 1;
+        }
+    }
+}
+
+static void remove_close_on_exec_bindings(void) {
+    for (;;) {
+        int found = -1;
+        for (struct binding *binding = active_task->group->bindings; binding != NULL; binding = binding->next) {
+            if (binding->close_on_exec) {
+                found = binding->fd;
+                break;
+            }
+        }
+        if (found < 0) {
+            return;
+        }
+        remove_binding(found);
+    }
+}
+
 static int read_target_memory(unsigned long address, void *buffer, size_t length) {
     struct iovec local = {.iov_base = buffer, .iov_len = length};
     struct iovec remote = {.iov_base = (void *)address, .iov_len = length};
@@ -604,12 +639,6 @@ static int handle_entry(wwr_regs *regs) {
         unsigned long first = WWR_ARG(regs, 0);
         unsigned long last = WWR_ARG(regs, 1);
         unsigned long flags = WWR_ARG(regs, 2);
-#ifndef CLOSE_RANGE_UNSHARE
-#define CLOSE_RANGE_UNSHARE (1U << 1)
-#endif
-#ifndef CLOSE_RANGE_CLOEXEC
-#define CLOSE_RANGE_CLOEXEC (1U << 2)
-#endif
         if ((flags & CLOSE_RANGE_UNSHARE) != 0 ||
             (flags & ~(unsigned long)CLOSE_RANGE_CLOEXEC) != 0 ||
             first > UINT_MAX || last > UINT_MAX) {
@@ -621,6 +650,7 @@ static int handle_entry(wwr_regs *regs) {
         pending_call.kind = PENDING_CLOSE_RANGE;
         pending_call.range_first = (unsigned)first;
         pending_call.range_last = (unsigned)last;
+        pending_call.flags = (int)flags;
         return 0;
     }
 #endif
@@ -628,6 +658,7 @@ static int handle_entry(wwr_regs *regs) {
         pending_call.kind = PENDING_DUP;
         pending_call.oldfd = (int)WWR_ARG(regs, 0);
         pending_call.newfd = syscall_number == SYS_dup ? -1 : (int)WWR_ARG(regs, 1);
+        pending_call.flags = syscall_number == SYS_dup3 ? (int)WWR_ARG(regs, 2) : 0;
         return 0;
     }
 #ifdef SYS_fcntl
@@ -637,6 +668,15 @@ static int handle_entry(wwr_regs *regs) {
         if (command == F_DUPFD || command == F_DUPFD_CLOEXEC) {
             pending_call.kind = PENDING_FCNTL_DUP;
             pending_call.oldfd = (int)WWR_ARG(regs, 0);
+            pending_call.flags = command == F_DUPFD_CLOEXEC ? FD_CLOEXEC : 0;
+            return 0;
+        }
+#endif
+#ifdef F_SETFD
+        if (command == F_SETFD) {
+            pending_call.kind = PENDING_FCNTL_FLAGS;
+            pending_call.fd = (int)WWR_ARG(regs, 0);
+            pending_call.flags = (int)WWR_ARG(regs, 2);
             return 0;
         }
 #endif
@@ -757,7 +797,11 @@ static int handle_exit(wwr_regs *regs) {
         break;
     case PENDING_CLOSE_RANGE:
         if (result == 0 && pending_call.range_first <= pending_call.range_last) {
-            remove_bindings_range(pending_call.range_first, pending_call.range_last);
+            if ((pending_call.flags & CLOSE_RANGE_CLOEXEC) != 0) {
+                mark_bindings_close_on_exec(pending_call.range_first, pending_call.range_last);
+            } else {
+                remove_bindings_range(pending_call.range_first, pending_call.range_last);
+            }
         }
         break;
     case PENDING_DUP:
@@ -771,6 +815,7 @@ static int handle_exit(wwr_regs *regs) {
                 if (copy == NULL) return -1;
                 copy->port = source->port;
                 copy->bound = source->bound;
+                copy->close_on_exec = (pending_call.flags & O_CLOEXEC) != 0;
                 snprintf(copy->host, sizeof(copy->host), "%s", source->host);
                 copy->lease = source->lease;
             }
@@ -784,11 +829,19 @@ static int handle_exit(wwr_regs *regs) {
                 if (copy == NULL) return -1;
                 copy->port = source->port;
                 copy->bound = source->bound;
+                copy->close_on_exec = (pending_call.flags & FD_CLOEXEC) != 0;
                 snprintf(copy->host, sizeof(copy->host), "%s", source->host);
                 copy->lease = source->lease;
             }
         }
         break;
+    case PENDING_FCNTL_FLAGS: {
+        struct binding *binding = find_binding(pending_call.fd);
+        if (result == 0 && binding != NULL) {
+            binding->close_on_exec = (pending_call.flags & FD_CLOEXEC) != 0;
+        }
+        break;
+    }
     case PENDING_CREATE:
         break;
     default:
@@ -810,7 +863,7 @@ static int trace_target(void) {
         return -1;
     }
     active_task = root;
-    long options = PTRACE_O_EXITKILL | PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEFORK | PTRACE_O_TRACEVFORK | PTRACE_O_TRACECLONE | PTRACE_O_TRACEEXIT;
+    long options = PTRACE_O_EXITKILL | PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEFORK | PTRACE_O_TRACEVFORK | PTRACE_O_TRACECLONE | PTRACE_O_TRACEEXIT | PTRACE_O_TRACEEXEC;
     if (ptrace(PTRACE_SETOPTIONS, root_pid, 0, options) < 0 ||
         ptrace(PTRACE_SYSCALL, root_pid, 0, 0) < 0) {
         return -1;
@@ -892,6 +945,11 @@ static int trace_target(void) {
         if (signal_number == SIGTRAP && event == PTRACE_EVENT_EXIT) {
             task->exiting = 1;
             maybe_migrate_owner(task);
+            if (ptrace(PTRACE_SYSCALL, pid, 0, 0) < 0) return -1;
+            continue;
+        }
+        if (signal_number == SIGTRAP && event == PTRACE_EVENT_EXEC) {
+            remove_close_on_exec_bindings();
             if (ptrace(PTRACE_SYSCALL, pid, 0, 0) < 0) return -1;
             continue;
         }

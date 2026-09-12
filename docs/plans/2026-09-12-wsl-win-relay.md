@@ -92,6 +92,9 @@
       descriptor-table unsharing remains explicitly rejected in strict mode.
 - [x] Leader-exit ownership migration excludes already-exiting thread tasks,
       avoiding duplicate owner transfers during `PTRACE_EVENT_EXIT` ordering.
+- [x] `FD_CLOEXEC`, `dup3(O_CLOEXEC)`, and `close_range(..., CLOEXEC)` state is
+      retired on `PTRACE_EVENT_EXEC`, so exec does not leave stale Windows
+      listener reservations behind.
 - [x] ptrace register access is isolated for amd64 and aarch64 in
       `native/strict_supervisor_regs.h`; unsupported architectures fail at
       compile time until a dedicated adapter is added.
