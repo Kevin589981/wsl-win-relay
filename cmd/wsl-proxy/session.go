@@ -24,6 +24,11 @@ type sessionClient interface {
 	OpenPacketContext(context.Context) (net.PacketConn, error)
 }
 
+type reservationSessionClient interface {
+	ReserveReverseForward(context.Context, string, string) (*relay.ReverseReservation, error)
+	ReverseDatagramForward(context.Context, string, string) (io.Closer, error)
+}
+
 func newSessionDialer() *sessionDialer {
 	return &sessionDialer{changed: make(chan struct{})}
 }
@@ -77,6 +82,54 @@ func (d *sessionDialer) OpenPacketContext(ctx context.Context) (net.PacketConn, 
 			packet, err := client.OpenPacketContext(ctx)
 			if err == nil {
 				return packet, nil
+			}
+			if !isSessionRetryError(err) {
+				return nil, err
+			}
+		}
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+}
+
+func (d *sessionDialer) reserveReverseForward(ctx context.Context, windows, wsl string) (*relay.ReverseReservation, error) {
+	for {
+		client, changed := d.current()
+		if client != nil {
+			reverse, ok := client.(reservationSessionClient)
+			if !ok {
+				return nil, errors.New("relay session does not support reverse forwarding")
+			}
+			reservation, err := reverse.ReserveReverseForward(ctx, windows, wsl)
+			if err == nil {
+				return reservation, nil
+			}
+			if !isSessionRetryError(err) {
+				return nil, err
+			}
+		}
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+}
+
+func (d *sessionDialer) reserveDatagramForward(ctx context.Context, windows, wsl string) (io.Closer, error) {
+	for {
+		client, changed := d.current()
+		if client != nil {
+			reverse, ok := client.(reservationSessionClient)
+			if !ok {
+				return nil, errors.New("relay session does not support reverse UDP forwarding")
+			}
+			reservation, err := reverse.ReverseDatagramForward(ctx, windows, wsl)
+			if err == nil {
+				return reservation, nil
 			}
 			if !isSessionRetryError(err) {
 				return nil, err

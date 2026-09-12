@@ -329,8 +329,10 @@ Re-running the installer updates the installed binaries and unit, then
 restarts the user service so the new configuration is active immediately.
 
 The service restarts the proxy after a Windows relay crash or broken stdio
-transport; startup handshake, reverse registrations, and control sockets are
-recreated on each restart. The proxy also retries a relay-only EOF on its own
+transport; startup handshake and reverse registrations are recreated on each
+restart. The strict control socket remains available across relay sessions,
+and live leases are rebound and recommitted when the replacement child is
+ready. The proxy also retries a relay-only EOF on its own
 with an exponential backoff from two seconds up to thirty seconds when run
 directly; after a minute of stable operation the next failure starts again at
 two seconds. Local SOCKS5/HTTP listener ports stay bound while a replacement

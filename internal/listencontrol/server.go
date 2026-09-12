@@ -39,7 +39,11 @@ type Server struct {
 }
 
 type lease struct {
+	mu          sync.Mutex
 	reservation Reservation
+	windows     string
+	wsl         string
+	datagram    bool
 	owners      map[int]string
 	committed   bool
 }
@@ -235,7 +239,7 @@ func (s *Server) handleReserve(ctx context.Context, conn net.Conn, parts []strin
 	id := s.next.Add(1)
 	s.mu.Lock()
 	s.ensureLeases()
-	s.leases[id] = &lease{reservation: reservation, owners: map[int]string{pid: identity}}
+	s.leases[id] = &lease{reservation: reservation, windows: windowsAddr, wsl: wslTarget, datagram: parts[2] == "udp4" || parts[2] == "udp6", owners: map[int]string{pid: identity}}
 	s.mu.Unlock()
 	if _, err := fmt.Fprintf(conn, "OK %d\n", id); err != nil {
 		// The requester may disappear after Windows has bound the port but before
@@ -310,16 +314,17 @@ func (s *Server) handleCommit(conn net.Conn, parts []string) {
 		writeError(conn, 2, "unknown lease")
 		return
 	}
-	if err := l.reservation.Commit(); err != nil {
+	l.mu.Lock()
+	err := l.reservation.Commit()
+	if err == nil {
+		l.committed = true
+	}
+	l.mu.Unlock()
+	if err != nil {
 		s.remove(id)
 		writeError(conn, errnoFor(err), err.Error())
 		return
 	}
-	s.mu.Lock()
-	if current := s.leases[id]; current != nil {
-		current.committed = true
-	}
-	s.mu.Unlock()
 	_, _ = io.WriteString(conn, "OK\n")
 }
 
@@ -353,7 +358,10 @@ func (s *Server) remove(id uint64) {
 	delete(s.leases, id)
 	s.mu.Unlock()
 	if l != nil {
-		_ = l.reservation.Close()
+		l.mu.Lock()
+		reservation := l.reservation
+		l.mu.Unlock()
+		_ = reservation.Close()
 	}
 }
 
@@ -371,7 +379,10 @@ func (s *Server) removeOwner(id uint64, pid int, identity string) Reservation {
 	}
 	delete(s.leases, id)
 	s.mu.Unlock()
-	return l.reservation
+	l.mu.Lock()
+	reservation := l.reservation
+	l.mu.Unlock()
+	return reservation
 }
 
 func (s *Server) closeAll() {
@@ -380,8 +391,86 @@ func (s *Server) closeAll() {
 	s.leases = make(map[uint64]*lease)
 	s.mu.Unlock()
 	for _, l := range leases {
-		_ = l.reservation.Close()
+		l.mu.Lock()
+		reservation := l.reservation
+		l.mu.Unlock()
+		_ = reservation.Close()
 	}
+}
+
+// Rebind recreates the Windows-side reservation for every live lease. It is
+// intended for a relay session replacement: the WSL process and its lease
+// ownership remain valid while the old Windows transport is gone. A failed
+// rebind leaves the lease in place so a later session can retry it.
+//
+// The returned error is an aggregate of individual failures. Successful
+// leases are still installed even when another lease cannot be restored.
+func (s *Server) Rebind(ctx context.Context, reserve ReserveFunc, reserveDatagram ReserveDatagramFunc) error {
+	if reserve == nil && reserveDatagram == nil {
+		return errors.New("at least one reserve function is required")
+	}
+	s.mu.Lock()
+	entries := make([]struct {
+		id uint64
+		l  *lease
+	}, 0, len(s.leases))
+	for id, l := range s.leases {
+		entries = append(entries, struct {
+			id uint64
+			l  *lease
+		}{id: id, l: l})
+	}
+	s.mu.Unlock()
+	var failures []string
+	for _, entry := range entries {
+		entry.l.mu.Lock()
+		windows, wsl, datagram := entry.l.windows, entry.l.wsl, entry.l.datagram
+		entry.l.mu.Unlock()
+		var replacement Reservation
+		var err error
+		if datagram {
+			if reserveDatagram == nil {
+				failures = append(failures, fmt.Sprintf("lease %d: reservation type unavailable", entry.id))
+				continue
+			}
+			replacement, err = reserveDatagram(ctx, windows, wsl)
+		} else {
+			if reserve == nil {
+				failures = append(failures, fmt.Sprintf("lease %d: reservation type unavailable", entry.id))
+				continue
+			}
+			replacement, err = reserve(ctx, windows, wsl)
+		}
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("lease %d: %v", entry.id, err))
+			continue
+		}
+		entry.l.mu.Lock()
+		if entry.l.committed {
+			if err := replacement.Commit(); err != nil {
+				entry.l.mu.Unlock()
+				_ = replacement.Close()
+				failures = append(failures, fmt.Sprintf("lease %d commit: %v", entry.id, err))
+				continue
+			}
+		}
+		s.mu.Lock()
+		current := s.leases[entry.id]
+		s.mu.Unlock()
+		if current != entry.l {
+			entry.l.mu.Unlock()
+			_ = replacement.Close()
+			continue
+		}
+		old := entry.l.reservation
+		entry.l.reservation = replacement
+		entry.l.mu.Unlock()
+		_ = old.Close()
+	}
+	if len(failures) != 0 {
+		return errors.New(strings.Join(failures, "; "))
+	}
+	return nil
 }
 
 func (s *Server) reapLoop(ctx context.Context) {

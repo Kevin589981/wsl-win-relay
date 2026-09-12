@@ -300,6 +300,26 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 	}
 	dialer := newSessionDialer()
 	logger.Printf("SOCKS5 listening on %s", socksListener.Addr())
+	var control *listencontrol.Server
+	var controlDone chan error
+	if opts.controlSocket != "" {
+		control = &listencontrol.Server{
+			Path: opts.controlSocket, WindowsHost: opts.strictListenHost, WindowsHost6: opts.strictListenHost6,
+			Reserve: func(reserveCtx context.Context, windows, wsl string) (listencontrol.Reservation, error) {
+				return dialer.reserveReverseForward(reserveCtx, windows, wsl)
+			},
+			ReserveDatagram: func(reserveCtx context.Context, windows, wsl string) (listencontrol.Reservation, error) {
+				closer, err := dialer.reserveDatagramForward(reserveCtx, windows, wsl)
+				if err != nil {
+					return nil, err
+				}
+				return noCommitReservation{Closer: closer}, nil
+			},
+		}
+		controlDone = make(chan error, 1)
+		go func() { controlDone <- control.Serve(ctx) }()
+		logger.Printf("strict-listen control socket %s", opts.controlSocket)
+	}
 	socksDone := make(chan error, 1)
 	proxy := &socks5.Server{Listener: socksListener, Dialer: dialer, Logger: logger, UDPAssociateIdleTimeout: opts.udpAssociateIdle, DialTimeout: opts.relayDialTimeout}
 	go func() { socksDone <- proxy.Serve(ctx) }()
@@ -313,7 +333,7 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 	sessionDone := make(chan error, 1)
 	go func() {
 		sessionDone <- supervise(ctx, opts, logger, func(sessionCtx context.Context, sessionOpts options, sessionLogger *log.Logger) error {
-			return runSession(sessionCtx, sessionOpts, sessionLogger, socksListener, httpListener, dialer)
+			return runSession(sessionCtx, sessionOpts, sessionLogger, socksListener, httpListener, dialer, control)
 		}, relayRestartDelay)
 	}()
 	select {
@@ -323,12 +343,14 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 		return sessionCompletion(ctx, err)
 	case err := <-httpDone:
 		return sessionCompletion(ctx, err)
+	case err := <-controlDone:
+		return sessionCompletion(ctx, err)
 	case <-parent.Done():
 		return parent.Err()
 	}
 }
 
-func runSession(parent context.Context, opts options, logger *log.Logger, socksListener net.Listener, httpListener net.Listener, dialer *sessionDialer) error {
+func runSession(parent context.Context, opts options, logger *log.Logger, socksListener net.Listener, httpListener net.Listener, dialer *sessionDialer, control *listencontrol.Server) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
@@ -410,20 +432,24 @@ func runSession(parent context.Context, opts options, logger *log.Logger, socksL
 	dialer.set(client)
 	defer dialer.clear(client)
 	logger.Printf("Windows relay ready (capabilities 0x%x)", capabilities)
-	var controlDone chan error
-	if opts.controlSocket != "" {
-		control := &listencontrol.Server{Path: opts.controlSocket, WindowsHost: opts.strictListenHost, WindowsHost6: opts.strictListenHost6, Reserve: func(reserveCtx context.Context, windows, wsl string) (listencontrol.Reservation, error) {
-			return client.ReserveReverseForward(reserveCtx, windows, wsl)
-		}, ReserveDatagram: func(reserveCtx context.Context, windows, wsl string) (listencontrol.Reservation, error) {
-			closer, err := client.ReverseDatagramForward(reserveCtx, windows, wsl)
-			if err != nil {
-				return nil, err
-			}
-			return noCommitReservation{Closer: closer}, nil
-		}}
-		controlDone = make(chan error, 1)
-		go func() { controlDone <- control.Serve(ctx) }()
-		logger.Printf("strict-listen control socket %s", opts.controlSocket)
+	if control != nil {
+		rebindCtx, rebindCancel := context.WithTimeout(ctx, opts.relayDialTimeout)
+		rebindErr := control.Rebind(rebindCtx,
+			func(reserveCtx context.Context, windows, wsl string) (listencontrol.Reservation, error) {
+				return client.ReserveReverseForward(reserveCtx, windows, wsl)
+			},
+			func(reserveCtx context.Context, windows, wsl string) (listencontrol.Reservation, error) {
+				closer, err := client.ReverseDatagramForward(reserveCtx, windows, wsl)
+				if err != nil {
+					return nil, err
+				}
+				return noCommitReservation{Closer: closer}, nil
+			},
+		)
+		rebindCancel()
+		if rebindErr != nil {
+			logger.Printf("strict-listen lease rebind: %v", rebindErr)
+		}
 	}
 	reverseForwards, err = forward.OpenAll(ctx, client, opts.reverse)
 	if err != nil {
@@ -486,8 +512,6 @@ func runSession(parent context.Context, opts options, logger *log.Logger, socksL
 	case err := <-autoDone:
 		return sessionCompletion(ctx, err)
 	case err := <-autoUDPDone:
-		return sessionCompletion(ctx, err)
-	case err := <-controlDone:
 		return sessionCompletion(ctx, err)
 	case <-ctx.Done():
 		return ctx.Err()

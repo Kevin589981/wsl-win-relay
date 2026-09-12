@@ -41,13 +41,17 @@ would look like an EOF and trigger an infinite supervisor loop.
   relay session is starting; new dial/UDP operations wait for that session.
 - Every new session starts with clean stream IDs, flow-control windows, UDP
   associations, and listener registrations.
+- The strict control socket can outlive an individual relay child. Live leases
+  retain their WSL process ownership and are rebound and recommitted on the
+  replacement session; a temporary bind failure is logged and retried by the
+  next session.
 - Real configuration errors are not hidden by an unbounded retry loop.
 
 ### Negative
 
 - Existing SOCKS connections and reverse-forward client connections are lost
   when the relay session fails. The reconnecting dialer only covers new local
-  operations; it does not migrate an in-flight protocol stream.
+  operations; lease rebinding does not migrate an in-flight protocol stream.
 - New relay starts back off to thirty seconds at most, avoiding a restart storm
   while keeping recovery automatic.
 - A stable session resets the backoff so a later isolated failure recovers

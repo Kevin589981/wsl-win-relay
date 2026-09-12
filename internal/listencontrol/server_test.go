@@ -3,6 +3,7 @@ package listencontrol
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -226,6 +227,64 @@ func TestAdoptAndReleaseKeepsLeaseUntilLastOwner(t *testing.T) {
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRebindReplacesCommittedReservation(t *testing.T) {
+	old := &fakeReservation{}
+	if err := old.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{leases: map[uint64]*lease{
+		7: {reservation: old, windows: "127.0.0.1:8000", wsl: "127.0.0.1:8000", committed: true, owners: map[int]string{123: "start"}},
+	}}
+	replacement := &fakeReservation{}
+	if err := server.Rebind(context.Background(), func(_ context.Context, windows, wsl string) (Reservation, error) {
+		if windows != "127.0.0.1:8000" || wsl != "127.0.0.1:8000" {
+			t.Fatalf("mapping %s -> %s", windows, wsl)
+		}
+		return replacement, nil
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	oldCommitted, oldClosed := old.values()
+	newCommitted, newClosed := replacement.values()
+	if !oldCommitted || !oldClosed {
+		t.Fatalf("old reservation committed=%v closed=%v", oldCommitted, oldClosed)
+	}
+	if !newCommitted || newClosed {
+		t.Fatalf("replacement committed=%v closed=%v", newCommitted, newClosed)
+	}
+	server.mu.Lock()
+	current := server.leases[7]
+	server.mu.Unlock()
+	current.mu.Lock()
+	defer current.mu.Unlock()
+	if current.reservation != replacement || !current.committed {
+		t.Fatalf("lease was not replaced: %#v", current)
+	}
+}
+
+func TestRebindKeepsLeaseWhenReplacementFails(t *testing.T) {
+	old := &fakeReservation{}
+	server := &Server{leases: map[uint64]*lease{
+		9: {reservation: old, windows: "127.0.0.1:8001", wsl: "127.0.0.1:8001", owners: map[int]string{123: "start"}},
+	}}
+	wantErr := errors.New("relay unavailable")
+	if err := server.Rebind(context.Background(), func(context.Context, string, string) (Reservation, error) {
+		return nil, wantErr
+	}, nil); err == nil || !strings.Contains(err.Error(), wantErr.Error()) {
+		t.Fatalf("rebind error=%v", err)
+	}
+	_, closed := old.values()
+	if closed {
+		t.Fatal("failed rebind closed the existing lease")
+	}
+	server.mu.Lock()
+	_, exists := server.leases[9]
+	server.mu.Unlock()
+	if !exists {
+		t.Fatal("failed rebind removed the lease")
 	}
 }
 
