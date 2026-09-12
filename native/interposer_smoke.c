@@ -216,7 +216,7 @@ int main(void) {
         }
         pid_t vforked = vfork();
         if (vforked < 0) {
-            if (errno != ENOSYS && errno != EPERM && errno != EINVAL) {
+            if (errno != ENOSYS && errno != EPERM && errno != EINVAL && errno != EAGAIN) {
                 return 25;
             }
         } else {
