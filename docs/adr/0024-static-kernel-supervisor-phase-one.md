@@ -23,10 +23,11 @@ committed only after Linux `listen()` succeeds; UDP reservations are rolled
 back if Linux `bind()` fails.
 
 Phase one intentionally supports a directly executed single-process amd64
-target. It does not yet claim complete fork/clone/thread-group inheritance,
-vfork, inherited descriptors, or other architectures. The original
-interposer remains the default because it has broader low-overhead lifecycle
-coverage.
+target. The supervisor rejects `fork()`, `vfork()`, `clone()`, and `clone3()`
+with `ENOTSUP` rather than allowing a child to create an uncoordinated
+listener. It does not yet claim complete fork/clone/thread-group inheritance,
+inherited descriptors, or other architectures. The original interposer remains
+the default because it has broader low-overhead lifecycle coverage.
 
 ## Consequences
 

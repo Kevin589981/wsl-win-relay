@@ -24,11 +24,6 @@ if [ "$retry_seconds" -gt 60 ]; then
 fi
 retry_attempts=$((retry_seconds * 10 + 1))
 
-if [ ! -r "$library" ]; then
-    echo "listen interposer not found: $library (run scripts/build-wsl.sh)" >&2
-    exit 1
-fi
-
 if [ "$kernel_mode" -eq 1 ]; then
     if [ ! -x "$kernel_supervisor" ]; then
         echo "kernel strict supervisor not found: $kernel_supervisor (run scripts/build-wsl.sh)" >&2
@@ -36,6 +31,11 @@ if [ "$kernel_mode" -eq 1 ]; then
     fi
     export WSL_WIN_RELAY_CONTROL=$control
     exec "$kernel_supervisor" "$@"
+fi
+
+if [ ! -r "$library" ]; then
+    echo "listen interposer not found: $library (run scripts/build-wsl.sh)" >&2
+    exit 1
 fi
 
 resolve_target_path() {

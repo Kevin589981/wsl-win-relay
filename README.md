@@ -382,8 +382,10 @@ for direct single-process Linux amd64 targets:
 
 It coordinates direct TCP/UDP `bind()` and TCP `listen()` syscalls through the
 same control socket. The kernel adapter is deliberately opt-in and currently
-does not cover fork/clone/thread-group descriptor inheritance or non-amd64
-targets; use the default interposer for dynamically linked applications.
+rejects `fork()`, `vfork()`, `clone()`, and `clone3()` with `ENOTSUP` so a child
+cannot create an uncoordinated listener. It does not cover thread-group
+descriptor inheritance or non-amd64 targets; use the default interposer for
+dynamically linked applications.
 
 Before the application's libc `listen()` succeeds, the wrapper reserves
 Windows `127.0.0.1:8000` for IPv4 or `[::1]:8000` for IPv6. If Windows reports that the address is already in

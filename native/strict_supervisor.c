@@ -226,13 +226,22 @@ static struct binding *add_binding(int fd, int type, int family) {
     return binding;
 }
 
+static int lease_is_referenced(uint64_t lease) {
+    for (struct binding *binding = bindings; binding != NULL; binding = binding->next) {
+        if (binding->lease == lease) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static void remove_binding(int fd) {
     struct binding **cursor = &bindings;
     while (*cursor != NULL) {
         if ((*cursor)->fd == fd) {
             struct binding *removed = *cursor;
             *cursor = removed->next;
-            if (removed->lease != 0) {
+            if (removed->lease != 0 && !lease_is_referenced(removed->lease)) {
                 (void)lease_operation("CLOSE", removed->lease);
             }
             free(removed);
@@ -319,6 +328,13 @@ static int handle_entry(struct user_regs_struct *regs) {
     unsigned long syscall_number = regs->orig_rax;
     if (debug_enabled()) {
         fprintf(stderr, "strict-supervisor: syscall %lu\n", syscall_number);
+    }
+    if (syscall_number == SYS_fork || syscall_number == SYS_vfork || syscall_number == SYS_clone
+#ifdef SYS_clone3
+        || syscall_number == SYS_clone3
+#endif
+    ) {
+        return stop_syscall(regs, ENOTSUP);
     }
     if (syscall_number == SYS_socket) {
         pending_call.kind = PENDING_SOCKET;
@@ -453,6 +469,9 @@ static int handle_exit(struct user_regs_struct *regs) {
     case PENDING_DUP:
         if (result >= 0) {
             struct binding *source = find_binding(pending_call.oldfd);
+            if (result != pending_call.oldfd && find_binding((int)result) != NULL) {
+                remove_binding((int)result);
+            }
             if (source != NULL && find_binding((int)result) == NULL) {
                 struct binding *copy = add_binding((int)result, source->type, source->family);
                 if (copy == NULL) return -1;
