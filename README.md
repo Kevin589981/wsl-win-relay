@@ -109,6 +109,16 @@ for connector children. The token remains out of command-line arguments. See
 rule that preserves unrelated entries while forcing these two names to be
 single, flag-free entries.
 
+To exercise the same path while keeping an upstream proxy on the Windows side,
+set `WWR_WINDOWS_UPSTREAM_PROXY` when running the smoke. WSL still sends only
+the target through the relay; the Windows broker performs the upstream
+connection:
+
+```bash
+WWR_WINDOWS_UPSTREAM_PROXY=socks5h://matebookxpro.local:7890 \
+  ./scripts/test-broker-windows-interop.sh
+```
+
 ## Security model
 
 - The WSL listener binds to `127.0.0.1` by default.

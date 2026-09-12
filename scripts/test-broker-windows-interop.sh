@@ -7,6 +7,7 @@ broker_exe=${WWR_BROKER_EXE:-"$repo_dir/bin/wsl-win-broker.exe"}
 connector_exe=${WWR_CONNECTOR_EXE:-"$repo_dir/bin/wsl-win-connector.exe"}
 socks_listen=${WWR_BROKER_INTEROP_LISTEN:-127.0.0.1:11087}
 endpoint=${WWR_BROKER_INTEROP_ENDPOINT:-"wsl-win-relay-interop-$$"}
+upstream_proxy=${WWR_WINDOWS_UPSTREAM_PROXY:-}
 work=$(mktemp -d "${TMPDIR:-/tmp}/wsl-win-relay-broker-interop.XXXXXX")
 broker_pid=
 proxy_pid=
@@ -34,7 +35,14 @@ if ! command -v curl >/dev/null 2>&1; then
 fi
 
 token=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
-"$broker_exe" -endpoint "$endpoint" -token-hex "$token" >"$work/broker.log" 2>&1 &
+start_broker() {
+	if [ -n "$upstream_proxy" ]; then
+		"$broker_exe" -endpoint "$endpoint" -token-hex "$token" -upstream-proxy "$upstream_proxy"
+		return
+	fi
+	"$broker_exe" -endpoint "$endpoint" -token-hex "$token"
+}
+start_broker >"$work/broker.log" 2>&1 &
 broker_pid=$!
 sleep 1
 
@@ -69,4 +77,8 @@ if ! curl --noproxy "" --proxy "socks5h://$socks_listen" --connect-timeout 5 --m
 	exit 1
 fi
 grep -qi "Example Domain" "$work/response.html"
-echo "WSL proxy attached to Windows broker over named pipe and reached example.com"
+if [ -n "$upstream_proxy" ]; then
+	echo "WSL proxy reached example.com through Windows broker and upstream $upstream_proxy"
+else
+	echo "WSL proxy attached to Windows broker over named pipe and reached example.com"
+fi
