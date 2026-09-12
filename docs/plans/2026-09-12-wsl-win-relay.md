@@ -52,6 +52,9 @@
       summary snapshots, attach/resume acceptance, and stale-session isolation.
 - [x] Broker listener lifecycle with active connector tracking, cancellation
       teardown, and handler draining before service return.
+- [x] Opt-in broker and connector executables bridge stdio to local IPC and
+      run the existing relay server after attach; offline WSL SOCKS5 integration
+      is covered by `scripts/test-broker-connector.sh`.
 - [x] Non-zero normal Windows relay exit status is classified as fatal instead
       of causing an unbounded restart loop.
 - [ ] Kernel-level coverage for static binaries and `vfork()` ownership

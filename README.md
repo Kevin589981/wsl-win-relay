@@ -43,6 +43,15 @@ sockets across connector restarts is not yet enabled by default. Until that
 layer is complete, a broken stdio session still ends in-flight connections
 while new requests and mappings recover normally.
 
+An opt-in broker transport is available for integration testing. Build with
+`scripts/build-wsl.sh`, start `wsl-win-broker.exe` on Windows with a private
+`WSL_WIN_RELAY_ATTACH_TOKEN` and endpoint, then set the same token and
+`WSL_WIN_RELAY_BROKER_ENDPOINT` in WSL and configure `relay_exe` as
+`wsl-win-connector.exe`. The connector performs attach/resume before forwarding
+the existing relay byte stream. The broker currently recreates its relay server
+for each connector, so connector replacement is transport-safe but does not yet
+resume in-flight stream state; that is the next socket-ownership milestone.
+
 ## Security model
 
 - The WSL listener binds to `127.0.0.1` by default.
