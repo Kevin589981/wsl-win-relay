@@ -100,8 +100,12 @@
 - [x] Frontend and bridge-worker supervisors continuously reap children they
       start and keep externally-owned roles reusable without claiming their
       lifecycle.
+- [x] Socket-host health probes detect a dead reused host and rebuild the host
+      plus automatic/explicit/strict mappings; established streams end at the
+      socket-host crash boundary.
 - [ ] Socket-host crash recovery still requires a separate host-level recovery
-      boundary because the socket host owns the kernel sockets.
+      boundary to preserve already-established streams because the socket host
+      owns the kernel sockets.
 
 The hot-reconnect item is intentionally staged behind [ADR-0015](../adr/0015-persistent-windows-ownership-and-attach.md): it requires moving socket ownership into a persistent Windows broker before a connector can safely resume protocol state.
 

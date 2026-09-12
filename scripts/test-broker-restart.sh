@@ -5,6 +5,7 @@ repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 tmp_dir=$(mktemp -d)
 broker_pid=
 worker_pid=
+host_pid=
 proxy_pid=
 http_pid=
 http2_pid=
@@ -28,6 +29,7 @@ cleanup() {
     [ -z "${proxy_pid:-}" ] || kill "$proxy_pid" 2>/dev/null || true
     [ -z "${broker_pid:-}" ] || kill "$broker_pid" 2>/dev/null || true
     [ -z "${worker_pid:-}" ] || kill "$worker_pid" 2>/dev/null || true
+    [ -z "${host_pid:-}" ] || kill "$host_pid" 2>/dev/null || true
     [ -z "${http_pid:-}" ] || kill "$http_pid" 2>/dev/null || true
     [ -z "${http2_pid:-}" ] || kill "$http2_pid" 2>/dev/null || true
     [ -z "${http3_pid:-}" ] || kill "$http3_pid" 2>/dev/null || true
@@ -37,6 +39,7 @@ cleanup() {
     [ -z "${proxy_pid:-}" ] || wait "$proxy_pid" 2>/dev/null || true
     [ -z "${broker_pid:-}" ] || wait "$broker_pid" 2>/dev/null || true
     [ -z "${worker_pid:-}" ] || wait "$worker_pid" 2>/dev/null || true
+    [ -z "${host_pid:-}" ] || wait "$host_pid" 2>/dev/null || true
     [ -z "${http_pid:-}" ] || wait "$http_pid" 2>/dev/null || true
     [ -z "${http2_pid:-}" ] || wait "$http2_pid" 2>/dev/null || true
     [ -z "${http3_pid:-}" ] || wait "$http3_pid" 2>/dev/null || true
@@ -306,4 +309,23 @@ fi
 grep -qx "broker-worker-crash-ok" "$tmp_dir/worker-delayed.out"
 grep -q "reusing broker socket host" "$tmp_dir/broker.log"
 grep -q "start broker worker" "$tmp_dir/broker.log" || grep -q "broker bridge worker listening" "$tmp_dir/broker.log"
-echo "frontend and bridge-worker crashes preserved streams; mappings rebuilt after worker restart"
+
+host_pid=$(ps -eo pid=,args= | awk -v exe="$tmp_dir/win-broker" '$0 ~ exe " -socket-host" {print $1; exit}')
+if [ -z "$host_pid" ]; then
+    cat "$tmp_dir/broker.log" "$tmp_dir/proxy.log"
+    exit 1
+fi
+kill -9 "$host_pid"
+wait "$host_pid" 2>/dev/null || true
+host_pid=
+for _ in $(seq 1 450); do
+    if probe >"$tmp_dir/host-restart.out" 2>"$tmp_dir/host-restart.err"; then
+        break
+    fi
+    sleep 0.1
+done
+if ! grep -qx "broker-restart-ok" "$tmp_dir/host-restart.out"; then
+    cat "$tmp_dir/broker.log" "$tmp_dir/proxy.log" "$tmp_dir/host-restart.err"
+    exit 1
+fi
+echo "frontend and bridge-worker crashes preserved streams; worker and socket-host restarts rebuilt mappings"

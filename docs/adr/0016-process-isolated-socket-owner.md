@@ -51,7 +51,10 @@ the wire contract and keeping stale connector teardown semantics unchanged.
 Both outer roles continuously reap children they start; a replacement bridge
 is started only after its owned child has been stopped or observed to exit.
 Processes that merely reuse an already-running role are not claimed or
-terminated by the new parent.
+terminated by the new parent. Bridge workers also probe the socket-host control
+endpoint periodically; a failed probe terminates the bridge so the frontend
+supervisor can rebuild the host and registrations instead of publishing a
+dead endpoint indefinitely.
 
 ## Consequences
 
@@ -69,7 +72,9 @@ terminated by the new parent.
 - Broker startup now involves two additional processes and three local IPC
   endpoints.
 - A socket-host crash still loses sockets; this decision isolates both bridge
-  failures, not arbitrary kernel or host failure.
+  failures, not arbitrary kernel or host failure. Health probing rebuilds new
+  traffic and mappings, but cannot preserve streams that were owned by the
+  crashed socket host.
 - Worker lifecycle and orphan cleanup must be tested for graceful stop, stale
   endpoints, frontend restart, bridge-worker restart, and abnormal child exit;
   both supervisors reap children they started while preserving reuse of

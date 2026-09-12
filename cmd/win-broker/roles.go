@@ -87,10 +87,9 @@ func (s *workerSupervisor) ensure(ctx context.Context) error {
 	defer s.ensureMu.Unlock()
 
 	probeCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
-	conn, err := localipc.Dial(probeCtx, s.endpoint)
+	err := probeRole(probeCtx, s.endpoint)
 	cancel()
 	if err == nil {
-		_ = conn.Close()
 		return nil
 	}
 	s.stopOwnedWorker()
@@ -149,6 +148,7 @@ func (s *workerSupervisor) bridge(ctx context.Context, client net.Conn) {
 	worker, err := localipc.Dial(dialCtx, s.endpoint)
 	cancel()
 	if err != nil {
+		s.logger.Printf("connect broker worker failed: %v; ensuring worker", err)
 		if err := s.ensure(ctx); err != nil {
 			s.logger.Printf("connect broker worker: %v", err)
 			return
@@ -174,13 +174,13 @@ func (s *workerSupervisor) stop() {
 
 func ensureWorker(ctx context.Context, opts options, endpoint string, logger *log.Logger) (*exec.Cmd, error) {
 	probeCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
-	conn, err := localipc.Dial(probeCtx, endpoint)
+	err := probeRole(probeCtx, endpoint)
 	cancel()
 	if err == nil {
-		_ = conn.Close()
 		logger.Printf("reusing broker worker on %s", endpoint)
 		return nil, nil
 	}
+	logger.Printf("broker worker probe failed on %s: %v", endpoint, err)
 	executable, err := os.Executable()
 	if err != nil {
 		return nil, fmt.Errorf("locate broker executable: %w", err)
@@ -192,6 +192,7 @@ func ensureWorker(ctx context.Context, opts options, endpoint string, logger *lo
 	worker := exec.Command(executable, args...)
 	worker.Stdout = io.Discard
 	worker.Stderr = os.Stderr
+	logger.Printf("starting broker worker on %s", endpoint)
 	if err := worker.Start(); err != nil {
 		return nil, fmt.Errorf("start broker worker: %w", err)
 	}
@@ -199,10 +200,9 @@ func ensureWorker(ctx context.Context, opts options, endpoint string, logger *lo
 	defer deadline.Stop()
 	for {
 		probeCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
-		conn, dialErr := localipc.Dial(probeCtx, endpoint)
+		dialErr := probeRole(probeCtx, endpoint)
 		cancel()
 		if dialErr == nil {
-			_ = conn.Close()
 			return worker, nil
 		}
 		select {
@@ -262,6 +262,7 @@ func runWorker(opts options, logger *log.Logger) error {
 			}
 		}()
 	}
+	go monitorSocketHost(service, hostEndpoint, stop)
 	listener, err := localipc.Listen(opts.endpoint)
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", opts.endpoint, err)
@@ -294,6 +295,25 @@ func runWorker(opts options, logger *log.Logger) error {
 	}
 }
 
+func monitorSocketHost(ctx context.Context, endpoint string, stop context.CancelFunc) {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			probeCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+			err := probeRole(probeCtx, endpoint)
+			cancel()
+			if err != nil {
+				stop()
+				return
+			}
+		}
+	}
+}
+
 func bridgeWorkerConnection(ctx context.Context, client net.Conn, endpoint string, stop context.CancelFunc) {
 	defer client.Close()
 	dialCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -309,13 +329,13 @@ func bridgeWorkerConnection(ctx context.Context, client net.Conn, endpoint strin
 
 func ensureSocketHost(ctx context.Context, opts options, endpoint string, logger *log.Logger) (*exec.Cmd, <-chan struct{}, error) {
 	probeCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
-	conn, err := localipc.Dial(probeCtx, endpoint)
+	err := probeRole(probeCtx, endpoint)
 	cancel()
 	if err == nil {
-		_ = conn.Close()
 		logger.Printf("reusing broker socket host on %s", endpoint)
 		return nil, nil, nil
 	}
+	logger.Printf("socket host probe failed on %s: %v", endpoint, err)
 	executable, err := os.Executable()
 	if err != nil {
 		return nil, nil, fmt.Errorf("locate broker executable: %w", err)
@@ -327,22 +347,24 @@ func ensureSocketHost(ctx context.Context, opts options, endpoint string, logger
 	host := exec.Command(executable, args...)
 	host.Stdout = io.Discard
 	host.Stderr = os.Stderr
+	logger.Printf("starting broker socket host on %s", endpoint)
 	if err := host.Start(); err != nil {
 		return nil, nil, fmt.Errorf("start broker socket host: %w", err)
 	}
 	done := make(chan struct{})
 	go func() {
-		_, _ = host.Process.Wait()
+		if _, waitErr := host.Process.Wait(); waitErr != nil {
+			logger.Printf("broker socket host exited: %v", waitErr)
+		}
 		close(done)
 	}()
 	deadline := time.NewTimer(workerStartupTimeout)
 	defer deadline.Stop()
 	for {
 		probeCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
-		conn, dialErr := localipc.Dial(probeCtx, endpoint)
+		dialErr := probeRole(probeCtx, endpoint)
 		cancel()
 		if dialErr == nil {
-			_ = conn.Close()
 			return host, done, nil
 		}
 		select {
@@ -418,12 +440,37 @@ func serveWorkerControl(ctx context.Context, listener net.Listener, stop context
 		go func() {
 			defer conn.Close()
 			line, _ := bufio.NewReader(io.LimitReader(conn, 64)).ReadString('\n')
-			if strings.TrimSpace(line) == "STOP" {
+			switch strings.TrimSpace(line) {
+			case "PING":
+				_, _ = io.WriteString(conn, "PONG\n")
+			case "STOP":
 				_, _ = io.WriteString(conn, "OK\n")
 				stop()
 			}
 		}()
 	}
+}
+
+func probeRole(ctx context.Context, endpoint string) error {
+	conn, err := localipc.Dial(ctx, deriveEndpoint(endpoint, "control"))
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	}
+	if _, err := io.WriteString(conn, "PING\n"); err != nil {
+		return err
+	}
+	line, err := bufio.NewReader(io.LimitReader(conn, 64)).ReadString('\n')
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(line) != "PONG" {
+		return fmt.Errorf("unexpected control probe response %q", strings.TrimSpace(line))
+	}
+	return nil
 }
 
 func requestWorkerStop(endpoint string) {
