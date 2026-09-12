@@ -753,41 +753,35 @@ func TestStreamEOFIsPersistentAfterHalfClose(t *testing.T) {
 	}
 }
 
-func TestHalfCloseMarksReadStateWhenEOFIsConsumed(t *testing.T) {
-	client := NewClient(&discardReadWriter{})
-	stream := newClientStream(client, 1, "example:1")
-	stream.incoming = make(chan streamEvent)
+func TestHalfCloseDoesNotBlockFullReceiveQueue(t *testing.T) {
+	stream := newClientStream(NewClient(&discardReadWriter{}), 1, "example:1")
+	for index := 0; index < cap(stream.incoming); index++ {
+		stream.incoming <- streamEvent{data: []byte("x")}
+	}
 	done := make(chan struct{})
 	go func() {
 		stream.handle(protocol.Frame{Type: protocol.TypeHalfClose})
 		close(done)
 	}()
-
-	time.Sleep(10 * time.Millisecond)
-	stream.stateMu.Lock()
-	readEOF := stream.readEOF
-	stream.stateMu.Unlock()
-	if readEOF {
-		t.Fatal("read EOF state was published before the EOF event was consumed")
-	}
-
-	buffer := make([]byte, 1)
-	if _, err := stream.Read(buffer); err != io.EOF {
-		t.Fatalf("first read: %v", err)
-	}
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("half-close handler did not finish")
+		t.Fatal("half-close handler blocked on a full data queue")
 	}
 	stream.stateMu.Lock()
-	readEOF = stream.readEOF
+	readEOF := stream.readEOF
 	stream.stateMu.Unlock()
 	if !readEOF {
-		t.Fatal("read EOF state was not published after consuming the event")
+		t.Fatal("half-close did not publish EOF state")
+	}
+	buffer := make([]byte, 1)
+	for index := 0; index < cap(stream.incoming); index++ {
+		if _, err := stream.Read(buffer); err != nil {
+			t.Fatalf("read queued data %d: %v", index, err)
+		}
 	}
 	if _, err := stream.Read(buffer); err != io.EOF {
-		t.Fatalf("second read: %v", err)
+		t.Fatalf("read after queued data: %v", err)
 	}
 }
 

@@ -813,6 +813,7 @@ type clientStream struct {
 	readEOF         bool
 	readBuf         []byte
 	readMu          sync.Mutex
+	readWake        chan struct{}
 	deadlineMu      sync.Mutex
 	readDeadline    time.Time
 	writeDeadline   time.Time
@@ -832,7 +833,7 @@ type streamEvent struct {
 
 func newClientStream(c *Client, id uint32, target string) *clientStream {
 	queueSize := protocol.InitialStreamWindow/protocol.MaxDataSize + 2
-	return &clientStream{client: c, id: id, target: target, incoming: make(chan streamEvent, queueSize), openDone: make(chan error, 1), sendWindow: newFlowWindow(), done: make(chan struct{}), deadlineChanged: make(chan struct{})}
+	return &clientStream{client: c, id: id, target: target, incoming: make(chan streamEvent, queueSize), openDone: make(chan error, 1), sendWindow: newFlowWindow(), done: make(chan struct{}), readWake: make(chan struct{}), deadlineChanged: make(chan struct{})}
 }
 
 func (s *clientStream) handle(frame protocol.Frame) {
@@ -856,9 +857,13 @@ func (s *clientStream) handle(frame protocol.Frame) {
 			s.fail(errors.New("invalid stream window update"))
 		}
 	case protocol.TypeHalfClose:
-		select {
-		case s.incoming <- streamEvent{err: io.EOF}:
-		case <-s.client.closed:
+		s.stateMu.Lock()
+		s.readEOF = true
+		wake := s.readWake
+		s.readWake = make(chan struct{})
+		s.stateMu.Unlock()
+		if wake != nil {
+			close(wake)
 		}
 	case protocol.TypeClose, protocol.TypeReset:
 		err := io.EOF
@@ -914,6 +919,11 @@ func (s *clientStream) Read(p []byte) (int, error) {
 		}
 		s.stateMu.Lock()
 		readEOF := s.readEOF
+		readWake := s.readWake
+		if readWake == nil {
+			readWake = make(chan struct{})
+			s.readWake = readWake
+		}
 		s.stateMu.Unlock()
 		if readEOF {
 			select {
@@ -967,6 +977,8 @@ func (s *clientStream) Read(p []byte) (int, error) {
 		case <-timer:
 			return 0, osTimeout{}
 		case <-deadlineChanged:
+			continue
+		case <-readWake:
 			continue
 		case <-s.done:
 			return 0, s.terminalError()
