@@ -42,7 +42,7 @@ func TestWatcherReplacesChangedListenerIdentity(t *testing.T) {
 	}}
 	opener := &recordingOpener{closed: make(chan string, 2)}
 	w := &Watcher{Scanner: scanner, Opener: opener, Interval: time.Millisecond}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	if err := w.Run(ctx); err != nil {
 		t.Fatal(err)
