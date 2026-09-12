@@ -3,11 +3,17 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log"
 	"net"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Kevin589981/wsl-win-relay/internal/transport/localipc"
 )
 
 func TestEqualTokenHex(t *testing.T) {
@@ -30,7 +36,12 @@ func TestServeWorkerControlRequiresToken(t *testing.T) {
 	defer cancel()
 	var stopOnce sync.Once
 	stopped := make(chan struct{})
-	go serveWorkerControl(ctx, listener, func() { stopOnce.Do(func() { close(stopped) }) }, "aabbcc")
+	go serveWorkerControl(ctx, listener, func() {
+		stopOnce.Do(func() {
+			close(stopped)
+			cancel()
+		})
+	}, "aabbcc")
 
 	request := func(line string) string {
 		dialCtx, dialCancel := context.WithTimeout(ctx, time.Second)
@@ -65,5 +76,45 @@ func TestServeWorkerControlRequiresToken(t *testing.T) {
 	case <-stopped:
 	case <-time.After(time.Second):
 		t.Fatal("STOP did not invoke lifecycle cancellation")
+	}
+}
+
+func TestProbeRoleClassifiesMismatchAndStopsConflict(t *testing.T) {
+	endpoint := fmt.Sprintf("wsl-win-relay-role-test-%d", time.Now().UnixNano())
+	listener, err := localipc.Listen(deriveEndpoint(endpoint, "control"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var stopOnce sync.Once
+	stopped := make(chan struct{})
+	go serveWorkerControl(ctx, listener, func() {
+		stopOnce.Do(func() {
+			close(stopped)
+			cancel()
+		})
+	}, "aabbcc")
+
+	probeCtx, probeCancel := context.WithTimeout(ctx, time.Second)
+	err = probeRole(probeCtx, endpoint, "deadbeef")
+	probeCancel()
+	if !errors.Is(err, errRoleTokenMismatch) {
+		t.Fatalf("wrong-token probe error %v, want token mismatch", err)
+	}
+	probeCtx, probeCancel = context.WithTimeout(ctx, time.Second)
+	err = probeRole(probeCtx, endpoint, "AABBCC")
+	probeCancel()
+	if err != nil {
+		t.Fatalf("correct-token probe: %v", err)
+	}
+	logger := log.New(io.Discard, "", 0)
+	if err := stopConflictingRole(ctx, endpoint, logger); err != nil {
+		t.Fatalf("stop conflicting role: %v", err)
+	}
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("conflicting role did not stop")
 	}
 }
