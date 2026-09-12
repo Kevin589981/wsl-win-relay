@@ -428,9 +428,10 @@ Strict mode currently covers dynamically linked applications using libc or
 direct `syscall(SYS_listen/SYS_bind)` calls, including TCP `listen()`, non-zero
 UDP `bind()`, `dup()`, `dup2()`, `dup3()`, `fcntl(F_DUPFD*)`, `close_range()`,
 and ordinary `fork()` descriptor inheritance, plus process-style `clone()`,
-`clone3()`, and parent-side `vfork()` adoption. Static or setuid binaries and
-child-side networking before `vfork()` `exec`/`_exit` should use automatic
-polling until a kernel-aware adapter is available. Ordinary pthread/`CLONE_THREAD`
+`clone3()`, and parent-side `vfork()` adoption. Static binaries should use the
+opt-in `--kernel` adapter; setuid binaries remain rejected. Child-side
+networking before `vfork()` `exec`/`_exit` is supported only for direct
+syscall-safe operations. Ordinary pthread/`CLONE_THREAD`
 listeners share the process lease by design and are covered; unusual
 thread-group teardown patterns are covered by the opt-in kernel supervisor's
 shared-group path; unusual signal/exec interactions still require validation.
