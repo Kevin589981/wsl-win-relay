@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/sched.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -27,7 +28,9 @@ enum pending_kind {
     PENDING_UDP_BIND,
     PENDING_TCP_LISTEN,
     PENDING_CLOSE,
+    PENDING_CLOSE_RANGE,
     PENDING_DUP,
+    PENDING_FCNTL_DUP,
     PENDING_CREATE,
     PENDING_DENY,
 };
@@ -49,6 +52,8 @@ struct pending {
     int fd;
     int oldfd;
     int newfd;
+    unsigned range_first;
+    unsigned range_last;
     int family;
     int type;
     uint64_t lease;
@@ -460,6 +465,23 @@ static void remove_binding(int fd) {
     }
 }
 
+static void remove_bindings_range(unsigned first, unsigned last) {
+    for (;;) {
+        int found = -1;
+        for (struct binding *binding = active_task->group->bindings; binding != NULL; binding = binding->next) {
+            unsigned fd = (unsigned)binding->fd;
+            if (fd >= first && fd <= last) {
+                found = binding->fd;
+                break;
+            }
+        }
+        if (found < 0) {
+            return;
+        }
+        remove_binding(found);
+    }
+}
+
 static int read_target_memory(unsigned long address, void *buffer, size_t length) {
     struct iovec local = {.iov_base = buffer, .iov_len = length};
     struct iovec remote = {.iov_base = (void *)address, .iov_len = length};
@@ -576,12 +598,41 @@ static int handle_entry(wwr_regs *regs) {
         pending_call.fd = (int)WWR_ARG(regs, 0);
         return 0;
     }
+#ifdef SYS_close_range
+    if (syscall_number == SYS_close_range) {
+        unsigned long first = WWR_ARG(regs, 0);
+        unsigned long last = WWR_ARG(regs, 1);
+        unsigned long flags = WWR_ARG(regs, 2);
+#ifndef CLOSE_RANGE_UNSHARE
+#define CLOSE_RANGE_UNSHARE (1U << 1)
+#endif
+        if ((flags & CLOSE_RANGE_UNSHARE) != 0 || first > UINT_MAX || last > UINT_MAX) {
+            return stop_syscall(regs, ENOTSUP);
+        }
+        pending_call.kind = PENDING_CLOSE_RANGE;
+        pending_call.range_first = (unsigned)first;
+        pending_call.range_last = (unsigned)last;
+        return 0;
+    }
+#endif
     if (syscall_number == SYS_dup || syscall_number == SYS_dup2 || syscall_number == SYS_dup3) {
         pending_call.kind = PENDING_DUP;
         pending_call.oldfd = (int)WWR_ARG(regs, 0);
         pending_call.newfd = syscall_number == SYS_dup ? -1 : (int)WWR_ARG(regs, 1);
         return 0;
     }
+#ifdef SYS_fcntl
+    if (syscall_number == SYS_fcntl) {
+        int command = (int)WWR_ARG(regs, 1);
+#ifdef F_DUPFD
+        if (command == F_DUPFD || command == F_DUPFD_CLOEXEC) {
+            pending_call.kind = PENDING_FCNTL_DUP;
+            pending_call.oldfd = (int)WWR_ARG(regs, 0);
+            return 0;
+        }
+#endif
+    }
+#endif
     if (syscall_number == SYS_bind) {
         struct binding *binding = find_binding((int)WWR_ARG(regs, 0));
         if (binding == NULL || (binding->type != SOCK_DGRAM && binding->type != SOCK_STREAM)) {
@@ -695,12 +746,30 @@ static int handle_exit(wwr_regs *regs) {
             remove_binding(pending_call.fd);
         }
         break;
+    case PENDING_CLOSE_RANGE:
+        if (result == 0 && pending_call.range_first <= pending_call.range_last) {
+            remove_bindings_range(pending_call.range_first, pending_call.range_last);
+        }
+        break;
     case PENDING_DUP:
         if (result >= 0) {
             struct binding *source = find_binding(pending_call.oldfd);
             if (result != pending_call.oldfd && find_binding((int)result) != NULL) {
                 remove_binding((int)result);
             }
+            if (source != NULL && find_binding((int)result) == NULL) {
+                struct binding *copy = add_binding((int)result, source->type, source->family);
+                if (copy == NULL) return -1;
+                copy->port = source->port;
+                copy->bound = source->bound;
+                snprintf(copy->host, sizeof(copy->host), "%s", source->host);
+                copy->lease = source->lease;
+            }
+        }
+        break;
+    case PENDING_FCNTL_DUP:
+        if (result >= 0) {
+            struct binding *source = find_binding(pending_call.oldfd);
             if (source != NULL && find_binding((int)result) == NULL) {
                 struct binding *copy = add_binding((int)result, source->type, source->family);
                 if (copy == NULL) return -1;

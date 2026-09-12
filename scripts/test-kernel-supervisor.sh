@@ -24,6 +24,7 @@ printf '%s\n' \
     '#include <string.h>' \
     '#include <sys/socket.h>' \
     '#include <errno.h>' \
+    '#include <fcntl.h>' \
     '#include <linux/sched.h>' \
     '#include <pthread.h>' \
     '#include <sys/syscall.h>' \
@@ -75,6 +76,19 @@ printf '%s\n' \
     '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 2;' \
     '    if (pthread_create(&thread, NULL, thread_close, &fd) != 0) return 4;' \
     '    syscall(SYS_exit, 0); return 6;' \
+    '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "fcntl-dup") == 0) {' \
+    '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0};' \
+    '    address.sin_family = AF_INET; address.sin_port = htons(47134); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
+    '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 2;' \
+    '    int alias = fcntl(fd, F_DUPFD_CLOEXEC, 10); if (alias < 0) return 4;' \
+    '    close(fd); close(alias); return 0;' \
+    '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "close-range") == 0) {' \
+    '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0};' \
+    '    address.sin_family = AF_INET; address.sin_port = htons(47135); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
+    '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 2;' \
+    '    return syscall(SYS_close_range, (unsigned int)fd, (unsigned int)fd, 0) == 0 ? 0 : 4;' \
     '  }' \
     '  int duplicate = argc > 1 && strcmp(argv[1], "dup") == 0;' \
     '  int udp = argc > 1 && strcmp(argv[1], "udp") == 0;' \
@@ -180,6 +194,20 @@ test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/thread.log")" -eq 1
 thread_owner=$(sed -n 's/^RESERVE \([0-9][0-9]*\) .*/\1/p' "$tmp_dir/thread.log" | head -n 1)
 thread_release=$(sed -n 's/^RELEASE \([0-9][0-9]*\) .*/\1/p' "$tmp_dir/thread.log" | head -n 1)
 test -n "$thread_owner" && test "$thread_owner" = "$thread_release"
+stop_control
+
+start_control "$tmp_dir/fcntl-dup.sock" "$tmp_dir/fcntl-dup.log"
+WSL_WIN_RELAY_CONTROL="$tmp_dir/fcntl-dup.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" fcntl-dup
+grep -q 'RESERVE .* tcp4 47134' "$tmp_dir/fcntl-dup.log"
+grep -q '^COMMIT ' "$tmp_dir/fcntl-dup.log"
+test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/fcntl-dup.log")" -eq 1
+stop_control
+
+start_control "$tmp_dir/close-range.sock" "$tmp_dir/close-range.log"
+WSL_WIN_RELAY_CONTROL="$tmp_dir/close-range.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" close-range
+grep -q 'RESERVE .* tcp4 47135' "$tmp_dir/close-range.log"
+grep -q '^COMMIT ' "$tmp_dir/close-range.log"
+test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/close-range.log")" -eq 1
 stop_control
 
 start_control "$tmp_dir/leader-sys-exit.sock" "$tmp_dir/leader-sys-exit.log"
