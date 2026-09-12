@@ -28,6 +28,8 @@ const (
 	MessageAttach
 	MessageAttachOK
 	MessageAttachError
+	MessageRegistrySummary
+	MessageResumeAck
 )
 
 // Message is a bounded control message for a broker/connector transport.
@@ -37,7 +39,7 @@ type Message struct {
 }
 
 func (m Message) validate() error {
-	if m.Type < MessageHello || m.Type > MessageAttachError {
+	if m.Type < MessageHello || m.Type > MessageResumeAck {
 		return fmt.Errorf("unknown attach message type %d", m.Type)
 	}
 	if len(m.Payload) > maxWirePayload {
@@ -59,6 +61,14 @@ func (m Message) validate() error {
 	case MessageAttachError:
 		if len(m.Payload) == 0 || len(m.Payload) > maxWireError {
 			return errors.New("attach error payload has invalid length")
+		}
+	case MessageRegistrySummary:
+		if _, err := DecodeSummary(m.Payload); err != nil {
+			return err
+		}
+	case MessageResumeAck:
+		if _, _, err := DecodeResumeAck(m.Payload); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -159,6 +169,139 @@ func DecodeAttachOK(payload []byte) (uint64, uint64, error) {
 		return 0, 0, errors.New("attach ok payload must contain 16 bytes")
 	}
 	return binary.BigEndian.Uint64(payload), binary.BigEndian.Uint64(payload[8:]), nil
+}
+
+type EntryKind byte
+
+const (
+	EntryStream EntryKind = iota + 1
+	EntryReverseListener
+	EntryDatagram
+)
+
+type EntryState byte
+
+const (
+	EntryActive EntryState = iota + 1
+	EntryClosed
+)
+
+type RegistryEntry struct {
+	ID    uint64
+	Kind  EntryKind
+	State EntryState
+}
+
+type Summary struct {
+	Epoch   uint64
+	Entries []RegistryEntry
+}
+
+const (
+	maxSummaryEntries = 4096
+	summaryHeaderSize = 10
+	summaryEntrySize  = 10
+)
+
+func (e RegistryEntry) validate() error {
+	if e.ID == 0 {
+		return errors.New("registry entry id must be non-zero")
+	}
+	if e.Kind < EntryStream || e.Kind > EntryDatagram {
+		return fmt.Errorf("unknown registry entry kind %d", e.Kind)
+	}
+	if e.State < EntryActive || e.State > EntryClosed {
+		return fmt.Errorf("unknown registry entry state %d", e.State)
+	}
+	return nil
+}
+
+// EncodeSummary produces a deterministic epoch plus stable entry identifiers.
+// Entries must be supplied in ascending ID order; rejecting unsorted input
+// prevents peers from observing nondeterministic summaries.
+func EncodeSummary(summary Summary) ([]byte, error) {
+	if len(summary.Entries) > maxSummaryEntries || len(summary.Entries) > (maxWirePayload-summaryHeaderSize)/summaryEntrySize {
+		return nil, errors.New("registry summary contains too many entries")
+	}
+	payload := make([]byte, summaryHeaderSize+summaryEntrySize*len(summary.Entries))
+	binary.BigEndian.PutUint64(payload, summary.Epoch)
+	binary.BigEndian.PutUint16(payload[8:], uint16(len(summary.Entries)))
+	var previous uint64
+	for index, entry := range summary.Entries {
+		if err := entry.validate(); err != nil {
+			return nil, err
+		}
+		if index > 0 && entry.ID <= previous {
+			return nil, errors.New("registry summary entry ids must be strictly increasing")
+		}
+		previous = entry.ID
+		offset := summaryHeaderSize + summaryEntrySize*index
+		binary.BigEndian.PutUint64(payload[offset:], entry.ID)
+		payload[offset+8] = byte(entry.Kind)
+		payload[offset+9] = byte(entry.State)
+	}
+	return payload, nil
+}
+
+func DecodeSummary(payload []byte) (Summary, error) {
+	if len(payload) < summaryHeaderSize || (len(payload)-summaryHeaderSize)%summaryEntrySize != 0 {
+		return Summary{}, errors.New("registry summary has invalid length")
+	}
+	count := int(binary.BigEndian.Uint16(payload[8:]))
+	if count > maxSummaryEntries || len(payload) != summaryHeaderSize+summaryEntrySize*count {
+		return Summary{}, errors.New("registry summary has invalid entry count")
+	}
+	summary := Summary{Epoch: binary.BigEndian.Uint64(payload), Entries: make([]RegistryEntry, count)}
+	for index := range summary.Entries {
+		offset := summaryHeaderSize + summaryEntrySize*index
+		entry := RegistryEntry{ID: binary.BigEndian.Uint64(payload[offset:]), Kind: EntryKind(payload[offset+8]), State: EntryState(payload[offset+9])}
+		if err := entry.validate(); err != nil {
+			return Summary{}, err
+		}
+		if index > 0 && entry.ID <= summary.Entries[index-1].ID {
+			return Summary{}, errors.New("registry summary entry ids are not strictly increasing")
+		}
+		summary.Entries[index] = entry
+	}
+	return summary, nil
+}
+
+func EncodeResumeAck(epoch uint64, ids []uint64) ([]byte, error) {
+	if len(ids) > maxSummaryEntries || len(ids) > (maxWirePayload-10)/8 {
+		return nil, errors.New("resume acknowledgement contains too many entries")
+	}
+	payload := make([]byte, 10+8*len(ids))
+	binary.BigEndian.PutUint64(payload, epoch)
+	binary.BigEndian.PutUint16(payload[8:], uint16(len(ids)))
+	var previous uint64
+	for index, id := range ids {
+		if id == 0 || (index > 0 && id <= previous) {
+			return nil, errors.New("resume acknowledgement ids must be strictly increasing and non-zero")
+		}
+		previous = id
+		binary.BigEndian.PutUint64(payload[10+8*index:], id)
+	}
+	return payload, nil
+}
+
+func DecodeResumeAck(payload []byte) (uint64, []uint64, error) {
+	if len(payload) < 10 || (len(payload)-10)%8 != 0 {
+		return 0, nil, errors.New("resume acknowledgement has invalid length")
+	}
+	count := int(binary.BigEndian.Uint16(payload[8:]))
+	if count > maxSummaryEntries || len(payload) != 10+8*count {
+		return 0, nil, errors.New("resume acknowledgement has invalid entry count")
+	}
+	ids := make([]uint64, count)
+	var previous uint64
+	for index := range ids {
+		id := binary.BigEndian.Uint64(payload[10+8*index:])
+		if id == 0 || (index > 0 && id <= previous) {
+			return 0, nil, errors.New("resume acknowledgement ids are not strictly increasing and non-zero")
+		}
+		ids[index], previous = id, id
+	}
+	return binary.BigEndian.Uint64(payload), ids, nil
 }
 
 // ClientHandshake performs HELLO -> ATTACH and waits for ATTACH_OK.

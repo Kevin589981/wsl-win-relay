@@ -47,6 +47,54 @@ func TestWireRejectsMalformedMessages(t *testing.T) {
 	}
 }
 
+func TestSummaryAndResumeAckRoundTrip(t *testing.T) {
+	summary := Summary{Epoch: 9, Entries: []RegistryEntry{
+		{ID: 4, Kind: EntryStream, State: EntryActive},
+		{ID: 11, Kind: EntryReverseListener, State: EntryClosed},
+	}}
+	payload, err := EncodeSummary(summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeSummary(payload)
+	if err != nil || decoded.Epoch != summary.Epoch || len(decoded.Entries) != 2 || decoded.Entries[1] != summary.Entries[1] {
+		t.Fatalf("summary=%+v err=%v", decoded, err)
+	}
+	ackPayload, err := EncodeResumeAck(9, []uint64{4, 11})
+	if err != nil {
+		t.Fatal(err)
+	}
+	epoch, ids, err := DecodeResumeAck(ackPayload)
+	if err != nil || epoch != 9 || len(ids) != 2 || ids[1] != 11 {
+		t.Fatalf("ack epoch=%d ids=%v err=%v", epoch, ids, err)
+	}
+	var wire bytes.Buffer
+	if err := Write(&wire, Message{Type: MessageRegistrySummary, Payload: payload}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Write(&wire, Message{Type: MessageResumeAck, Payload: ackPayload}); err != nil {
+		t.Fatal(err)
+	}
+	if message, err := Read(&wire); err != nil || message.Type != MessageRegistrySummary {
+		t.Fatalf("summary message=%+v err=%v", message, err)
+	}
+	if message, err := Read(&wire); err != nil || message.Type != MessageResumeAck {
+		t.Fatalf("ack message=%+v err=%v", message, err)
+	}
+}
+
+func TestSummaryRejectsUnsortedAndInvalidEntries(t *testing.T) {
+	if _, err := EncodeSummary(Summary{Entries: []RegistryEntry{{ID: 2, Kind: EntryStream, State: EntryActive}, {ID: 1, Kind: EntryStream, State: EntryActive}}}); err == nil {
+		t.Fatal("unsorted summary was accepted")
+	}
+	if _, err := EncodeSummary(Summary{Entries: []RegistryEntry{{ID: 1, Kind: 9, State: EntryActive}}}); err == nil {
+		t.Fatal("invalid summary kind was accepted")
+	}
+	if _, err := EncodeResumeAck(1, []uint64{2, 2}); err == nil {
+		t.Fatal("duplicate resume id was accepted")
+	}
+}
+
 func TestHandshakeInstallsGenerationAndReturnsPeerState(t *testing.T) {
 	registry, err := NewWithToken([]byte("secret"))
 	if err != nil {
