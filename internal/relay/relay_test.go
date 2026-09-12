@@ -489,6 +489,23 @@ func TestReverseForwardCloseBeforeCommit(t *testing.T) {
 	_ = clientSide.Close()
 }
 
+func TestRemoveListenerCancelsPendingOpen(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	listenerCtx, listenerCancel := context.WithCancel(ctx)
+	server := &Server{listeners: make(map[uint32]*serverListener)}
+	server.listeners[7] = &serverListener{cancel: listenerCancel, commit: make(chan struct{})}
+	server.removeListener(7)
+	select {
+	case <-listenerCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("pending listener was not canceled")
+	}
+	if _, exists := server.listeners[7]; exists {
+		t.Fatal("pending listener remained registered")
+	}
+}
+
 func TestReverseUDPForwardRejectsOccupiedWindowsPort(t *testing.T) {
 	clientSide, serverSide := net.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())

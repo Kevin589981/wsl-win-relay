@@ -362,14 +362,23 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 		}
 		autoResetDone = make(chan error, 1)
 		go func() {
+			var observed sessionClient
 			for {
-				_, changed := dialer.current()
+				current, changed := dialer.current()
+				if current != observed {
+					// The initial dialer.set closes its bootstrap channel. There
+					// is no old session to reset at that point; only a transition
+					// away from an observed client invalidates its mappings.
+					if observed != nil {
+						watcher.Reset()
+						if udpWatcher != nil {
+							udpWatcher.Reset()
+						}
+					}
+					observed = current
+				}
 				select {
 				case <-changed:
-					watcher.Reset()
-					if udpWatcher != nil {
-						udpWatcher.Reset()
-					}
 				case <-ctx.Done():
 					autoResetDone <- nil
 					return

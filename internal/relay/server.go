@@ -467,21 +467,35 @@ func (s *Server) openListener(id uint32, addr string) {
 		_ = s.send(protocol.Frame{Type: protocol.TypeListenError, StreamID: id, Payload: []byte("invalid listen request")})
 		return
 	}
+	ctx, cancel := context.WithCancel(s.ctx)
+	listener := &serverListener{cancel: cancel, commit: make(chan struct{})}
+	s.mu.Lock()
+	if _, exists := s.listeners[id]; exists {
+		s.mu.Unlock()
+		cancel()
+		return
+	}
+	s.listeners[id] = listener
+	s.mu.Unlock()
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
+		s.mu.Lock()
+		if s.listeners[id] == listener {
+			delete(s.listeners, id)
+		}
+		s.mu.Unlock()
+		cancel()
 		_ = s.send(protocol.Frame{Type: protocol.TypeListenError, StreamID: id, Payload: []byte(err.Error())})
 		return
 	}
-	ctx, cancel := context.WithCancel(s.ctx)
-	listener := &serverListener{listener: ln, cancel: cancel, commit: make(chan struct{})}
 	s.mu.Lock()
-	if _, exists := s.listeners[id]; exists {
+	if s.listeners[id] != listener || ctx.Err() != nil {
 		s.mu.Unlock()
 		cancel()
 		_ = ln.Close()
 		return
 	}
-	s.listeners[id] = listener
+	listener.listener = ln
 	s.mu.Unlock()
 	if err := s.send(protocol.Frame{Type: protocol.TypeListenOK, StreamID: id}); err != nil {
 		s.removeListener(id)
@@ -535,7 +549,9 @@ func (s *Server) removeListener(id uint32) {
 	s.mu.Unlock()
 	if l != nil {
 		l.cancel()
-		_ = l.listener.Close()
+		if l.listener != nil {
+			_ = l.listener.Close()
+		}
 	}
 }
 
