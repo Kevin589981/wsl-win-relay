@@ -673,7 +673,17 @@ func (s *Server) send(frame protocol.Frame) error {
 		if contextTransport, ok := s.transport.(interface {
 			WriteFrameContext(context.Context, protocol.Frame) error
 		}); ok {
-			return contextTransport.WriteFrameContext(ctx, frame)
+			for {
+				err := contextTransport.WriteFrameContext(ctx, frame)
+				if !errors.Is(err, framed.ErrDetached) {
+					return err
+				}
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+				}
+			}
 		}
 		for {
 			err := s.transport.WriteFrame(frame)
