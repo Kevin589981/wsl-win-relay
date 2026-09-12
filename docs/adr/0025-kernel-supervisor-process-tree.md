@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted, process and ordinary thread support implemented; unusual teardown follow-up
+Accepted, process/thread/vfork support implemented; unusual teardown follow-up
 
 ## Context
 
@@ -29,8 +29,8 @@ work follows the same model:
 - `PTRACE_O_TRACEFORK` and `PTRACE_O_TRACECLONE` attach process-style children
   before they can execute another syscall. The event handler clones inherited
   fd state and issues `ADOPT child-pid lease` once per inherited lease.
-- `vfork()` remains fail-closed until its shared-address-space lifecycle
-  semantics are implemented. Ordinary `CLONE_THREAD` tasks share the binding
+- `vfork()` uses `PTRACE_EVENT_VFORK` and a copied process group, so child-side
+  `bind/listen` before `_exit` is coordinated. Ordinary `CLONE_THREAD` tasks share the binding
   table and migrate the group owner at `PTRACE_EVENT_EXIT`; unusual exec and
   signal interactions remain follow-up validation.
 - Lease teardown will use owner-scoped `RELEASE pid lease`; a lease is closed
@@ -39,8 +39,8 @@ work follows the same model:
 - `CLONE_THREAD` tasks share the process lease owner and fd/binding table but
   keep separate pending-syscall state. Group exit releases the binding table
   only after the final task exits; a leader exit migrates ownership first.
-- `vfork()` remains fail-closed until the shared-address-space and exec/
-  `_exit` lifecycle is modeled; it must not be treated as an ordinary fork.
+- `vfork()` child-side libc behavior remains outside the contract; direct
+  syscall-safe operations through `_exit` are the supported pattern.
 - The adapter remains opt-in. Unsupported architectures and unrecognized
   ptrace events fail closed with a diagnostic rather than silently falling back
   to polling.

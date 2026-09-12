@@ -536,7 +536,9 @@ static int handle_entry(struct user_regs_struct *regs) {
         fprintf(stderr, "strict-supervisor: syscall %lu\n", syscall_number);
     }
     if (syscall_number == SYS_vfork) {
-        return stop_syscall(regs, ENOTSUP);
+        pending_call.kind = PENDING_CREATE;
+        pending_call.type = 0;
+        return 0;
     }
     if (syscall_number == SYS_fork) {
         pending_call.kind = PENDING_CREATE;
@@ -727,7 +729,7 @@ static int trace_target(void) {
         return -1;
     }
     active_task = root;
-    long options = PTRACE_O_EXITKILL | PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEFORK | PTRACE_O_TRACECLONE | PTRACE_O_TRACEEXIT;
+    long options = PTRACE_O_EXITKILL | PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEFORK | PTRACE_O_TRACEVFORK | PTRACE_O_TRACECLONE | PTRACE_O_TRACEEXIT;
     if (ptrace(PTRACE_SETOPTIONS, root_pid, 0, options) < 0 ||
         ptrace(PTRACE_SYSCALL, root_pid, 0, 0) < 0) {
         return -1;
@@ -769,7 +771,7 @@ static int trace_target(void) {
         if (!WIFSTOPPED(status)) continue;
         int signal_number = WSTOPSIG(status);
         unsigned event = (unsigned)status >> 16;
-        if (signal_number == SIGTRAP && (event == PTRACE_EVENT_FORK || event == PTRACE_EVENT_CLONE)) {
+        if (signal_number == SIGTRAP && (event == PTRACE_EVENT_FORK || event == PTRACE_EVENT_VFORK || event == PTRACE_EVENT_CLONE)) {
             unsigned long child_value = 0;
             if (ptrace(PTRACE_GETEVENTMSG, pid, 0, &child_value) < 0) return -1;
             int thread_child = event == PTRACE_EVENT_CLONE && task->pending.kind == PENDING_CREATE && task->pending.type != 0;

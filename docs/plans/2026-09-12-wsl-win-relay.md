@@ -68,7 +68,8 @@
 - [x] Parent-side `vfork()` lease adoption is covered by the native lifecycle
       smoke test; child-side pre-exec networking remains unsupported by the
       shared-address-space contract.
-- [ ] Kernel-level coverage for unusual thread-group ownership and vfork,
+- [ ] Kernel-level coverage for unusual thread-group ownership and non-direct
+      vfork libc interactions,
       and non-amd64 targets; setuid/setgid binaries remain intentionally
       rejected because neither launcher path can preserve their semantics.
 - [x] Phase-one opt-in ptrace supervisor (`wsl-win-relay-run --kernel`) now
@@ -81,8 +82,9 @@
       `ADOPT`/`RELEASE` semantics define the implementation baseline for
       static child-process support.
 - [x] Static process-style `fork()`/`clone(SIGCHLD)` children are now traced,
-      inherit fd state, and adopt/release Windows lease ownership; vfork and
-      unusual thread-group ownership remain fail-closed follow-up boundaries;
+      inherit fd state, and adopt/release Windows lease ownership; direct
+      vfork child operations are now traced, while unusual thread-group
+      ownership remains a fail-closed follow-up boundary;
       non-thread `clone3()` and ordinary `CLONE_THREAD` are traced when
       supported.
 - [x] The strict launcher now fails closed for directly executed static ELF

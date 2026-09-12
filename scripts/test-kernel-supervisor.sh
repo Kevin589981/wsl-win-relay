@@ -51,6 +51,17 @@ printf '%s\n' \
     '    if (child == 0) { usleep(100000); close(fd); _exit(0); }' \
     '    close(fd); return waitpid((pid_t)child, 0, 0) == (pid_t)child ? 0 : 6;' \
     '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "vfork") == 0) {' \
+    '    pid_t child = vfork();' \
+    '    if (child < 0) return 7;' \
+    '    if (child == 0) {' \
+    '      int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0};' \
+    '      address.sin_family = AF_INET; address.sin_port = htons(47133); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
+    '      if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) _exit(2);' \
+    '      close(fd); _exit(0);' \
+    '    }' \
+    '    return waitpid(child, 0, 0) == child ? 0 : 6;' \
+    '  }' \
     '  if (argc > 1 && strcmp(argv[1], "thread") == 0) {' \
     '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0}; pthread_t thread;' \
     '    address.sin_family = AF_INET; address.sin_port = htons(47130); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
@@ -152,6 +163,13 @@ if [ "$clone3_status" -eq 0 ]; then
     grep -q 'RESERVE .* tcp4 47129' "$tmp_dir/clone3.log"
     grep -q '^ADOPT ' "$tmp_dir/clone3.log"
 fi
+stop_control
+
+start_control "$tmp_dir/vfork.sock" "$tmp_dir/vfork.log"
+WSL_WIN_RELAY_CONTROL="$tmp_dir/vfork.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" vfork
+grep -q 'RESERVE .* tcp4 47133' "$tmp_dir/vfork.log"
+grep -q '^COMMIT ' "$tmp_dir/vfork.log"
+grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/vfork.log"
 stop_control
 
 start_control "$tmp_dir/thread.sock" "$tmp_dir/thread.log"
