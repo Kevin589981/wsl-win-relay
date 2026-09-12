@@ -147,6 +147,9 @@
 - [x] Automatic mapping refusals use bounded exponential retry backoff instead
       of issuing a Windows bind attempt on every procfs scan; session resets
       clear the backoff immediately.
+- [x] Logical relay object closes use bounded best-effort control-frame writes,
+      so detached broker links cannot block shutdown while waiting for a future
+      connector attachment.
 - [x] Broker-mode can be selected from the persistent JSON configuration while
       attach credentials remain environment-only.
 - [x] Optional systemd user broker unit, private token file, and bounded broker

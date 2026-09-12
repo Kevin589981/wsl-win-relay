@@ -20,6 +20,11 @@ var ErrClientAlreadyRunning = errors.New("relay client is already running")
 var ErrMissingCapabilities = errors.New("Windows relay is missing required capabilities")
 var ErrPeerRestarted = errors.New("relay peer broker restarted")
 
+// Closing a logical relay object must not stall service shutdown while a
+// reconnecting Link has no current attachment. Close frames are advisory once
+// the peer is detached, so bound their best-effort delivery.
+const closeFrameTimeout = 250 * time.Millisecond
+
 type Client struct {
 	rw                io.ReadWriter
 	transport         frameTransport
@@ -400,6 +405,12 @@ func (c *Client) write(frame protocol.Frame) error {
 	return c.writeContext(context.Background(), frame)
 }
 
+func (c *Client) writeClose(frame protocol.Frame) {
+	ctx, cancel := context.WithTimeout(context.Background(), closeFrameTimeout)
+	defer cancel()
+	_ = c.writeContext(ctx, frame)
+}
+
 func (c *Client) writeContext(ctx context.Context, frame protocol.Frame) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
@@ -723,7 +734,7 @@ func (p *clientPacketConn) Close() error {
 	p.closeOnce.Do(func() {
 		p.client.removeDatagram(p.id)
 		p.fail(io.EOF)
-		_ = p.client.write(protocol.Frame{Type: protocol.TypeDatagramClose, StreamID: p.id})
+		p.client.writeClose(protocol.Frame{Type: protocol.TypeDatagramClose, StreamID: p.id})
 	})
 	return nil
 }
@@ -903,7 +914,7 @@ func (l *clientReverseDatagram) Close() error {
 		for _, flow := range flows {
 			flow.close()
 		}
-		_ = l.client.write(protocol.Frame{Type: protocol.TypeListenDatagramClose, StreamID: l.id})
+		l.client.writeClose(protocol.Frame{Type: protocol.TypeListenDatagramClose, StreamID: l.id})
 	})
 	return nil
 }
@@ -953,7 +964,7 @@ func (l *clientListener) Close() error {
 	l.once.Do(func() {
 		l.cancel()
 		l.client.removeListener(l.id)
-		_ = l.client.write(protocol.Frame{Type: protocol.TypeListenClose, StreamID: l.id})
+		l.client.writeClose(protocol.Frame{Type: protocol.TypeListenClose, StreamID: l.id})
 	})
 	return nil
 }
@@ -1205,7 +1216,7 @@ func (s *clientStream) Close() error {
 	s.closeOnce.Do(func() {
 		s.client.removeStream(s.id)
 		s.fail(io.EOF)
-		_ = s.client.write(protocol.Frame{Type: protocol.TypeClose, StreamID: s.id})
+		s.client.writeClose(protocol.Frame{Type: protocol.TypeClose, StreamID: s.id})
 	})
 	return nil
 }

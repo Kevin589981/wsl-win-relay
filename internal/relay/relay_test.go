@@ -144,6 +144,33 @@ func TestAttachedClientAndServerPreserveStreamAcrossReplacement(t *testing.T) {
 	}
 }
 
+func TestAttachedObjectCloseDoesNotWaitForReplacement(t *testing.T) {
+	client := NewClientWithLink(framed.New())
+	listenerCtx, listenerCancel := context.WithCancel(context.Background())
+	listener := &clientListener{id: 1, client: client, ctx: listenerCtx, cancel: listenerCancel, ready: make(chan error, 1)}
+	stream := newClientStream(client, 3, "detached.example:443")
+	packet := &clientPacketConn{client: client, id: 5, ready: make(chan error, 1), incoming: make(chan packetEvent, 1), done: make(chan struct{}), deadlineChanged: make(chan struct{})}
+	reverseDatagram := newClientReverseDatagram(client, 7, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 5353}, context.Background())
+
+	for name, closeObject := range map[string]func(){
+		"listener":         func() { _ = listener.Close() },
+		"stream":           func() { _ = stream.Close() },
+		"packet":           func() { _ = packet.Close() },
+		"reverse-datagram": func() { _ = reverseDatagram.Close() },
+	} {
+		done := make(chan struct{})
+		go func() {
+			closeObject()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatalf("detached %s close blocked waiting for replacement", name)
+		}
+	}
+}
+
 func TestHandshakeIsIdempotent(t *testing.T) {
 	clientSide, serverSide := net.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())
