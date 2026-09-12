@@ -819,16 +819,9 @@ func (s *clientStream) handle(frame protocol.Frame) {
 			s.fail(errors.New("invalid stream window update"))
 		}
 	case protocol.TypeHalfClose:
-		sent := false
 		select {
 		case s.incoming <- streamEvent{err: io.EOF}:
-			sent = true
 		case <-s.client.closed:
-		}
-		if sent {
-			s.stateMu.Lock()
-			s.readEOF = true
-			s.stateMu.Unlock()
 		}
 	case protocol.TypeClose, protocol.TypeReset:
 		err := io.EOF
@@ -922,6 +915,11 @@ func (s *clientStream) Read(p []byte) (int, error) {
 				continue
 			}
 			if event.err != nil {
+				if errors.Is(event.err, io.EOF) {
+					s.stateMu.Lock()
+					s.readEOF = true
+					s.stateMu.Unlock()
+				}
 				return 0, event.err
 			}
 		case <-timer:

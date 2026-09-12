@@ -730,7 +730,7 @@ func TestStreamEOFIsPersistentAfterHalfClose(t *testing.T) {
 	}
 }
 
-func TestHalfClosePublishesEOFBeforeMarkingReadState(t *testing.T) {
+func TestHalfCloseMarksReadStateWhenEOFIsConsumed(t *testing.T) {
 	client := NewClient(&discardReadWriter{})
 	stream := newClientStream(client, 1, "example:1")
 	stream.incoming = make(chan streamEvent)
@@ -745,16 +745,12 @@ func TestHalfClosePublishesEOFBeforeMarkingReadState(t *testing.T) {
 	readEOF := stream.readEOF
 	stream.stateMu.Unlock()
 	if readEOF {
-		t.Fatal("read EOF state was published before the EOF event")
+		t.Fatal("read EOF state was published before the EOF event was consumed")
 	}
 
-	select {
-	case event := <-stream.incoming:
-		if event.err != io.EOF {
-			t.Fatalf("event error=%v, want EOF", event.err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("half-close event was not published")
+	buffer := make([]byte, 1)
+	if _, err := stream.Read(buffer); err != io.EOF {
+		t.Fatalf("first read: %v", err)
 	}
 	select {
 	case <-done:
@@ -765,7 +761,10 @@ func TestHalfClosePublishesEOFBeforeMarkingReadState(t *testing.T) {
 	readEOF = stream.readEOF
 	stream.stateMu.Unlock()
 	if !readEOF {
-		t.Fatal("read EOF state was not published after the event")
+		t.Fatal("read EOF state was not published after consuming the event")
+	}
+	if _, err := stream.Read(buffer); err != io.EOF {
+		t.Fatalf("second read: %v", err)
 	}
 }
 
