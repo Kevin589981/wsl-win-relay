@@ -225,6 +225,34 @@ func TestWatcherOpenTimeoutReleasesBlockedAttempt(t *testing.T) {
 	}
 }
 
+func TestWatcherDropsMappingOpenedBeforeReset(t *testing.T) {
+	scanner := &sequenceScanner{values: [][]Listener{{{Network: "tcp4", Port: 8000}}}}
+	opener := &delayedOpenOpener{started: make(chan struct{}), release: make(chan struct{}), closed: make(chan struct{})}
+	w := &Watcher{Scanner: scanner, Opener: opener, Logger: log.New(io.Discard, "", 0), active: make(map[listenerKey]activeMapping)}
+	done := make(chan error, 1)
+	go func() { done <- w.sync(context.Background()) }()
+	select {
+	case <-opener.started:
+	case <-time.After(time.Second):
+		t.Fatal("opener did not start")
+	}
+	w.Reset()
+	close(opener.release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-opener.closed:
+	case <-time.After(time.Second):
+		t.Fatal("stale mapping was not closed")
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if len(w.active) != 0 {
+		t.Fatalf("stale mapping was published: %#v", w.active)
+	}
+}
+
 type sequenceScanner struct {
 	mu     sync.Mutex
 	values [][]Listener
@@ -278,6 +306,33 @@ type timeoutOpener struct{}
 func (timeoutOpener) ReverseForward(ctx context.Context, _, _ string) (io.Closer, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()
+}
+
+type delayedOpenOpener struct {
+	started chan struct{}
+	release chan struct{}
+	closed  chan struct{}
+}
+
+func (*delayedOpenOpener) Scan() ([]Listener, error) { return nil, nil }
+
+func (o *delayedOpenOpener) ReverseForward(context.Context, string, string) (io.Closer, error) {
+	close(o.started)
+	<-o.release
+	return delayedCloser{closed: o.closed}, nil
+}
+
+type delayedCloser struct {
+	closed chan struct{}
+}
+
+func (c delayedCloser) Close() error {
+	select {
+	case <-c.closed:
+	default:
+		close(c.closed)
+	}
+	return nil
 }
 
 type recordingDatagramOpener struct {

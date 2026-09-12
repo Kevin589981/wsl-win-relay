@@ -98,6 +98,7 @@ type Watcher struct {
 	mu           sync.Mutex
 	active       map[listenerKey]activeMapping
 	rejected     map[listenerKey]bool
+	generation   uint64
 }
 
 type listenerKey struct {
@@ -193,6 +194,7 @@ func (w *Watcher) sync(ctx context.Context) error {
 	for key, listener := range desired {
 		w.mu.Lock()
 		active, exists := w.active[key]
+		generation := w.generation
 		w.mu.Unlock()
 		if exists && active.listener == listener {
 			continue
@@ -217,6 +219,15 @@ func (w *Watcher) sync(ctx context.Context) error {
 		}
 		closer, openErr := w.Opener.ReverseForward(openCtx, windowsAddr, wslTarget)
 		cancelOpen()
+		w.mu.Lock()
+		staleGeneration := generation != w.generation
+		w.mu.Unlock()
+		if staleGeneration {
+			// Reset may have replaced the relay session while the opener was
+			// blocked. Never publish a mapping created by that old session.
+			w.closeMapping(closer)
+			continue
+		}
 		if openErr != nil {
 			w.mu.Lock()
 			firstRejection := !w.rejected[key]
@@ -265,6 +276,7 @@ func (w *Watcher) closeAll() {
 	w.mu.Lock()
 	active := w.active
 	w.active = make(map[listenerKey]activeMapping)
+	w.generation++
 	w.mu.Unlock()
 	for _, mapping := range active {
 		w.closeMapping(mapping.closer)
@@ -278,6 +290,7 @@ func (w *Watcher) Reset() {
 	active := w.active
 	w.active = make(map[listenerKey]activeMapping)
 	w.rejected = make(map[listenerKey]bool)
+	w.generation++
 	w.mu.Unlock()
 	for _, mapping := range active {
 		w.closeMapping(mapping.closer)

@@ -81,6 +81,8 @@
 - [x] Broker-mode preserves a procfs-discovered automatic WSL listener mapping
       through connector replacement; the integration test exercises the
       Windows-facing listener after reconnect.
+- [x] Automatic TCP/UDP watcher mappings are generation-scoped, so an opener
+      that completes after relay reset cannot republish a stale-session mapping.
 - [x] Broker-mode can be selected from the persistent JSON configuration while
       attach credentials remain environment-only.
 - [x] Optional systemd user broker unit, private token file, and bounded broker
