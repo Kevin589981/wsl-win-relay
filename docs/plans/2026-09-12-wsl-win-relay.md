@@ -68,8 +68,9 @@
 - [x] Parent-side `vfork()` lease adoption is covered by the native lifecycle
       smoke test; child-side pre-exec networking remains unsupported by the
       shared-address-space contract.
-- [ ] Kernel-level coverage for static binaries and unusual thread-group
-      ownership patterns; static/setuid binaries remain outside LD_PRELOAD.
+- [ ] Kernel-level coverage for unusual thread-group ownership, vfork/clone3,
+      and non-amd64 targets; setuid/setgid binaries remain intentionally
+      rejected because neither launcher path can preserve their semantics.
 - [x] Phase-one opt-in ptrace supervisor (`wsl-win-relay-run --kernel`) now
       coordinates direct single-process static amd64 TCP/UDP `bind/listen`
       syscalls through the existing lease protocol; it rejects fork/clone/

@@ -372,8 +372,8 @@ fails early with a diagnostic if the relay service is not running.
 It also rejects directly executed static ELF and setuid/setgid targets before
 launch. Those targets cannot load `LD_PRELOAD`, so allowing them through would
 silently disable the Windows-before-WSL bind contract. Scripts and other
-non-ELF entrypoints remain allowed; true static-binary coverage requires a
-broader kernel-aware lifecycle adapter. An opt-in ptrace adapter is now available
+non-ELF entrypoints remain allowed; remaining static-binary coverage is
+provided by a broader kernel-aware lifecycle adapter. An opt-in ptrace adapter is now available
 for Linux amd64 targets, including process-style `fork()` children:
 
 ```bash
@@ -385,8 +385,9 @@ same control socket. Process-style `fork()` and `clone(SIGCHLD)` children are
 attached and inherit lease ownership with `ADOPT`/`RELEASE`. The kernel adapter
 is deliberately opt-in and currently rejects `vfork()`, `clone3()`, and
 `CLONE_THREAD` with `ENOTSUP`; thread-group descriptor inheritance and
-non-amd64 targets remain unsupported. Use the default interposer for
-dynamically linked applications.
+non-amd64 targets remain unsupported. Setuid/setgid targets are rejected in
+both launcher modes because ptrace cannot preserve their privilege semantics.
+Use the default interposer for dynamically linked applications.
 
 Before the application's libc `listen()` succeeds, the wrapper reserves
 Windows `127.0.0.1:8000` for IPv4 or `[::1]:8000` for IPv6. If Windows reports that the address is already in

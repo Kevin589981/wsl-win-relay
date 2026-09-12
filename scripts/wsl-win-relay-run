@@ -29,6 +29,20 @@ if [ "$kernel_mode" -eq 1 ]; then
         echo "kernel strict supervisor not found: $kernel_supervisor (run scripts/build-wsl.sh)" >&2
         exit 1
     fi
+    kernel_target=$1
+    case "$kernel_target" in
+        */*) kernel_target_path=$kernel_target ;;
+        *) kernel_target_path=$(command -v "$kernel_target" 2>/dev/null || true) ;;
+    esac
+    if [ -f "$kernel_target_path" ]; then
+        kernel_permissions=$(stat -c '%A' "$kernel_target_path" 2>/dev/null || stat -f '%Sp' "$kernel_target_path" 2>/dev/null || true)
+        case "$kernel_permissions" in
+            *s*)
+                echo "kernel strict supervisor refuses setuid/setgid target: $kernel_target_path" >&2
+                exit 1
+                ;;
+        esac
+    fi
     unset LD_PRELOAD
     export WSL_WIN_RELAY_CONTROL=$control
     exec "$kernel_supervisor" "$@"
