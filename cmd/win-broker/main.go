@@ -17,6 +17,7 @@ import (
 type options struct {
 	endpoint      string
 	tokenHex      string
+	tokenFile     string
 	upstreamProxy string
 	supervisor    bool
 	worker        bool
@@ -80,6 +81,7 @@ func parseOptions(args []string) (options, error) {
 	set.SetOutput(io.Discard)
 	set.StringVar(&opts.endpoint, "endpoint", opts.endpoint, "per-user local IPC endpoint")
 	set.StringVar(&opts.tokenHex, "token-hex", opts.tokenHex, "attach token in hexadecimal (prefer WSL_WIN_RELAY_ATTACH_TOKEN)")
+	set.StringVar(&opts.tokenFile, "token-file", "", "private file containing the hexadecimal attach token")
 	set.StringVar(&opts.upstreamProxy, "upstream-proxy", opts.upstreamProxy, "optional HTTP CONNECT or SOCKS5 proxy URL")
 	set.BoolVar(&opts.supervisor, "supervise", false, "host-level supervisor mode; restart the frontend after a crash")
 	set.BoolVar(&opts.worker, "worker", false, "internal socket-owning worker mode")
@@ -92,6 +94,13 @@ func parseOptions(args []string) (options, error) {
 	}
 	if set.NArg() != 0 {
 		return options{}, errors.New("unexpected arguments: " + strings.Join(set.Args(), " "))
+	}
+	if opts.tokenFile != "" {
+		loaded, err := loadTokenFile(opts.tokenFile)
+		if err != nil {
+			return options{}, err
+		}
+		opts.tokenHex = loaded
 	}
 	if opts.endpoint == "" || opts.tokenHex == "" {
 		return options{}, errors.New("endpoint and token-hex are required")

@@ -88,6 +88,52 @@ func TestConnectCancellationClosesInProgressHandshake(t *testing.T) {
 	}
 }
 
+func TestConnectWithRetryWaitsForBrokerEndpoint(t *testing.T) {
+	endpoint := testEndpoint(t)
+	registry, err := attach.NewWithToken([]byte("secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverDone := make(chan error, 1)
+	go func() {
+		time.Sleep(40 * time.Millisecond)
+		listener, listenErr := localipc.Listen(endpoint)
+		if listenErr != nil {
+			serverDone <- listenErr
+			return
+		}
+		defer listener.Close()
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			serverDone <- acceptErr
+			return
+		}
+		defer conn.Close()
+		_, _, _, handshakeErr := attach.ServerResumeHandshake(conn, registry, 0, attach.Summary{})
+		serverDone <- handshakeErr
+	}()
+	session, err := connectWithRetry(context.Background(), Config{Endpoint: endpoint, Token: []byte("secret")}, time.Second, 10*time.Millisecond, 40*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = session.Close()
+	if err := <-serverDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestConnectWithRetryDoesNotRetryRejectedAttach(t *testing.T) {
+	if isRetryableConnectError(attach.ErrRemoteAttach) {
+		t.Fatal("remote attach rejection must be terminal")
+	}
+	if isRetryableConnectError(ErrInvalidConfig) {
+		t.Fatal("invalid configuration must be terminal")
+	}
+	if !isRetryableConnectError(errors.New("endpoint unavailable")) {
+		t.Fatal("transport failure must be retryable")
+	}
+}
+
 func testEndpoint(t *testing.T) string {
 	t.Helper()
 	if runtime.GOOS == "windows" {

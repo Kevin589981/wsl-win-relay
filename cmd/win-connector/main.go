@@ -34,7 +34,7 @@ func main() {
 	token, _ := hex.DecodeString(opts.tokenHex)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	session, err := connector.Connect(ctx, connector.Config{Endpoint: opts.endpoint, Token: token, LastEpoch: opts.lastEpoch})
+	session, err := connector.ConnectWithRetry(ctx, connector.Config{Endpoint: opts.endpoint, Token: token, LastEpoch: opts.lastEpoch})
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
 			logger.Printf("attach: %v", err)

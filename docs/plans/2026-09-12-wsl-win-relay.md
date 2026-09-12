@@ -140,6 +140,13 @@
 - [x] Broker executable provides a host-level `-supervise` parent that restarts
       a crashed frontend with bounded backoff; the broker user-service wrapper
       uses it by default while preserving status-2 configuration failures.
+- [x] Broker supervisor and internal roles accept a protected `-token-file` and
+      propagate its path instead of exposing token contents in child arguments;
+      legacy environment and `-token-hex` paths remain supported.
+- [x] Broker connector retries transient local-IPC endpoint and handshake
+      outages for a bounded window so WSL proxy services survive supervised
+      frontend replacement; authentication/configuration failures remain
+      terminal.
 - [ ] Socket-owner crash recovery still requires a separate host-level recovery
       boundary because the socket owner owns the kernel sockets.
 

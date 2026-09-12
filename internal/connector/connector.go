@@ -7,12 +7,19 @@ import (
 	"errors"
 	"io"
 	"net"
+	"time"
 
 	"github.com/Kevin589981/wsl-win-relay/internal/transport/attach"
 	"github.com/Kevin589981/wsl-win-relay/internal/transport/localipc"
 )
 
 var ErrInvalidConfig = errors.New("invalid connector configuration")
+
+const (
+	defaultConnectRetryWindow  = 30 * time.Second
+	defaultConnectRetryInitial = 100 * time.Millisecond
+	defaultConnectRetryMaximum = 2 * time.Second
+)
 
 type Config struct {
 	Endpoint     string
@@ -65,6 +72,73 @@ func Connect(ctx context.Context, config Config) (*Session, error) {
 		return nil, err
 	}
 	return &Session{Conn: conn, Epoch: epoch, InstanceID: instanceID, PeerCapabilities: peerCapabilities, Summary: summary}, nil
+}
+
+// ConnectWithRetry tolerates the short endpoint/handshake outage that occurs
+// while a host supervisor replaces the broker frontend. Authentication and
+// local configuration errors remain terminal; transport failures are retried
+// for a bounded window so a caller can keep its stdio service alive.
+func ConnectWithRetry(ctx context.Context, config Config) (*Session, error) {
+	return connectWithRetry(ctx, config, defaultConnectRetryWindow, defaultConnectRetryInitial, defaultConnectRetryMaximum)
+}
+
+func connectWithRetry(ctx context.Context, config Config, window, initial, maximum time.Duration) (*Session, error) {
+	if window <= 0 || initial <= 0 || maximum <= 0 {
+		return nil, ErrInvalidConfig
+	}
+	retryCtx, cancel := context.WithTimeout(ctx, window)
+	defer cancel()
+	delay := initial
+	var lastErr error
+	for {
+		session, err := Connect(retryCtx, config)
+		if err == nil {
+			return session, nil
+		}
+		if retryCtx.Err() != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			if lastErr != nil {
+				return nil, lastErr
+			}
+			return nil, err
+		}
+		if !isRetryableConnectError(err) {
+			return nil, err
+		}
+		lastErr = err
+		timer := time.NewTimer(delay)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return nil, ctx.Err()
+		case <-retryCtx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return nil, lastErr
+		}
+		if delay < maximum {
+			delay *= 2
+			if delay > maximum {
+				delay = maximum
+			}
+		}
+	}
+}
+
+func isRetryableConnectError(err error) bool {
+	return err != nil && !errors.Is(err, ErrInvalidConfig) && !errors.Is(err, attach.ErrRemoteAttach)
 }
 
 func (s *Session) Close() error {

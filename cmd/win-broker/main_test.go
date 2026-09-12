@@ -44,7 +44,7 @@ func TestParseOptionsSupervisor(t *testing.T) {
 	if !opts.supervisor || opts.worker || opts.socketOwner || opts.socketHost || opts.socketBridge {
 		t.Fatalf("unexpected supervisor options: %#v", opts)
 	}
-	if got := frontendArgs(options{endpoint: "broker", tokenHex: "aabbcc", upstreamProxy: "socks5h://proxy"}); len(got) != 6 || got[0] != "-endpoint" || got[4] != "-upstream-proxy" {
+	if got := frontendArgs(options{endpoint: "broker", tokenHex: "aabbcc", upstreamProxy: "socks5h://proxy"}); len(got) != 6 || got[0] != "-endpoint" || got[2] != "-token-hex" || got[4] != "-upstream-proxy" {
 		t.Fatalf("frontend args: %#v", got)
 	}
 }

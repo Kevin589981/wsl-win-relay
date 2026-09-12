@@ -32,9 +32,13 @@ GOPROXY=off go build -o "$tmp_dir/wsl-proxy" "$repo_dir/cmd/wsl-proxy"
 python3 -m http.server 18082 --bind 127.0.0.1 >"$tmp_dir/http.log" 2>&1 &
 http_pid=$!
 
-token=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' 
-')
-WSL_WIN_RELAY_ATTACH_TOKEN=$token WSL_WIN_RELAY_BROKER_ENDPOINT="$tmp_dir/broker.sock"     "$tmp_dir/win-broker" -supervise -endpoint "$tmp_dir/broker.sock" -token-hex "$token"     >"$tmp_dir/broker.log" 2>&1 &
+token=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+printf '%s\n' "$token" >"$tmp_dir/token"
+chmod 600 "$tmp_dir/token"
+WSL_WIN_RELAY_ATTACH_TOKEN=$token \
+WSL_WIN_RELAY_BROKER_ENDPOINT="$tmp_dir/broker.sock" \
+    "$tmp_dir/win-broker" -supervise -endpoint "$tmp_dir/broker.sock" -token-file "$tmp_dir/token" \
+    >"$tmp_dir/broker.log" 2>&1 &
 supervisor_pid=$!
 
 for _ in $(seq 1 100); do

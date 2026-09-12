@@ -103,7 +103,8 @@ func stopChild(cmd *exec.Cmd, wait <-chan error) {
 }
 
 func frontendArgs(opts options) []string {
-	args := []string{"-endpoint", opts.endpoint, "-token-hex", opts.tokenHex}
+	args := []string{"-endpoint", opts.endpoint}
+	args = append(args, tokenArgs(opts)...)
 	if opts.upstreamProxy != "" {
 		args = append(args, "-upstream-proxy", opts.upstreamProxy)
 	}

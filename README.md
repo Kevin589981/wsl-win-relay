@@ -114,6 +114,17 @@ for connector children. The token remains out of command-line arguments. See
 rule that preserves unrelated entries while forcing these two names to be
 single, flag-free entries.
 
+The Windows broker also accepts `-token-file` for host-service deployments.
+The file must be a private regular file containing the hexadecimal token; on
+Unix it must not be group/world accessible. The supervisor and its internal
+roles pass this path instead of the token contents, while `-token-hex` and the
+environment variable remain supported for compatibility.
+
+The broker connector keeps its stdio service alive across the bounded endpoint
+outage created by a supervised frontend replacement. It retries transport-level
+dial and handshake failures for up to 30 seconds with capped backoff, while a
+rejected token or invalid connector configuration fails immediately.
+
 To exercise the same path while keeping an upstream proxy on the Windows side,
 set `WWR_WINDOWS_UPSTREAM_PROXY` when running the smoke. WSL still sends only
 the target through the relay; the Windows broker performs the upstream

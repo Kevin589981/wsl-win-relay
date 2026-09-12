@@ -200,7 +200,8 @@ func ensureWorker(ctx context.Context, opts options, endpoint string, logger *lo
 	if err != nil {
 		return nil, fmt.Errorf("locate broker executable: %w", err)
 	}
-	args := []string{"-worker", "-endpoint", endpoint, "-token-hex", opts.tokenHex}
+	args := []string{"-worker", "-endpoint", endpoint}
+	args = append(args, tokenArgs(opts)...)
 	if opts.upstreamProxy != "" {
 		args = append(args, "-upstream-proxy", opts.upstreamProxy)
 	}
@@ -392,7 +393,8 @@ func ensureSocketOwner(ctx context.Context, opts options, endpoint string, logge
 	if err != nil {
 		return nil, nil, fmt.Errorf("locate broker executable: %w", err)
 	}
-	args := []string{"-socket-owner", "-endpoint", endpoint, "-token-hex", opts.tokenHex}
+	args := []string{"-socket-owner", "-endpoint", endpoint}
+	args = append(args, tokenArgs(opts)...)
 	if opts.upstreamProxy != "" {
 		args = append(args, "-upstream-proxy", opts.upstreamProxy)
 	}
@@ -451,7 +453,8 @@ func ensureSocketHost(ctx context.Context, opts options, endpoint, ownerEndpoint
 	if err != nil {
 		return nil, nil, fmt.Errorf("locate broker executable: %w", err)
 	}
-	args := []string{"-socket-host", "-endpoint", endpoint, "-owner-endpoint", ownerEndpoint, "-token-hex", opts.tokenHex}
+	args := []string{"-socket-host", "-endpoint", endpoint, "-owner-endpoint", ownerEndpoint}
+	args = append(args, tokenArgs(opts)...)
 	bridge := exec.Command(executable, args...)
 	bridge.Stdout = io.Discard
 	bridge.Stderr = os.Stderr
