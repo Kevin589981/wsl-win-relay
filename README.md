@@ -385,8 +385,9 @@ same control socket. Process-style `fork()`, `clone(SIGCHLD)`, non-thread
 `clone3()`, and ordinary `CLONE_THREAD` pthreads are attached with task/group
 state and inherit lease ownership with `ADOPT`/`RELEASE`. The kernel adapter is
 deliberately opt-in and traces `vfork()` children through the same process
-ownership path; unusual
-thread-group teardown and non-amd64 targets remain unsupported. Setuid/setgid targets are rejected in
+ownership path; unusual thread-group teardown remains unsupported. The source
+includes an aarch64 ptrace register adapter, but native aarch64 runtime
+validation is still pending. Setuid/setgid targets are rejected in
 both launcher modes because ptrace cannot preserve their privilege semantics.
 Use the default interposer for dynamically linked applications.
 

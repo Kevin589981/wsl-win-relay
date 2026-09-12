@@ -69,7 +69,7 @@
       smoke test; child-side pre-exec networking remains unsupported by the
       shared-address-space contract.
 - [ ] Kernel-level coverage for unusual thread-group ownership and non-direct
-      vfork libc interactions, plus non-amd64 targets;
+      vfork libc interactions, plus native aarch64 runtime validation;
       setuid/setgid binaries remain intentionally rejected because neither
       launcher path can preserve their semantics.
 - [x] Phase-one opt-in ptrace supervisor (`wsl-win-relay-run --kernel`) now
@@ -87,6 +87,9 @@
       ownership remains a fail-closed follow-up boundary;
       non-thread `clone3()` and ordinary `CLONE_THREAD` are traced when
       supported.
+- [x] ptrace register access is isolated for amd64 and aarch64 in
+      `native/strict_supervisor_regs.h`; unsupported architectures fail at
+      compile time until a dedicated adapter is added.
 - [x] The strict launcher now fails closed for directly executed static ELF
       and setuid/setgid targets instead of silently implying interposition;
       true kernel-level coverage remains a separate adapter boundary.

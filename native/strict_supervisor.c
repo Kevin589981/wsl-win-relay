@@ -15,10 +15,10 @@
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <sys/un.h>
-#include <sys/user.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <time.h>
+#include "strict_supervisor_regs.h"
 
 enum pending_kind {
     PENDING_NONE,
@@ -510,9 +510,9 @@ static const char *network_name(int family, int type) {
     return NULL;
 }
 
-static int stop_syscall(struct user_regs_struct *regs, int error) {
-    regs->orig_rax = (unsigned long)-1;
-    if (ptrace(PTRACE_SETREGS, active_task->pid, 0, regs) < 0) {
+static int stop_syscall(wwr_regs *regs, int error) {
+    WWR_SYSCALL(regs) = (unsigned long)-1;
+    if (wwr_set_regs(active_task->pid, regs) < 0) {
         return -1;
     }
     pending_call.kind = PENDING_DENY;
@@ -520,18 +520,18 @@ static int stop_syscall(struct user_regs_struct *regs, int error) {
     return 0;
 }
 
-static int apply_return_error(struct user_regs_struct *regs) {
-    regs->rax = (unsigned long)-(long)pending_call.lease;
-    if (ptrace(PTRACE_SETREGS, active_task->pid, 0, regs) < 0) {
+static int apply_return_error(wwr_regs *regs) {
+    WWR_RETURN(regs) = (unsigned long)-(long)pending_call.lease;
+    if (wwr_set_regs(active_task->pid, regs) < 0) {
         return -1;
     }
     pending_call.kind = PENDING_NONE;
     return 0;
 }
 
-static int handle_entry(struct user_regs_struct *regs) {
+static int handle_entry(wwr_regs *regs) {
     pending_call.kind = PENDING_NONE;
-    unsigned long syscall_number = regs->orig_rax;
+    unsigned long syscall_number = WWR_SYSCALL(regs);
     if (debug_enabled()) {
         fprintf(stderr, "strict-supervisor: syscall %lu\n", syscall_number);
     }
@@ -547,15 +547,15 @@ static int handle_entry(struct user_regs_struct *regs) {
     }
     if (syscall_number == SYS_clone) {
         pending_call.kind = PENDING_CREATE;
-        pending_call.type = ((unsigned long)regs->rdi & CLONE_THREAD) != 0;
+        pending_call.type = ((unsigned long)WWR_ARG(regs, 0) & CLONE_THREAD) != 0;
         return 0;
     }
 #ifdef SYS_clone3
     if (syscall_number == SYS_clone3) {
         struct clone_args arguments;
         memset(&arguments, 0, sizeof(arguments));
-        if (regs->rsi < sizeof(arguments.flags) ||
-            read_target_memory(regs->rdi, &arguments, regs->rsi < sizeof(arguments) ? regs->rsi : sizeof(arguments)) < 0) {
+        if (WWR_ARG(regs, 1) < sizeof(arguments.flags) ||
+            read_target_memory(WWR_ARG(regs, 0), &arguments, WWR_ARG(regs, 1) < sizeof(arguments) ? WWR_ARG(regs, 1) : sizeof(arguments)) < 0) {
             return stop_syscall(regs, ENOTSUP);
         }
         pending_call.kind = PENDING_CREATE;
@@ -564,30 +564,30 @@ static int handle_entry(struct user_regs_struct *regs) {
 #endif
     if (syscall_number == SYS_socket) {
         pending_call.kind = PENDING_SOCKET;
-        pending_call.family = (int)regs->rdi;
-        pending_call.type = (int)regs->rsi & 0xf;
+        pending_call.family = (int)WWR_ARG(regs, 0);
+        pending_call.type = (int)WWR_ARG(regs, 1) & 0xf;
         return 0;
     }
     if (syscall_number == SYS_close) {
         pending_call.kind = PENDING_CLOSE;
-        pending_call.fd = (int)regs->rdi;
+        pending_call.fd = (int)WWR_ARG(regs, 0);
         return 0;
     }
     if (syscall_number == SYS_dup || syscall_number == SYS_dup2 || syscall_number == SYS_dup3) {
         pending_call.kind = PENDING_DUP;
-        pending_call.oldfd = (int)regs->rdi;
-        pending_call.newfd = syscall_number == SYS_dup ? -1 : (int)regs->rsi;
+        pending_call.oldfd = (int)WWR_ARG(regs, 0);
+        pending_call.newfd = syscall_number == SYS_dup ? -1 : (int)WWR_ARG(regs, 1);
         return 0;
     }
     if (syscall_number == SYS_bind) {
-        struct binding *binding = find_binding((int)regs->rdi);
+        struct binding *binding = find_binding((int)WWR_ARG(regs, 0));
         if (binding == NULL || (binding->type != SOCK_DGRAM && binding->type != SOCK_STREAM)) {
             return 0;
         }
         int family;
         uint16_t port;
         char host[INET6_ADDRSTRLEN];
-        if (decode_address(regs->rsi, regs->rdx, &family, host, sizeof(host), &port) < 0 || port == 0) {
+        if (decode_address(WWR_ARG(regs, 1), WWR_ARG(regs, 2), &family, host, sizeof(host), &port) < 0 || port == 0) {
             if (debug_enabled()) fprintf(stderr, "strict-supervisor: bind address decode failed\n");
             return 0;
         }
@@ -614,9 +614,9 @@ static int handle_entry(struct user_regs_struct *regs) {
         return 0;
     }
     if (syscall_number == SYS_listen) {
-        struct binding *binding = find_binding((int)regs->rdi);
+        struct binding *binding = find_binding((int)WWR_ARG(regs, 0));
         if (debug_enabled()) {
-            fprintf(stderr, "strict-supervisor: listen fd=%d binding=%p port=%u type=%d\n", (int)regs->rdi,
+            fprintf(stderr, "strict-supervisor: listen fd=%d binding=%p port=%u type=%d\n", (int)WWR_ARG(regs, 0),
                     (void *)binding, binding == NULL ? 0 : (unsigned)binding->port, binding == NULL ? 0 : binding->type);
         }
         if (binding == NULL || binding->type != SOCK_STREAM || !binding->bound || binding->port == 0 || binding->lease != 0) {
@@ -637,14 +637,14 @@ static int handle_entry(struct user_regs_struct *regs) {
     return 0;
 }
 
-static int handle_exit(struct user_regs_struct *regs) {
+static int handle_exit(wwr_regs *regs) {
     if (pending_call.kind == PENDING_NONE) {
         return 0;
     }
     if (pending_call.kind == PENDING_DENY) {
         return apply_return_error(regs);
     }
-    long result = (long)regs->rax;
+    long result = (long)WWR_RETURN(regs);
     switch (pending_call.kind) {
     case PENDING_SOCKET:
         if (result >= 0 && find_binding((int)result) == NULL) {
@@ -793,8 +793,8 @@ static int trace_target(void) {
             continue;
         }
         if (signal_number == (SIGTRAP | 0x80)) {
-            struct user_regs_struct regs;
-            if (ptrace(PTRACE_GETREGS, pid, 0, &regs) < 0) return -1;
+            wwr_regs regs;
+            if (wwr_get_regs(pid, &regs) < 0) return -1;
             int error = task->entering ? handle_entry(&regs) : handle_exit(&regs);
             if (error < 0) return -1;
             task->entering = !task->entering;
