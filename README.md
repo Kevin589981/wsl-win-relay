@@ -437,10 +437,13 @@ default control socket and shared-library paths.
 Strict mode currently covers dynamically linked applications using libc or
 direct `syscall(SYS_listen/SYS_bind)` calls, including TCP `listen()`, non-zero
 UDP `bind()`, `dup()`, `dup2()`, `dup3()`, `fcntl(F_DUPFD*)`, `close_range()`,
-`SOCK_CLOEXEC`/`FD_CLOEXEC` exec teardown, and ordinary `fork()` descriptor
-inheritance, plus process-style `clone()`,
-`clone3()` (including `CLONE_FILES` shared-fd children), and parent-side
-`vfork()` adoption. Static binaries should use the
+`SOCK_CLOEXEC`/`FD_CLOEXEC` exec teardown, ordinary `fork()` descriptor
+inheritance, process-style `clone()` without `CLONE_FILES`, and parent-side
+`vfork()` adoption. The dynamic interposer rejects process-style
+`CLONE_FILES` in the raw/libc `clone()` paths because its tracking table is
+process-local; `clone3()` shared-fd semantics are outside the dynamic contract.
+Static or shared-fd process creation should use the opt-in kernel adapter.
+Static binaries should use the
 opt-in `--kernel` adapter; setuid binaries remain rejected. Child-side
 networking before `vfork()` `exec`/`_exit` is supported only for direct
 syscall-safe operations. Ordinary pthread/`CLONE_THREAD`

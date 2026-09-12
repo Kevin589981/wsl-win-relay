@@ -64,6 +64,20 @@ static void atfork_parent(void);
 static void atfork_child(void);
 static int release_lease(pid_t pid, uint64_t lease);
 static int control_request(const char *request, char *response, size_t capacity);
+static int debug_enabled(void);
+
+static int relay_control_enabled(void) {
+    const char *path = getenv("WSL_WIN_RELAY_CONTROL");
+    return path != NULL && path[0] != '\0';
+}
+
+static int reject_shared_files_clone(unsigned long flags) {
+    if (relay_control_enabled() && (flags & CLONE_FILES) != 0 && (flags & CLONE_THREAD) == 0) {
+        errno = ENOTSUP;
+        return 1;
+    }
+    return 0;
+}
 
 static int fcntl_command_has_argument(int command) {
     switch (command) {
@@ -656,6 +670,9 @@ long syscall(long number, ...) {
             pid_t *child_tid = va_arg(arguments, pid_t *);
             unsigned long tls = va_arg(arguments, unsigned long);
             va_end(arguments);
+            if (reject_shared_files_clone(flags)) {
+                return -1;
+            }
             syscall_interposer_depth++;
             long result = real_syscall(SYS_clone, flags, stack, parent_tid, child_tid, tls);
             syscall_interposer_depth--;
@@ -817,6 +834,9 @@ int clone(int (*function)(void *), void *stack, int flags, void *argument, ...) 
         child_tid = va_arg(arguments, pid_t *);
     }
     va_end(arguments);
+    if (reject_shared_files_clone((unsigned long)flags)) {
+        return -1;
+    }
     pid_t child = real_clone(function, stack, flags, argument, parent_tid, tls, child_tid);
     if (child > 0 && (flags & CLONE_THREAD) == 0) {
         adopt_tracked_for_pid(child);

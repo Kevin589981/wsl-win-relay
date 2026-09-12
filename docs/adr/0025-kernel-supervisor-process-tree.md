@@ -60,7 +60,11 @@ work follows the same model:
 The control protocol is unchanged; this is an ownership and supervision change
 inside the kernel adapter. The default dynamic interposer remains the preferred
 path for dynamically linked applications because it already implements the
-lower-overhead process lifecycle hooks.
+lower-overhead process lifecycle hooks. Its process-local tracking table cannot
+represent shared descriptor tables across process boundaries, so it rejects
+process-style `CLONE_FILES` in the raw/libc `clone()` paths. `clone3()` shared
+fd semantics remain outside the dynamic contract; applications needing those
+forms use this kernel adapter instead.
 
 ## Consequences
 

@@ -192,7 +192,7 @@ int main(void) {
             close(fd);
             return 20;
         }
-    } else if (errno != ENOSYS && errno != EPERM && errno != EINVAL) {
+    } else if (errno != ENOSYS && errno != EPERM && errno != EINVAL && errno != ENOTSUP) {
         close(fd);
         return 21;
     }
@@ -216,7 +216,7 @@ int main(void) {
         }
         pid_t vforked = vfork();
         if (vforked < 0) {
-            if (errno != ENOSYS && errno != EPERM && errno != EINVAL && errno != EAGAIN) {
+            if (errno != ENOSYS && errno != EPERM && errno != EINVAL && errno != EAGAIN && errno != ENOTSUP) {
                 return 25;
             }
         } else {
@@ -226,6 +226,11 @@ int main(void) {
             if (wait_for_child(vforked) < 0) {
                 return 26;
             }
+        }
+        errno = 0;
+        if (syscall(SYS_clone, (unsigned long)(CLONE_FILES | SIGCHLD), 0, NULL, NULL, NULL) != -1 ||
+            errno != ENOTSUP) {
+            return 26;
         }
         return 0;
     }
