@@ -4,11 +4,13 @@
 
 In progress: attach registry, resume wire contract, local IPC abstraction,
 transport-independent broker session core, and server-side transport
-replacement are implemented. The relay client can now retain its registry and
-rehandshake over a replacement Link, but `wsl-proxy` integration and full
-socket/registry resume are still pending. Opt-in broker mode now exercises
-connector replacement with in-flight TCP stream preservation; broker-process
-crash recovery remains out of scope for this stage.
+replacement are implemented. Opt-in broker mode now retains the relay client
+registry and preserves in-flight TCP streams, reverse TCP listeners, and
+reverse-UDP flows across connector replacement. Automatic polling mappings are
+rebound by the long-lived WSL watcher after a connector replacement.
+Broker-process crash recovery and making
+broker mode the default service remain pending because a broker crash destroys
+its kernel socket ownership.
 
 ## Context
 
@@ -24,7 +26,7 @@ the peer state belongs to the terminated process.
 
 ## Decision
 
-Add a Windows-side broker mode in a later implementation stage. The broker
+Add a Windows-side broker mode as the persistent ownership layer. The broker
 owns outbound sockets, reverse listeners, UDP flow tables, and stream state for
 the lifetime of the broker process. A small Windows connector, launched by WSL
 through interop, bridges the WSL byte stream to the broker over a Windows-only
@@ -103,5 +105,6 @@ alive and makes the connector retry with bounded backoff.
 3. Move outbound stream ownership into the broker and add stable registry IDs,
    bounded detached buffering, and resume acknowledgements.
 4. Migrate reverse TCP/UDP listeners and automatic mapping registry entries.
-5. Make broker mode opt-in, run real HNS-failure and connector-restart tests,
-   then consider making it the long-running-service default.
+5. Make broker mode opt-in, run real HNS-failure and connector-restart tests.
+6. Add a bounded broker supervisor and explicit service startup contract before
+   making broker mode the long-running-service default.

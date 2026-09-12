@@ -372,7 +372,10 @@ restarts the user service so the new configuration is active immediately.
 
 The service restarts the proxy after a Windows relay crash or broken stdio
 transport; startup handshake and reverse registrations are recreated on each
-restart. The strict control socket remains available across relay sessions,
+restart. With `broker_mode` enabled, connector restarts preserve broker-owned
+TCP/UDP sockets, but the broker executable is still a separately managed
+process and its own crash loses those sockets. The strict control socket remains
+available across relay sessions,
 and live leases are rebound and recommitted when the replacement child is
 ready. The proxy also retries a relay-only EOF on its own
 with an exponential backoff from two seconds up to thirty seconds when run
