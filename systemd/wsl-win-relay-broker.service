@@ -1,0 +1,14 @@
+[Unit]
+Description=WSL to Windows persistent relay broker
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=%h/bin/wsl-win-relay-broker-service
+Restart=on-failure
+RestartSec=2s
+KillMode=control-group
+TimeoutStopSec=10s
+
+[Install]
+WantedBy=default.target

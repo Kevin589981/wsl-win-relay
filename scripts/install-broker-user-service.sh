@@ -1,0 +1,51 @@
+#!/bin/sh
+set -eu
+
+repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+bin_dir=$HOME/bin
+service_dir=${XDG_CONFIG_HOME:-"$HOME/.config"}/systemd/user
+config_dir=${XDG_CONFIG_HOME:-"$HOME/.config"}/wsl-win-relay
+env_file=$config_dir/broker.env
+
+quote_env_value() {
+    value=$1
+    value=$(printf '%s' "$value" | sed "s/'/'\\\\''/g")
+    printf "'%s'" "$value"
+}
+
+if [ -z "${WSL_WIN_RELAY_BROKER_EXE:-}" ]; then
+    echo "set WSL_WIN_RELAY_BROKER_EXE to the mounted Windows broker executable" >&2
+    exit 2
+fi
+if [ ! -f "$WSL_WIN_RELAY_BROKER_EXE" ] && ! command -v "$WSL_WIN_RELAY_BROKER_EXE" >/dev/null 2>&1; then
+    echo "Windows broker executable is unavailable: $WSL_WIN_RELAY_BROKER_EXE" >&2
+    exit 1
+fi
+if [ -L "$env_file" ] || { [ -e "$env_file" ] && [ ! -f "$env_file" ]; }; then
+    echo "refusing non-regular broker environment file: $env_file" >&2
+    exit 1
+fi
+
+mkdir -p "$bin_dir" "$service_dir" "$config_dir"
+chmod 700 "$config_dir"
+install -m 0755 "$repo_dir/scripts/run-broker-user-service.sh" "$bin_dir/wsl-win-relay-broker-service"
+install -m 0644 "$repo_dir/systemd/wsl-win-relay-broker.service" "$service_dir/wsl-win-relay-broker.service"
+
+if [ ! -e "$env_file" ]; then
+    token=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+    endpoint=${WSL_WIN_RELAY_BROKER_ENDPOINT:-wsl-win-relay-broker}
+    umask 077
+    {
+        printf '%s\n' '# Private broker settings; keep mode 0600.'
+        printf 'WSL_WIN_RELAY_BROKER_EXE=%s\n' "$(quote_env_value "$WSL_WIN_RELAY_BROKER_EXE")"
+        printf 'WSL_WIN_RELAY_BROKER_ENDPOINT=%s\n' "$(quote_env_value "$endpoint")"
+        printf 'WSL_WIN_RELAY_ATTACH_TOKEN=%s\n' "$(quote_env_value "$token")"
+    } >"$env_file"
+fi
+chmod 600 "$env_file"
+
+systemctl --user daemon-reload
+systemctl --user enable wsl-win-relay-broker.service
+systemctl --user restart wsl-win-relay-broker.service
+echo "enabled and restarted wsl-win-relay-broker.service"
+echo "set broker_mode=true in $config_dir/config.json and restart wsl-win-relay.service"

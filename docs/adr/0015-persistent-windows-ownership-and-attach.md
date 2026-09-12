@@ -107,4 +107,6 @@ alive and makes the connector retry with bounded backoff.
 4. Migrate reverse TCP/UDP listeners and automatic mapping registry entries.
 5. Make broker mode opt-in, run real HNS-failure and connector-restart tests.
 6. Add a bounded broker supervisor and explicit service startup contract before
-   making broker mode the long-running-service default.
+   making broker mode the long-running-service default. The optional systemd
+   broker unit now supplies the supervisor; proxy restart after broker failure
+   remains explicit until epoch-loss detection is implemented.

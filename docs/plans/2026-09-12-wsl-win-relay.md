@@ -78,6 +78,9 @@
       Windows-facing listener after reconnect.
 - [x] Broker-mode can be selected from the persistent JSON configuration while
       attach credentials remain environment-only.
+- [x] Optional systemd user broker unit, private token file, and bounded broker
+      process restart wrapper are available; broker crash still requires proxy
+      restart to rebuild socket mappings.
 - [ ] Broker-process crash recovery and making broker-mode the service default;
       a broker crash necessarily destroys its kernel socket ownership.
 

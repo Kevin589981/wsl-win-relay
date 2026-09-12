@@ -67,6 +67,15 @@ the systemd user service. Keep `WSL_WIN_RELAY_ATTACH_TOKEN` and
 `WSL_WIN_RELAY_BROKER_ENDPOINT` in the service environment; the token is
 intentionally not accepted from the configuration file.
 
+For systemd-managed broker startup, set `WSL_WIN_RELAY_BROKER_EXE` to the
+mounted Windows `wsl-win-broker.exe` path and run
+`./scripts/install-broker-user-service.sh`. It creates a mode-0600
+`broker.env`, generates the attach token once, and enables
+`wsl-win-relay-broker.service` with a bounded restart policy. The normal proxy
+service wrapper loads the same env file for connector children. A broker crash
+still loses kernel socket ownership; after such a crash, restart the proxy
+service so explicit and automatic mappings are reconstructed.
+
 ## Security model
 
 - The WSL listener binds to `127.0.0.1` by default.

@@ -14,6 +14,7 @@ mkdir -p "$bin_dir"
 install -m 0755 "$repo_dir/bin/wsl-proxy-linux" "$bin_dir/wsl-proxy-linux"
 install -m 0755 "$repo_dir/scripts/wsl-win-relay-run" "$bin_dir/wsl-win-relay-run"
 install -m 0755 "$repo_dir/scripts/run-user-service.sh" "$bin_dir/wsl-win-relay-service"
+install -m 0755 "$repo_dir/scripts/run-broker-user-service.sh" "$bin_dir/wsl-win-relay-broker-service"
 if [ -r "$repo_dir/lib/libwsl_win_relay_listen.so" ]; then
     mkdir -p "$lib_dir"
     install -m 0755 "$repo_dir/lib/libwsl_win_relay_listen.so" "$lib_dir/libwsl_win_relay_listen.so"
@@ -21,6 +22,7 @@ fi
 mkdir -p "$service_dir" "$config_dir"
 chmod 700 "$config_dir"
 install -m 0644 "$repo_dir/systemd/wsl-win-relay.service" "$service_dir/wsl-win-relay.service"
+install -m 0644 "$repo_dir/systemd/wsl-win-relay-broker.service" "$service_dir/wsl-win-relay-broker.service"
 config_path=$config_dir/config.json
 if [ -L "$config_path" ]; then
     echo "refusing symlinked config path: $config_path" >&2
