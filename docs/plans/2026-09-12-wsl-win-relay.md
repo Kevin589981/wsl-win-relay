@@ -72,8 +72,8 @@
       notification emitted for traced `vfork()` parents instead of treating it
       as an unknown event.
 - [ ] Kernel-level coverage for non-direct vfork libc interactions remains
-      open beyond the `posix_spawn`, `system()`, and pre-exec file-action
-      paths, which are covered by the native smoke test together with
+      open beyond the `posix_spawn` and pre-exec file-action paths, which are
+      covered by the native smoke test together with
       leader-exit/sibling-listener ownership. Setuid/setgid binaries remain
       intentionally rejected because neither launcher path can preserve their
       semantics.

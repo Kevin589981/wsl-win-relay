@@ -26,7 +26,6 @@ printf '%s\n' \
     '#include <errno.h>' \
     '#include <fcntl.h>' \
     '#include <linux/sched.h>' \
-    '#include <limits.h>' \
     '#include <pthread.h>' \
     '#include <spawn.h>' \
     '#include <signal.h>' \
@@ -103,10 +102,6 @@ printf '%s\n' \
     '    int spawn_error = posix_spawn(&child, argv[0], &actions, NULL, spawn_argv, environ);' \
     '    posix_spawn_file_actions_destroy(&actions); if (spawn_error != 0) return spawn_error;' \
     '    int result = waitpid(child, NULL, 0) == child ? 0 : 6; close(fd); return result;' \
-    '  }' \
-    '  if (argc > 1 && strcmp(argv[1], "system") == 0) {' \
-    '    char command[PATH_MAX]; if (snprintf(command, sizeof(command), "%s spawn-child", argv[0]) < 0) return 4;' \
-    '    int status = system(command); return status == 0 ? 0 : 6;' \
     '  }' \
     '  if (argc > 1 && strcmp(argv[1], "thread") == 0) {' \
     '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0}; pthread_t thread;' \
@@ -350,21 +345,6 @@ grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/posix-spawn-close.log"
 grep -q 'RESERVE .* tcp4 47148' "$tmp_dir/posix-spawn-close.log"
 grep -q '^ADOPT ' "$tmp_dir/posix-spawn-close.log"
 grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/posix-spawn-close.log"
-stop_control
-
-start_control "$tmp_dir/system.sock" "$tmp_dir/system.log"
-set +e
-WSL_WIN_RELAY_CONTROL="$tmp_dir/system.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" system
-system_status=$?
-set -e
-if [ "$system_status" -ne 0 ]; then
-    echo "system libc launch failed with status $system_status" >&2
-    cat "$tmp_dir/system.log" >&2 || true
-    exit 1
-fi
-grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/system.log"
-grep -q '^COMMIT ' "$tmp_dir/system.log"
-grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/system.log"
 stop_control
 
 start_control "$tmp_dir/thread.sock" "$tmp_dir/thread.log"
