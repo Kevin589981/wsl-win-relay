@@ -412,8 +412,6 @@ func (c *Client) writeClose(frame protocol.Frame) {
 }
 
 func (c *Client) writeContext(ctx context.Context, frame protocol.Frame) error {
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
 	if c.transport != nil {
 		for {
 			var err error
@@ -436,6 +434,8 @@ func (c *Client) writeContext(ctx context.Context, frame protocol.Frame) error {
 			}
 		}
 	}
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 	return protocol.Write(c.rw, frame)
 }
 

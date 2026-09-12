@@ -92,8 +92,6 @@ func (l *Link) WriteFrameContext(ctx context.Context, frame protocol.Frame) erro
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	l.writeMu.Lock()
-	defer l.writeMu.Unlock()
 	for {
 		a, wait, err := l.snapshot()
 		if err != nil {
@@ -109,10 +107,23 @@ func (l *Link) WriteFrameContext(ctx context.Context, frame protocol.Frame) erro
 				return ctx.Err()
 			}
 		}
+		// Do not hold the write mutex while waiting for a replacement
+		// attachment. Re-check the endpoint after acquiring it so a stale
+		// snapshot cannot write into a newly replaced transport.
+		l.writeMu.Lock()
+		l.mu.Lock()
+		current := l.current
+		l.mu.Unlock()
+		if current != a {
+			l.writeMu.Unlock()
+			continue
+		}
 		if err := protocol.Write(a.rw, frame); err != nil {
+			l.writeMu.Unlock()
 			l.detachIfCurrent(a)
 			return errors.Join(ErrDetached, err)
 		}
+		l.writeMu.Unlock()
 		return nil
 	}
 }

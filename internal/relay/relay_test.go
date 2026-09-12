@@ -151,10 +151,25 @@ func TestAttachedObjectCloseDoesNotWaitForReplacement(t *testing.T) {
 	stream := newClientStream(client, 3, "detached.example:443")
 	packet := &clientPacketConn{client: client, id: 5, ready: make(chan error, 1), incoming: make(chan packetEvent, 1), done: make(chan struct{}), deadlineChanged: make(chan struct{})}
 	reverseDatagram := newClientReverseDatagram(client, 7, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 5353}, context.Background())
+	blockedWriteDone := make(chan struct{})
+	go func() {
+		_ = client.write(protocol.Frame{Type: protocol.TypeData, StreamID: 99, Payload: []byte("blocked")})
+		close(blockedWriteDone)
+	}()
+	time.Sleep(10 * time.Millisecond)
+	closeDone := make(chan struct{})
+	go func() {
+		_ = stream.Close()
+		close(closeDone)
+	}()
+	select {
+	case <-closeDone:
+	case <-time.After(time.Second):
+		t.Fatal("detached stream close was blocked by a pending data write")
+	}
 
 	for name, closeObject := range map[string]func(){
 		"listener":         func() { _ = listener.Close() },
-		"stream":           func() { _ = stream.Close() },
 		"packet":           func() { _ = packet.Close() },
 		"reverse-datagram": func() { _ = reverseDatagram.Close() },
 	} {
@@ -168,6 +183,12 @@ func TestAttachedObjectCloseDoesNotWaitForReplacement(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatalf("detached %s close blocked waiting for replacement", name)
 		}
+	}
+	_ = client.Close()
+	select {
+	case <-blockedWriteDone:
+	case <-time.After(time.Second):
+		t.Fatal("pending detached data write did not stop after client close")
 	}
 }
 
