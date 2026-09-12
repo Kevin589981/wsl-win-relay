@@ -1,13 +1,19 @@
 #!/bin/sh
 set -eu
 
+kernel_mode=0
+if [ "${1:-}" = "--kernel" ]; then
+    kernel_mode=1
+    shift
+fi
 if [ "$#" -eq 0 ]; then
-    echo "usage: wsl-win-relay-run COMMAND [ARG ...]" >&2
+    echo "usage: wsl-win-relay-run [--kernel] COMMAND [ARG ...]" >&2
     exit 2
 fi
 
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 library=${WSL_WIN_RELAY_PRELOAD:-"$repo_dir/lib/libwsl_win_relay_listen.so"}
+kernel_supervisor=${WSL_WIN_RELAY_KERNEL_SUPERVISOR:-"$repo_dir/bin/wsl-win-relay-strict"}
 control=${WSL_WIN_RELAY_CONTROL:-/tmp/wsl-win-relay-control.sock}
 retry_seconds=${WSL_WIN_RELAY_CONTROL_RETRY_SECONDS:-2}
 case "$retry_seconds" in
@@ -21,6 +27,15 @@ retry_attempts=$((retry_seconds * 10 + 1))
 if [ ! -r "$library" ]; then
     echo "listen interposer not found: $library (run scripts/build-wsl.sh)" >&2
     exit 1
+fi
+
+if [ "$kernel_mode" -eq 1 ]; then
+    if [ ! -x "$kernel_supervisor" ]; then
+        echo "kernel strict supervisor not found: $kernel_supervisor (run scripts/build-wsl.sh)" >&2
+        exit 1
+    fi
+    export WSL_WIN_RELAY_CONTROL=$control
+    exec "$kernel_supervisor" "$@"
 fi
 
 resolve_target_path() {

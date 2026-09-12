@@ -11,3 +11,6 @@ GOTOOLCHAIN=local GOOS=windows GOARCH=amd64 go build -o "$repo_dir/bin/wsl-win-c
 gcc -O2 -Wall -Wextra -Werror -fPIC -shared \
     -o "$repo_dir/lib/libwsl_win_relay_listen.so" \
     "$repo_dir/native/listen_interposer.c" -ldl -pthread
+gcc -O2 -Wall -Wextra -Werror -std=c11 \
+    -o "$repo_dir/bin/wsl-win-relay-strict" \
+    "$repo_dir/native/strict_supervisor.c"

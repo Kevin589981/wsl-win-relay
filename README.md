@@ -373,7 +373,17 @@ It also rejects directly executed static ELF and setuid/setgid targets before
 launch. Those targets cannot load `LD_PRELOAD`, so allowing them through would
 silently disable the Windows-before-WSL bind contract. Scripts and other
 non-ELF entrypoints remain allowed; true static-binary coverage requires a
-future kernel-aware adapter.
+broader kernel-aware lifecycle adapter. A phase-one opt-in ptrace adapter is now available
+for direct single-process Linux amd64 targets:
+
+```bash
+./scripts/wsl-win-relay-run --kernel ./static-service 8000
+```
+
+It coordinates direct TCP/UDP `bind()` and TCP `listen()` syscalls through the
+same control socket. The kernel adapter is deliberately opt-in and currently
+does not cover fork/clone/thread-group descriptor inheritance or non-amd64
+targets; use the default interposer for dynamically linked applications.
 
 Before the application's libc `listen()` succeeds, the wrapper reserves
 Windows `127.0.0.1:8000` for IPv4 or `[::1]:8000` for IPv6. If Windows reports that the address is already in

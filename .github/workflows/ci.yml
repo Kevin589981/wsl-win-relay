@@ -69,6 +69,7 @@ jobs:
       - run: ./scripts/build-wsl.sh
       - run: sh -n scripts/*.sh scripts/wsl-win-relay-run
       - run: ./scripts/test-launcher-preflight.sh
+      - run: ./scripts/test-kernel-supervisor.sh
       - run: ./scripts/test-interposer.sh
       - run: GOPROXY=off ./scripts/test-broker-connector.sh
       - run: GOPROXY=off ./scripts/test-broker-reconnect.sh

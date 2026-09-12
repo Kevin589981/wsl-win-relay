@@ -1,0 +1,535 @@
+#define _GNU_SOURCE
+
+#include <arpa/inet.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ptrace.h>
+#include <sys/socket.h>
+#include <sys/syscall.h>
+#include <sys/types.h>
+#include <sys/uio.h>
+#include <sys/un.h>
+#include <sys/user.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <time.h>
+
+enum pending_kind {
+    PENDING_NONE,
+    PENDING_SOCKET,
+    PENDING_TCP_BIND,
+    PENDING_UDP_BIND,
+    PENDING_TCP_LISTEN,
+    PENDING_CLOSE,
+    PENDING_DUP,
+    PENDING_DENY,
+};
+
+struct binding {
+    int fd;
+    int type;
+    int family;
+    char host[INET6_ADDRSTRLEN];
+    uint16_t port;
+    int bound;
+    uint64_t lease;
+    unsigned refs;
+    struct binding *next;
+};
+
+struct pending {
+    enum pending_kind kind;
+    int fd;
+    int oldfd;
+    int newfd;
+    int family;
+    int type;
+    uint64_t lease;
+};
+
+static const char *control_path;
+static pid_t tracee_pid;
+static struct binding *bindings;
+static struct pending pending_call;
+
+static int debug_enabled(void) {
+    const char *value = getenv("WSL_WIN_RELAY_DEBUG");
+    return value != NULL && value[0] != '\0' && strcmp(value, "0") != 0;
+}
+
+static int write_all(int fd, const char *data, size_t length) {
+    while (length > 0) {
+        ssize_t written = write(fd, data, length);
+        if (written < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return -1;
+        }
+        if (written == 0) {
+            errno = EIO;
+            return -1;
+        }
+        data += written;
+        length -= (size_t)written;
+    }
+    return 0;
+}
+
+static int read_line(int fd, char *response, size_t capacity) {
+    size_t used = 0;
+    while (used + 1 < capacity) {
+        char byte;
+        ssize_t count = read(fd, &byte, 1);
+        if (count < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return -1;
+        }
+        if (count == 0) {
+            errno = ECONNRESET;
+            return -1;
+        }
+        response[used++] = byte;
+        if (byte == '\n') {
+            response[used] = '\0';
+            return 0;
+        }
+    }
+    errno = EMSGSIZE;
+    return -1;
+}
+
+static int control_once(const char *request, char *response, size_t capacity) {
+    if (control_path == NULL || control_path[0] == '\0') {
+        errno = ENOENT;
+        return -1;
+    }
+    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (fd < 0) {
+        return -1;
+    }
+    struct sockaddr_un address;
+    memset(&address, 0, sizeof(address));
+    address.sun_family = AF_UNIX;
+    if (strlen(control_path) >= sizeof(address.sun_path)) {
+        close(fd);
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+    memcpy(address.sun_path, control_path, strlen(control_path) + 1);
+    if (connect(fd, (struct sockaddr *)&address, sizeof(address)) < 0 ||
+        write_all(fd, request, strlen(request)) < 0 ||
+        read_line(fd, response, capacity) < 0) {
+        int saved = errno;
+        close(fd);
+        errno = saved;
+        return -1;
+    }
+    close(fd);
+    return 0;
+}
+
+static int control_request(const char *request, char *response, size_t capacity) {
+    int attempts = 21;
+    const char *value = getenv("WSL_WIN_RELAY_CONTROL_RETRY_SECONDS");
+    if (value != NULL && value[0] != '\0') {
+        char *end = NULL;
+        long seconds = strtol(value, &end, 10);
+        if (end != value && *end == '\0' && seconds >= 0) {
+            if (seconds > 60) {
+                seconds = 60;
+            }
+            attempts = (int)(seconds * 10) + 1;
+        }
+    }
+    for (int attempt = 0; attempt < attempts; attempt++) {
+        if (control_once(request, response, capacity) == 0) {
+            return 0;
+        }
+        if (errno != ENOENT && errno != ECONNREFUSED && errno != ECONNRESET && errno != ETIMEDOUT && errno != EAGAIN) {
+            return -1;
+        }
+        if (attempt + 1 < attempts) {
+            struct timespec delay = {.tv_sec = 0, .tv_nsec = 100000000L};
+            nanosleep(&delay, NULL);
+        }
+    }
+    return -1;
+}
+
+static int parse_response(const char *response, unsigned long long *value) {
+    unsigned error;
+    if (strncmp(response, "OK", 2) == 0) {
+        if (value != NULL && sscanf(response, "OK %llu", value) != 1) {
+            errno = EPROTO;
+            return -1;
+        }
+        return 0;
+    }
+    if (sscanf(response, "ERR %u", &error) == 1) {
+        errno = (int)error;
+    } else {
+        errno = EPROTO;
+    }
+    return -1;
+}
+
+static int reserve_lease(const char *network, const char *host, uint16_t port, uint64_t *lease) {
+    char request[256];
+    char response[512];
+    snprintf(request, sizeof(request), "RESERVE %ld %s %u %s\n", (long)tracee_pid, network, (unsigned)port, host);
+    unsigned long long value;
+    if (control_request(request, response, sizeof(response)) < 0 || parse_response(response, &value) < 0) {
+        return -1;
+    }
+    *lease = (uint64_t)value;
+    return 0;
+}
+
+static int lease_operation(const char *operation, uint64_t lease) {
+    char request[128];
+    char response[512];
+    snprintf(request, sizeof(request), "%s %llu\n", operation, (unsigned long long)lease);
+    if (control_request(request, response, sizeof(response)) < 0) {
+        return -1;
+    }
+    return parse_response(response, NULL);
+}
+
+static struct binding *find_binding(int fd) {
+    for (struct binding *binding = bindings; binding != NULL; binding = binding->next) {
+        if (binding->fd == fd) {
+            return binding;
+        }
+    }
+    return NULL;
+}
+
+static struct binding *add_binding(int fd, int type, int family) {
+    struct binding *binding = calloc(1, sizeof(*binding));
+    if (binding == NULL) {
+        return NULL;
+    }
+    binding->fd = fd;
+    binding->type = type;
+    binding->family = family;
+    binding->refs = 1;
+    binding->next = bindings;
+    bindings = binding;
+    return binding;
+}
+
+static void remove_binding(int fd) {
+    struct binding **cursor = &bindings;
+    while (*cursor != NULL) {
+        if ((*cursor)->fd == fd) {
+            struct binding *removed = *cursor;
+            *cursor = removed->next;
+            if (removed->lease != 0) {
+                (void)lease_operation("CLOSE", removed->lease);
+            }
+            free(removed);
+            return;
+        }
+        cursor = &(*cursor)->next;
+    }
+}
+
+static int read_target_memory(unsigned long address, void *buffer, size_t length) {
+    struct iovec local = {.iov_base = buffer, .iov_len = length};
+    struct iovec remote = {.iov_base = (void *)address, .iov_len = length};
+    ssize_t copied = process_vm_readv(tracee_pid, &local, 1, &remote, 1, 0);
+    if (copied < 0) {
+        return -1;
+    }
+    if ((size_t)copied != length) {
+        errno = EFAULT;
+        return -1;
+    }
+    return 0;
+}
+
+static int decode_address(unsigned long address, unsigned long length, int *family, char *host, size_t host_capacity, uint16_t *port) {
+    struct sockaddr_storage storage;
+    memset(&storage, 0, sizeof(storage));
+    if (length > sizeof(storage)) {
+        length = sizeof(storage);
+    }
+    if (read_target_memory(address, &storage, length) < 0) {
+        return -1;
+    }
+    if (storage.ss_family == AF_INET && length >= sizeof(struct sockaddr_in)) {
+        const struct sockaddr_in *ipv4 = (const struct sockaddr_in *)&storage;
+        *family = AF_INET;
+        *port = ntohs(ipv4->sin_port);
+        if (inet_ntop(AF_INET, &ipv4->sin_addr, host, host_capacity) == NULL) {
+            return -1;
+        }
+        return 0;
+    }
+    if (storage.ss_family == AF_INET6 && length >= sizeof(struct sockaddr_in6)) {
+        const struct sockaddr_in6 *ipv6 = (const struct sockaddr_in6 *)&storage;
+        *family = AF_INET6;
+        *port = ntohs(ipv6->sin6_port);
+        if (inet_ntop(AF_INET6, &ipv6->sin6_addr, host, host_capacity) == NULL) {
+            return -1;
+        }
+        return 0;
+    }
+    errno = EAFNOSUPPORT;
+    return -1;
+}
+
+static const char *network_name(int family, int type) {
+    if (family == AF_INET && type == SOCK_STREAM) return "tcp4";
+    if (family == AF_INET6 && type == SOCK_STREAM) return "tcp6";
+    if (family == AF_INET && type == SOCK_DGRAM) return "udp4";
+    if (family == AF_INET6 && type == SOCK_DGRAM) return "udp6";
+    return NULL;
+}
+
+static int stop_syscall(struct user_regs_struct *regs, int error) {
+    regs->orig_rax = (unsigned long)-1;
+    if (ptrace(PTRACE_SETREGS, tracee_pid, 0, regs) < 0) {
+        return -1;
+    }
+    pending_call.kind = PENDING_DENY;
+    pending_call.lease = (uint64_t)error;
+    return 0;
+}
+
+static int apply_return_error(struct user_regs_struct *regs) {
+    regs->rax = (unsigned long)-(long)pending_call.lease;
+    if (ptrace(PTRACE_SETREGS, tracee_pid, 0, regs) < 0) {
+        return -1;
+    }
+    pending_call.kind = PENDING_NONE;
+    return 0;
+}
+
+static int handle_entry(struct user_regs_struct *regs) {
+    pending_call.kind = PENDING_NONE;
+    unsigned long syscall_number = regs->orig_rax;
+    if (debug_enabled()) {
+        fprintf(stderr, "strict-supervisor: syscall %lu\n", syscall_number);
+    }
+    if (syscall_number == SYS_socket) {
+        pending_call.kind = PENDING_SOCKET;
+        pending_call.family = (int)regs->rdi;
+        pending_call.type = (int)regs->rsi & 0xf;
+        return 0;
+    }
+    if (syscall_number == SYS_close) {
+        pending_call.kind = PENDING_CLOSE;
+        pending_call.fd = (int)regs->rdi;
+        return 0;
+    }
+    if (syscall_number == SYS_dup || syscall_number == SYS_dup2 || syscall_number == SYS_dup3) {
+        pending_call.kind = PENDING_DUP;
+        pending_call.oldfd = (int)regs->rdi;
+        pending_call.newfd = syscall_number == SYS_dup ? -1 : (int)regs->rsi;
+        return 0;
+    }
+    if (syscall_number == SYS_bind) {
+        struct binding *binding = find_binding((int)regs->rdi);
+        if (binding == NULL || (binding->type != SOCK_DGRAM && binding->type != SOCK_STREAM)) {
+            return 0;
+        }
+        int family;
+        uint16_t port;
+        char host[INET6_ADDRSTRLEN];
+        if (decode_address(regs->rsi, regs->rdx, &family, host, sizeof(host), &port) < 0 || port == 0) {
+            if (debug_enabled()) fprintf(stderr, "strict-supervisor: bind address decode failed\n");
+            return 0;
+        }
+        binding->family = family;
+        binding->port = port;
+        snprintf(binding->host, sizeof(binding->host), "%s", host);
+        if (binding->type == SOCK_STREAM) {
+            pending_call.kind = PENDING_TCP_BIND;
+            pending_call.fd = binding->fd;
+            return 0;
+        }
+        const char *network = network_name(family, SOCK_DGRAM);
+        if (network == NULL) {
+            return 0;
+        }
+        uint64_t lease;
+        if (reserve_lease(network, host, port, &lease) < 0) {
+            return stop_syscall(regs, errno);
+        }
+        if (debug_enabled()) fprintf(stderr, "strict-supervisor: UDP bind %s:%u\n", host, (unsigned)port);
+        pending_call.kind = PENDING_UDP_BIND;
+        pending_call.fd = binding->fd;
+        pending_call.lease = lease;
+        return 0;
+    }
+    if (syscall_number == SYS_listen) {
+        struct binding *binding = find_binding((int)regs->rdi);
+        if (debug_enabled()) {
+            fprintf(stderr, "strict-supervisor: listen fd=%d binding=%p port=%u type=%d\n", (int)regs->rdi,
+                    (void *)binding, binding == NULL ? 0 : (unsigned)binding->port, binding == NULL ? 0 : binding->type);
+        }
+        if (binding == NULL || binding->type != SOCK_STREAM || !binding->bound || binding->port == 0 || binding->lease != 0) {
+            return 0;
+        }
+        const char *network = network_name(binding->family, SOCK_STREAM);
+        if (network == NULL) {
+            return 0;
+        }
+        uint64_t lease;
+        if (reserve_lease(network, binding->host, binding->port, &lease) < 0) {
+            return stop_syscall(regs, errno);
+        }
+        pending_call.kind = PENDING_TCP_LISTEN;
+        pending_call.fd = binding->fd;
+        pending_call.lease = lease;
+    }
+    return 0;
+}
+
+static int handle_exit(struct user_regs_struct *regs) {
+    if (pending_call.kind == PENDING_NONE) {
+        return 0;
+    }
+    if (pending_call.kind == PENDING_DENY) {
+        return apply_return_error(regs);
+    }
+    long result = (long)regs->rax;
+    switch (pending_call.kind) {
+    case PENDING_SOCKET:
+        if (result >= 0 && find_binding((int)result) == NULL) {
+            if (add_binding((int)result, pending_call.type, pending_call.family) == NULL) {
+                return -1;
+            }
+        }
+        break;
+    case PENDING_UDP_BIND: {
+        struct binding *binding = find_binding(pending_call.fd);
+        if (result == 0 && binding != NULL) {
+            binding->lease = pending_call.lease;
+        } else {
+            (void)lease_operation("ABORT", pending_call.lease);
+        }
+        break;
+    }
+    case PENDING_TCP_BIND: {
+        struct binding *binding = find_binding(pending_call.fd);
+        if (binding != NULL) {
+            binding->bound = result == 0;
+            if (!binding->bound) {
+                binding->port = 0;
+                binding->host[0] = '\0';
+            }
+        }
+        break;
+    }
+    case PENDING_TCP_LISTEN: {
+        struct binding *binding = find_binding(pending_call.fd);
+        if (result != 0) {
+            (void)lease_operation("ABORT", pending_call.lease);
+        } else if (lease_operation("COMMIT", pending_call.lease) < 0) {
+            /* A committed listener cannot be rolled back atomically after the
+             * target syscall. Terminate the target rather than leave a
+             * listener whose Windows half is unknown. */
+            kill(tracee_pid, SIGTERM);
+        } else if (binding != NULL) {
+            binding->lease = pending_call.lease;
+        }
+        break;
+    }
+    case PENDING_CLOSE:
+        if (result == 0) {
+            remove_binding(pending_call.fd);
+        }
+        break;
+    case PENDING_DUP:
+        if (result >= 0) {
+            struct binding *source = find_binding(pending_call.oldfd);
+            if (source != NULL && find_binding((int)result) == NULL) {
+                struct binding *copy = add_binding((int)result, source->type, source->family);
+                if (copy == NULL) return -1;
+                copy->port = source->port;
+                copy->bound = source->bound;
+                snprintf(copy->host, sizeof(copy->host), "%s", source->host);
+                copy->lease = source->lease;
+            }
+        }
+        break;
+    default:
+        break;
+    }
+    pending_call.kind = PENDING_NONE;
+    return 0;
+}
+
+static int trace_target(void) {
+    int status;
+    if (waitpid(tracee_pid, &status, 0) < 0 || !WIFSTOPPED(status)) {
+        return -1;
+    }
+    if (ptrace(PTRACE_SETOPTIONS, tracee_pid, 0, PTRACE_O_EXITKILL | PTRACE_O_TRACESYSGOOD) < 0 ||
+        ptrace(PTRACE_SYSCALL, tracee_pid, 0, 0) < 0) {
+        return -1;
+    }
+    int entering = 1;
+    for (;;) {
+        if (waitpid(tracee_pid, &status, 0) < 0) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        if (WIFEXITED(status)) return WEXITSTATUS(status);
+        if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
+        if (!WIFSTOPPED(status)) continue;
+        int signal_number = WSTOPSIG(status);
+        if (signal_number == (SIGTRAP | 0x80)) {
+            struct user_regs_struct regs;
+            if (ptrace(PTRACE_GETREGS, tracee_pid, 0, &regs) < 0) return -1;
+            int error = entering ? handle_entry(&regs) : handle_exit(&regs);
+            if (error < 0) return -1;
+            entering = !entering;
+            if (ptrace(PTRACE_SYSCALL, tracee_pid, 0, 0) < 0) return -1;
+        } else {
+            int deliver = signal_number == SIGTRAP ? 0 : signal_number;
+            if (ptrace(PTRACE_SYSCALL, tracee_pid, 0, deliver) < 0) return -1;
+        }
+    }
+}
+
+int main(int argc, char **argv) {
+    if (argc < 2) {
+        fprintf(stderr, "usage: wsl-win-relay-strict COMMAND [ARG ...]\n");
+        return 2;
+    }
+    control_path = getenv("WSL_WIN_RELAY_CONTROL");
+    if (control_path == NULL || control_path[0] == '\0') {
+        fprintf(stderr, "WSL_WIN_RELAY_CONTROL is required\n");
+        return 2;
+    }
+    tracee_pid = fork();
+    if (tracee_pid < 0) {
+        perror("fork");
+        return 1;
+    }
+    if (tracee_pid == 0) {
+        if (ptrace(PTRACE_TRACEME, 0, 0, 0) < 0) _exit(127);
+        raise(SIGSTOP);
+        execvp(argv[1], &argv[1]);
+        _exit(127);
+    }
+    int status = trace_target();
+    while (bindings != NULL) {
+        struct binding *next = bindings->next;
+        if (bindings->lease != 0) (void)lease_operation("CLOSE", bindings->lease);
+        free(bindings);
+        bindings = next;
+    }
+    return status < 0 ? 1 : status;
+}

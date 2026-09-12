@@ -70,6 +70,10 @@
       shared-address-space contract.
 - [ ] Kernel-level coverage for static binaries and unusual thread-group
       ownership patterns; static/setuid binaries remain outside LD_PRELOAD.
+- [x] Phase-one opt-in ptrace supervisor (`wsl-win-relay-run --kernel`) now
+      coordinates direct single-process static amd64 TCP/UDP `bind/listen`
+      syscalls through the existing lease protocol; fork/clone/thread-group
+      ownership and non-amd64 coverage remain follow-up work.
 - [x] The strict launcher now fails closed for directly executed static ELF
       and setuid/setgid targets instead of silently implying interposition;
       true kernel-level coverage remains a separate adapter boundary.
