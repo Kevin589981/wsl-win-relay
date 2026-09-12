@@ -27,4 +27,6 @@ if [ ! -f "$WSL_WIN_RELAY_BROKER_EXE" ] && ! command -v "$WSL_WIN_RELAY_BROKER_E
     exit 1
 fi
 
-exec "$WSL_WIN_RELAY_BROKER_EXE" -endpoint "$broker_endpoint"
+# Keep a Windows-side parent alive so a frontend crash is recoverable without
+# relying on the WSL service manager to notice the child process boundary.
+exec "$WSL_WIN_RELAY_BROKER_EXE" -supervise -endpoint "$broker_endpoint"

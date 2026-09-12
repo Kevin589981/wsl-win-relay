@@ -82,7 +82,9 @@ mounted Windows `wsl-win-broker.exe` path and run
 `./scripts/install-broker-user-service.sh`. It creates a mode-0600
 `broker.env`, generates the attach token once, and enables
 `wsl-win-relay-broker.service` with a bounded restart policy. The broker
-executable keeps socket ownership in a separate socket-owner child behind a
+service wrapper starts the broker's host-level `-supervise` parent, which keeps
+the public frontend recoverable after an abnormal exit. The broker executable
+keeps socket ownership in a separate socket-owner child behind a
 socket-host bridge, so frontend, bridge-worker, and socket-host bridge crashes
 do not close established kernel sockets; a socket-owner crash still does. The normal
 proxy service wrapper loads the same env file for connector children and

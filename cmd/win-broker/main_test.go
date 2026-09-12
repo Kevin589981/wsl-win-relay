@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestParseOptionsSocketOwnerRole(t *testing.T) {
 	opts, err := parseOptions([]string{"-socket-owner", "-token-hex", "aabbcc"})
@@ -30,5 +33,33 @@ func TestParseOptionsSocketBridgeRequiresOwner(t *testing.T) {
 func TestParseOptionsRejectsMultipleInternalRoles(t *testing.T) {
 	if _, err := parseOptions([]string{"-worker", "-socket-owner", "-token-hex", "aabbcc"}); err == nil {
 		t.Fatal("multiple internal roles should fail")
+	}
+}
+
+func TestParseOptionsSupervisor(t *testing.T) {
+	opts, err := parseOptions([]string{"-supervise", "-token-hex", "aabbcc", "-endpoint", "broker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opts.supervisor || opts.worker || opts.socketOwner || opts.socketHost || opts.socketBridge {
+		t.Fatalf("unexpected supervisor options: %#v", opts)
+	}
+	if got := frontendArgs(options{endpoint: "broker", tokenHex: "aabbcc", upstreamProxy: "socks5h://proxy"}); len(got) != 6 || got[0] != "-endpoint" || got[4] != "-upstream-proxy" {
+		t.Fatalf("frontend args: %#v", got)
+	}
+}
+
+func TestSupervisorDelay(t *testing.T) {
+	if got := nextSupervisorDelay(0); got != supervisorInitialDelay {
+		t.Fatalf("zero delay=%s", got)
+	}
+	if got := nextSupervisorDelay(2 * time.Second); got != 4*time.Second {
+		t.Fatalf("first backoff=%s", got)
+	}
+	if got := nextSupervisorDelay(20 * time.Second); got != supervisorMaxDelay {
+		t.Fatalf("capped backoff=%s", got)
+	}
+	if got := nextSupervisorDelay(supervisorMaxDelay); got != supervisorMaxDelay {
+		t.Fatalf("maximum backoff=%s", got)
 	}
 }

@@ -18,6 +18,7 @@ type options struct {
 	endpoint      string
 	tokenHex      string
 	upstreamProxy string
+	supervisor    bool
 	worker        bool
 	socketHost    bool
 	socketBridge  bool
@@ -34,6 +35,13 @@ func main() {
 	}
 	if opts.socketHost {
 		if err := runSocketBridge(opts, logger, roleSocketHost); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Printf("stopped: %v", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if opts.supervisor {
+		if err := runSupervisor(opts, logger); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Printf("stopped: %v", err)
 			os.Exit(1)
 		}
@@ -73,6 +81,7 @@ func parseOptions(args []string) (options, error) {
 	set.StringVar(&opts.endpoint, "endpoint", opts.endpoint, "per-user local IPC endpoint")
 	set.StringVar(&opts.tokenHex, "token-hex", opts.tokenHex, "attach token in hexadecimal (prefer WSL_WIN_RELAY_ATTACH_TOKEN)")
 	set.StringVar(&opts.upstreamProxy, "upstream-proxy", opts.upstreamProxy, "optional HTTP CONNECT or SOCKS5 proxy URL")
+	set.BoolVar(&opts.supervisor, "supervise", false, "host-level supervisor mode; restart the frontend after a crash")
 	set.BoolVar(&opts.worker, "worker", false, "internal socket-owning worker mode")
 	set.BoolVar(&opts.socketHost, "socket-host", false, "internal durable socket-host mode")
 	set.BoolVar(&opts.socketBridge, "socket-bridge", false, "internal connector bridge mode")
@@ -88,6 +97,9 @@ func parseOptions(args []string) (options, error) {
 		return options{}, errors.New("endpoint and token-hex are required")
 	}
 	roleCount := 0
+	if opts.supervisor {
+		roleCount++
+	}
 	if opts.worker {
 		roleCount++
 	}

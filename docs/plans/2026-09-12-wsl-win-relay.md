@@ -137,6 +137,9 @@
       because the socket owner, rather than the bridge, owns the kernel sockets.
 - [x] Socket-owner crash recovery rebuilds the owner, outer bridges, and new
       mappings; established streams remain the documented unrecoverable boundary.
+- [x] Broker executable provides a host-level `-supervise` parent that restarts
+      a crashed frontend with bounded backoff; the broker user-service wrapper
+      uses it by default while preserving status-2 configuration failures.
 - [ ] Socket-owner crash recovery still requires a separate host-level recovery
       boundary because the socket owner owns the kernel sockets.
 

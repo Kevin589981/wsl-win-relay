@@ -1,0 +1,79 @@
+#!/bin/sh
+set -eu
+
+repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+tmp_dir=$(mktemp -d)
+supervisor_pid=
+frontend_pid=
+proxy_pid=
+http_pid=
+
+cleanup() {
+    [ -z "${proxy_pid:-}" ] || kill "$proxy_pid" 2>/dev/null || true
+    [ -z "${supervisor_pid:-}" ] || kill "$supervisor_pid" 2>/dev/null || true
+    [ -z "${frontend_pid:-}" ] || kill "$frontend_pid" 2>/dev/null || true
+    [ -z "${http_pid:-}" ] || kill "$http_pid" 2>/dev/null || true
+    # A killed frontend may have left roles that it did not start in this
+    # process. Only terminate broker binaries carrying this unique endpoint.
+    for pid in $(ps -eo pid=,args= | awk -v marker="$tmp_dir/broker.sock" '$0 ~ marker {print $1}'); do
+        kill "$pid" 2>/dev/null || true
+    done
+    [ -z "${proxy_pid:-}" ] || wait "$proxy_pid" 2>/dev/null || true
+    [ -z "${supervisor_pid:-}" ] || wait "$supervisor_pid" 2>/dev/null || true
+    [ -z "${http_pid:-}" ] || wait "$http_pid" 2>/dev/null || true
+    rm -rf "$tmp_dir"
+}
+trap cleanup EXIT INT TERM
+
+GOPROXY=off go build -o "$tmp_dir/win-broker" "$repo_dir/cmd/win-broker"
+GOPROXY=off go build -o "$tmp_dir/win-connector" "$repo_dir/cmd/win-connector"
+GOPROXY=off go build -o "$tmp_dir/wsl-proxy" "$repo_dir/cmd/wsl-proxy"
+
+python3 -m http.server 18082 --bind 127.0.0.1 >"$tmp_dir/http.log" 2>&1 &
+http_pid=$!
+
+token=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' 
+')
+WSL_WIN_RELAY_ATTACH_TOKEN=$token WSL_WIN_RELAY_BROKER_ENDPOINT="$tmp_dir/broker.sock"     "$tmp_dir/win-broker" -supervise -endpoint "$tmp_dir/broker.sock" -token-hex "$token"     >"$tmp_dir/broker.log" 2>&1 &
+supervisor_pid=$!
+
+for _ in $(seq 1 100); do
+    [ -S "$tmp_dir/broker.sock" ] && break
+    sleep 0.1
+done
+[ -S "$tmp_dir/broker.sock" ]
+
+WSL_WIN_RELAY_ATTACH_TOKEN=$token WSL_WIN_RELAY_BROKER_ENDPOINT="$tmp_dir/broker.sock"     "$tmp_dir/wsl-proxy" -broker-mode -relay-exe "$tmp_dir/win-connector"     -listen 127.0.0.1:18083     >"$tmp_dir/proxy.log" 2>&1 &
+proxy_pid=$!
+
+probe() {
+    curl --noproxy '' --silent --show-error --fail         --socks5-hostname 127.0.0.1:18083         http://127.0.0.1:18082/ >/dev/null 2>/dev/null
+}
+
+for _ in $(seq 1 100); do
+    if probe; then
+        break
+    fi
+    sleep 0.1
+done
+probe
+
+for _ in $(seq 1 100); do
+    frontend_pid=$(ps -eo pid=,args= | awk -v exe="$tmp_dir/win-broker" -v endpoint="$tmp_dir/broker.sock" '$0 ~ exe && $0 ~ endpoint && $0 !~ /-supervise/ {print $1; exit}')
+    [ -n "$frontend_pid" ] && break
+    sleep 0.1
+done
+[ -n "$frontend_pid" ]
+kill -9 "$frontend_pid"
+frontend_pid=
+
+for _ in $(seq 1 400); do
+    if probe; then
+        echo "broker host supervisor rebuilt frontend and preserved WSL proxy service"
+        exit 0
+    fi
+    sleep 0.1
+done
+
+cat "$tmp_dir/broker.log" "$tmp_dir/proxy.log"
+exit 1
