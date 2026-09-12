@@ -85,20 +85,22 @@ func (w *DatagramWatcher) datagramScanner() Scanner {
 func (w *DatagramWatcher) datagramOpener() Opener { return datagramOpenerAdapter{opener: w.Opener} }
 
 type Watcher struct {
-	Scanner      Scanner
-	Opener       Opener
-	WindowsHost  string
-	WindowsHost6 string
-	Interval     time.Duration
-	OpenTimeout  time.Duration
-	Included     map[uint16]bool
-	Excluded     map[uint16]bool
-	Logger       *log.Logger
-	Label        string
-	mu           sync.Mutex
-	active       map[listenerKey]activeMapping
-	rejected     map[listenerKey]bool
-	generation   uint64
+	Scanner       Scanner
+	Opener        Opener
+	WindowsHost   string
+	WindowsHost6  string
+	Interval      time.Duration
+	OpenTimeout   time.Duration
+	Included      map[uint16]bool
+	Excluded      map[uint16]bool
+	Logger        *log.Logger
+	Label         string
+	mu            sync.Mutex
+	active        map[listenerKey]activeMapping
+	rejected      map[listenerKey]bool
+	generation    uint64
+	attemptID     uint64
+	attemptCancel context.CancelFunc
 }
 
 type listenerKey struct {
@@ -195,6 +197,24 @@ func (w *Watcher) sync(ctx context.Context) error {
 	for _, mapping := range removed {
 		w.closeMapping(mapping.closer)
 	}
+	attemptCtx, cancelAttempt := context.WithCancel(ctx)
+	w.mu.Lock()
+	w.attemptID++
+	attemptID := w.attemptID
+	previousCancel := w.attemptCancel
+	w.attemptCancel = cancelAttempt
+	w.mu.Unlock()
+	if previousCancel != nil {
+		previousCancel()
+	}
+	defer func() {
+		cancelAttempt()
+		w.mu.Lock()
+		if w.attemptID == attemptID {
+			w.attemptCancel = nil
+		}
+		w.mu.Unlock()
+	}()
 	type mappingAttempt struct {
 		key        listenerKey
 		listener   Listener
@@ -219,11 +239,11 @@ func (w *Watcher) sync(ctx context.Context) error {
 			defer attemptsDone.Done()
 			select {
 			case sem <- struct{}{}:
-			case <-ctx.Done():
+			case <-attemptCtx.Done():
 				return
 			}
 			defer func() { <-sem }()
-			w.openOne(ctx, attempt.key, attempt.listener, attempt.generation, desired)
+			w.openOne(attemptCtx, attempt.key, attempt.listener, attempt.generation, desired)
 		}(attempt)
 	}
 	attemptsDone.Wait()
@@ -257,6 +277,10 @@ func (w *Watcher) openOne(ctx context.Context, key listenerKey, listener Listene
 	if staleGeneration {
 		// Reset may have replaced the relay session while the opener was
 		// blocked. Never publish a mapping created by that old session.
+		w.closeMapping(closer)
+		return
+	}
+	if ctx.Err() != nil {
 		w.closeMapping(closer)
 		return
 	}
@@ -309,7 +333,12 @@ func (w *Watcher) closeAll() {
 	active := w.active
 	w.active = make(map[listenerKey]activeMapping)
 	w.generation++
+	cancelAttempt := w.attemptCancel
+	w.attemptCancel = nil
 	w.mu.Unlock()
+	if cancelAttempt != nil {
+		cancelAttempt()
+	}
 	for _, mapping := range active {
 		w.closeMapping(mapping.closer)
 	}
@@ -323,7 +352,12 @@ func (w *Watcher) Reset() {
 	w.active = make(map[listenerKey]activeMapping)
 	w.rejected = make(map[listenerKey]bool)
 	w.generation++
+	cancelAttempt := w.attemptCancel
+	w.attemptCancel = nil
 	w.mu.Unlock()
+	if cancelAttempt != nil {
+		cancelAttempt()
+	}
 	for _, mapping := range active {
 		w.closeMapping(mapping.closer)
 	}

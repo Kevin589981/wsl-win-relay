@@ -253,6 +253,28 @@ func TestWatcherDropsMappingOpenedBeforeReset(t *testing.T) {
 	}
 }
 
+func TestWatcherResetCancelsInFlightAttempts(t *testing.T) {
+	scanner := &sequenceScanner{values: [][]Listener{{{Network: "tcp4", Port: 8000}}}}
+	opener := &cancelAwareOpenOpener{started: make(chan struct{})}
+	w := &Watcher{Scanner: scanner, Opener: opener, Logger: log.New(io.Discard, "", 0), active: make(map[listenerKey]activeMapping)}
+	done := make(chan error, 1)
+	go func() { done <- w.sync(context.Background()) }()
+	select {
+	case <-opener.started:
+	case <-time.After(time.Second):
+		t.Fatal("opener did not start")
+	}
+	w.Reset()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("reset did not cancel in-flight opener")
+	}
+}
+
 func TestWatcherOpensMappingsConcurrently(t *testing.T) {
 	scanner := &sequenceScanner{values: [][]Listener{{
 		{Network: "tcp4", Port: 8000},
@@ -336,6 +358,18 @@ type delayedOpenOpener struct {
 	started chan struct{}
 	release chan struct{}
 	closed  chan struct{}
+}
+
+type cancelAwareOpenOpener struct {
+	started chan struct{}
+}
+
+func (*cancelAwareOpenOpener) Scan() ([]Listener, error) { return nil, nil }
+
+func (o *cancelAwareOpenOpener) ReverseForward(ctx context.Context, _, _ string) (io.Closer, error) {
+	close(o.started)
+	<-ctx.Done()
+	return nil, ctx.Err()
 }
 
 func (*delayedOpenOpener) Scan() ([]Listener, error) { return nil, nil }

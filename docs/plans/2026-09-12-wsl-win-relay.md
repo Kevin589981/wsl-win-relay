@@ -87,6 +87,8 @@
       bind/relay request cannot serialize an entire listener scan.
 - [x] The bounded mapping worker pool is covered by a concurrency regression
       test and keeps stale-session cleanup checks in every worker.
+- [x] Relay reset and watcher shutdown cancel in-flight mapping attempts so a
+      reconnect does not wait for the full per-port open timeout.
 - [x] Broker-mode can be selected from the persistent JSON configuration while
       attach credentials remain environment-only.
 - [x] Optional systemd user broker unit, private token file, and bounded broker
