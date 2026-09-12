@@ -106,6 +106,8 @@
 - [x] Socket-host health probes detect a dead reused host and rebuild the host
       plus automatic/explicit/strict mappings; established streams end at the
       socket-host crash boundary.
+- [x] Broker connector credentials are propagated through a normalized,
+      flag-free `WSLENV` entry; the contract is documented in ADR-0017.
 - [ ] Socket-host crash recovery still requires a separate host-level recovery
       boundary to preserve already-established streams because the socket host
       owns the kernel sockets.

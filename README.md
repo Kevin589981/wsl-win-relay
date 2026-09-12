@@ -104,7 +104,10 @@ broker on a per-user named pipe, and performs a SOCKS5 request to
 `https://example.com`. WSL does not automatically export arbitrary environment
 variables to Windows processes, so broker mode adds
 `WSL_WIN_RELAY_BROKER_ENDPOINT` and `WSL_WIN_RELAY_ATTACH_TOKEN` to `WSLENV`
-for connector children. The token remains out of command-line arguments.
+for connector children. The token remains out of command-line arguments. See
+[ADR-0017](docs/adr/0017-wslenv-credential-propagation.md) for the normalization
+rule that preserves unrelated entries while forcing these two names to be
+single, flag-free entries.
 
 ## Security model
 
