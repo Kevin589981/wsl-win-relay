@@ -645,9 +645,6 @@ static int handle_entry(wwr_regs *regs) {
             first > UINT_MAX || last > UINT_MAX) {
             return stop_syscall(regs, ENOTSUP);
         }
-        if ((flags & CLOSE_RANGE_CLOEXEC) != 0) {
-            return 0;
-        }
         pending_call.kind = PENDING_CLOSE_RANGE;
         pending_call.range_first = (unsigned)first;
         pending_call.range_last = (unsigned)last;

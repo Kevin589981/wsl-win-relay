@@ -255,8 +255,8 @@ stop_control
 start_control "$tmp_dir/close-range-cloexec.sock" "$tmp_dir/close-range-cloexec.log"
 WSL_WIN_RELAY_CONTROL="$tmp_dir/close-range-cloexec.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" close-range-cloexec
 grep -q 'RESERVE .* tcp4 47137' "$tmp_dir/close-range-cloexec.log"
-test "$(grep -Ec '^RESERVE ' "$tmp_dir/close-range-cloexec.log")" -eq 1
-test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/close-range-cloexec.log")" -eq 1
+test "$(grep -Ec '^RESERVE ' "$tmp_dir/close-range-cloexec.log")" -eq 2
+test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/close-range-cloexec.log")" -eq 2
 stop_control
 
 start_control "$tmp_dir/socket-cloexec.sock" "$tmp_dir/socket-cloexec.log"
