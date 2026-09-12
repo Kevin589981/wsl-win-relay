@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -106,7 +107,22 @@ func prepareSocketPath(path string) error {
 	if info.Mode()&os.ModeSocket == 0 {
 		return fmt.Errorf("refusing to replace non-socket path %s", path)
 	}
-	return os.Remove(path)
+	probe, err := net.DialTimeout("unix", path, 100*time.Millisecond)
+	if err == nil {
+		_ = probe.Close()
+		return fmt.Errorf("control socket already in use: %s", path)
+	}
+	if !isStaleSocketProbeError(err) {
+		return fmt.Errorf("cannot determine whether control socket is in use: %w", err)
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func isStaleSocketProbeError(err error) bool {
+	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNRESET)
 }
 
 func (s *Server) handle(ctx context.Context, conn net.Conn) {

@@ -26,6 +26,8 @@ milestone is usable and tested:
 - Per-stream 256 KiB credit windows that isolate slow TCP consumers.
 - Startup capability negotiation before any proxy or mapped port is advertised.
 - Idempotent systemd user-service installation with private configuration permissions and restart-on-relay-failure.
+- Control-socket startup is exclusive: an active prior instance is preserved and
+  rejected, while an unreferenced stale socket is cleaned up safely.
 - Verified in the target failure mode: WSL could not reach the configured Windows proxy port, while this relay still reached the public Internet and cloned a GitHub repository.
 
 Explicit reverse port forwarding and strict synchronization with dynamically linked application `listen()` calls are implemented. The broader automatic mode remains polling-based so it can support unmodified applications.
@@ -240,6 +242,10 @@ Definitive Windows bind errors are returned immediately. Set
 `WSL_WIN_RELAY_CONTROL_RETRY_SECONDS` to extend this window (up to 60 seconds)
 when the relay supervisor uses a longer restart backoff; the strict launcher
 uses the same value while waiting for the control socket.
+
+The relay refuses to replace an active control socket from another instance.
+Only a socket that no longer has a listener is removed during startup, which
+prevents two supervisors from silently publishing different reservation state.
 
 This propagates bind/listen errors, not later firewall policy. A Windows
 firewall rule that drops or rejects clients after the socket is bound does not

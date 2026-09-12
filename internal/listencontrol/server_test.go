@@ -288,6 +288,39 @@ func TestPrepareSocketPathRefusesRegularFile(t *testing.T) {
 	}
 }
 
+func TestPrepareSocketPathRefusesActiveSocket(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "control.sock")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	if err := prepareSocketPath(path); err == nil {
+		t.Fatal("expected active socket refusal")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("active socket was removed: %v", err)
+	}
+}
+
+func TestPrepareSocketPathRemovesStaleSocket(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "control.sock")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareSocketPath(path); err != nil {
+		t.Fatalf("prepare stale socket: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("stale socket remains, stat err=%v", err)
+	}
+}
+
 type fakeReservation struct {
 	mu        sync.Mutex
 	committed bool
