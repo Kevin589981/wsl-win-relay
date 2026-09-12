@@ -198,7 +198,7 @@ Inbound exposure is different. A Windows port must be bound before Windows clien
 
 ## Build
 
-Build the Linux proxy and Windows relay from the repository root. From Windows PowerShell:
+Build the Linux proxy and Windows relay from the repository root. From Windows PowerShell (use `arm64` on an ARM64 WSL/Windows pair):
 
 ```powershell
 $env:GOOS='linux'; $env:GOARCH='amd64'; go build -o bin/wsl-proxy-linux ./cmd/wsl-proxy
@@ -206,7 +206,12 @@ $env:GOOS='windows'; $env:GOARCH='amd64'; go build -o bin/wsl-win-relay.exe ./cm
 Remove-Item Env:GOOS,Env:GOARCH
 ```
 
-`wsl-proxy-linux` is the binary to run inside WSL; `wsl-win-relay.exe` is launched by it through WSL interop. Alternatively, run `go build` for the Linux proxy directly inside WSL.
+`scripts/build-wsl.sh` selects `amd64` or `arm64` from `uname -m`; set
+`WSL_WIN_RELAY_GOARCH=amd64|arm64` to override it for Go cross-builds. The
+native strict supervisor is compiled for the running WSL architecture.
+`wsl-proxy-linux` is the binary to run inside WSL; `wsl-win-relay.exe` is
+launched by it through WSL interop. Alternatively, run `go build` for the
+Linux proxy directly inside WSL.
 
 ## Configuration
 
