@@ -43,6 +43,11 @@ work follows the same model:
 - `PTRACE_O_TRACEFORK` and `PTRACE_O_TRACECLONE` attach process-style children
   before they can execute another syscall. The event handler clones inherited
   fd state and issues `ADOPT child-pid lease` once per inherited lease.
+- A very short libc `vfork()` child can report its initial ptrace `SIGSTOP`
+  before the parent's fork event is delivered. The supervisor recovers this
+  narrow case by validating `/proc/<child>/status`'s `PPid` against a parent
+  task with a pending create syscall, then applies the same group and lease
+  setup; any other unknown task remains a hard failure.
 - `vfork()` uses `PTRACE_EVENT_VFORK` and a copied process group, so child-side
   `bind/listen` before `_exit` is coordinated. Ordinary `CLONE_THREAD` tasks share the binding
   table and migrate the group owner at `PTRACE_EVENT_EXIT`; the paired

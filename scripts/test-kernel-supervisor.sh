@@ -353,7 +353,15 @@ grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/posix-spawn-close.log"
 stop_control
 
 start_control "$tmp_dir/system.sock" "$tmp_dir/system.log"
+set +e
 WSL_WIN_RELAY_CONTROL="$tmp_dir/system.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" system
+system_status=$?
+set -e
+if [ "$system_status" -ne 0 ]; then
+    echo "system libc launch failed with status $system_status" >&2
+    cat "$tmp_dir/system.log" >&2 || true
+    exit 1
+fi
 grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/system.log"
 grep -q '^COMMIT ' "$tmp_dir/system.log"
 grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/system.log"

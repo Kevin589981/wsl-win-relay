@@ -291,6 +291,26 @@ static struct task *find_task(pid_t pid) {
     return NULL;
 }
 
+static pid_t read_parent_pid(pid_t pid) {
+    char path[64];
+    snprintf(path, sizeof(path), "/proc/%ld/status", (long)pid);
+    FILE *file = fopen(path, "r");
+    if (file == NULL) {
+        return -1;
+    }
+    char line[256];
+    pid_t parent = -1;
+    while (fgets(line, sizeof(line), file) != NULL) {
+        long value;
+        if (sscanf(line, "PPid:\t%ld", &value) == 1 && value > 0) {
+            parent = (pid_t)value;
+            break;
+        }
+    }
+    fclose(file);
+    return parent;
+}
+
 static struct task_group *new_group(pid_t owner_pid) {
     struct task_group *group = calloc(1, sizeof(*group));
     if (group != NULL) {
@@ -921,6 +941,39 @@ static int handle_exit(wwr_regs *regs) {
     return 0;
 }
 
+/* Some libc vfork implementations can deliver the child's initial ptrace
+ * SIGSTOP before the parent's PTRACE_EVENT_VFORK stop. Recover only when the
+ * kernel still reports a matching pending create syscall for that child. */
+static int attach_pending_child(pid_t child_pid, struct task *parent, long options) {
+    if (parent == NULL || parent->pending.kind != PENDING_CREATE) {
+        return -1;
+    }
+    int thread_child = parent->pending.type != 0;
+    int shared_files = (parent->pending.create_flags & CLONE_FILES) != 0;
+    int shared_group = thread_child || shared_files;
+    if (debug_enabled()) {
+        fprintf(stderr, "strict-supervisor: recovering pending child %ld from parent %ld thread=%d shared-files=%d\n",
+                (long)child_pid, (long)parent->pid, thread_child, shared_files);
+    }
+    struct task_group *child_group = shared_group ? parent->group : clone_group(parent->group, child_pid);
+    struct task *child = child_group == NULL ? NULL : add_task(child_pid, child_group);
+    if (child == NULL) {
+        if (!shared_group) free(child_group);
+        return -1;
+    }
+    child->process_shared_files = shared_files && !thread_child;
+    if (ptrace(PTRACE_SETOPTIONS, child->pid, 0, options) < 0) {
+        if (errno == ESRCH) {
+            return 0;
+        }
+        return -1;
+    }
+    if (ptrace(PTRACE_SYSCALL, child->pid, 0, 0) < 0 && errno != ESRCH) {
+        return -1;
+    }
+    return 0;
+}
+
 static int trace_target(void) {
     int status;
     if (waitpid(root_pid, &status, 0) < 0 || !WIFSTOPPED(status)) {
@@ -949,8 +1002,18 @@ static int trace_target(void) {
         }
         struct task *task = find_task(pid);
         if (task == NULL) {
+            if (WIFSTOPPED(status) && WSTOPSIG(status) == SIGSTOP &&
+                ((unsigned)status >> 16) == 0) {
+                pid_t parent_pid = read_parent_pid(pid);
+                struct task *parent = find_task(parent_pid);
+                if (parent != NULL && parent->pending.kind == PENDING_CREATE &&
+                    attach_pending_child(pid, parent, options) == 0) {
+                    continue;
+                }
+            }
             if (debug_enabled()) {
-                fprintf(stderr, "strict-supervisor: status for unknown task %ld\n", (long)pid);
+                fprintf(stderr, "strict-supervisor: status for unknown task %ld (status=0x%x stopped=%d event=%u)\n",
+                        (long)pid, status, WIFSTOPPED(status), (unsigned)status >> 16);
             }
             return -1;
         }
