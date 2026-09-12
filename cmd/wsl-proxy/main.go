@@ -347,13 +347,13 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 			addAddressPort(excluded, mapping.Windows)
 			addAddressPort(excluded, mapping.WSL)
 		}
-		watcher := &autoforward.Watcher{Scanner: autoforward.DefaultProcScanner(), Opener: dialer, WindowsHost: opts.autoForwardHost, WindowsHost6: opts.autoForwardHost6, Interval: opts.autoForwardInterval, Included: opts.autoInclude, Excluded: excluded, Logger: logger}
+		watcher := &autoforward.Watcher{Scanner: autoforward.DefaultProcScanner(), Opener: dialer, WindowsHost: opts.autoForwardHost, WindowsHost6: opts.autoForwardHost6, Interval: opts.autoForwardInterval, OpenTimeout: opts.relayDialTimeout, Included: opts.autoInclude, Excluded: excluded, Logger: logger}
 		autoDone = make(chan error, 1)
 		go func() { autoDone <- watcher.Run(ctx) }()
 		logger.Printf("automatic forwarding enabled on Windows hosts %s (IPv4), %s (IPv6)", opts.autoForwardHost, opts.autoForwardHost6)
 		var udpWatcher *autoforward.DatagramWatcher
 		if opts.autoForwardUDP {
-			udpWatcher = &autoforward.DatagramWatcher{Scanner: autoforward.DefaultProcScanner(), Opener: dialer, WindowsHost: opts.autoForwardHost, WindowsHost6: opts.autoForwardHost6, Interval: opts.autoForwardInterval, Included: opts.autoUDPInclude, Excluded: excluded, Logger: logger}
+			udpWatcher = &autoforward.DatagramWatcher{Scanner: autoforward.DefaultProcScanner(), Opener: dialer, WindowsHost: opts.autoForwardHost, WindowsHost6: opts.autoForwardHost6, Interval: opts.autoForwardInterval, OpenTimeout: opts.relayDialTimeout, Included: opts.autoUDPInclude, Excluded: excluded, Logger: logger}
 			autoUDPDone = make(chan error, 1)
 			go func() { autoUDPDone <- udpWatcher.Run(ctx) }()
 			logger.Printf("automatic UDP forwarding enabled for allowlisted ports %s", formatPorts(portsFromSet(opts.autoUDPInclude)))

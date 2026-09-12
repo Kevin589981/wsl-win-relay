@@ -202,6 +202,29 @@ func TestWatcherResetClosesActiveMappings(t *testing.T) {
 	}
 }
 
+func TestWatcherOpenTimeoutReleasesBlockedAttempt(t *testing.T) {
+	w := &Watcher{
+		Scanner:     &sequenceScanner{values: [][]Listener{{{Network: "tcp4", Port: 8000}}}},
+		Opener:      timeoutOpener{},
+		OpenTimeout: 10 * time.Millisecond,
+		Logger:      log.New(io.Discard, "", 0),
+		active:      make(map[listenerKey]activeMapping),
+	}
+	started := time.Now()
+	if err := w.sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("blocked opener was not released: %s", elapsed)
+	}
+	w.mu.Lock()
+	rejected := w.rejected[listenerKey{network: "tcp4", port: 8000}]
+	w.mu.Unlock()
+	if !rejected {
+		t.Fatal("timed out mapping was not marked rejected")
+	}
+}
+
 type sequenceScanner struct {
 	mu     sync.Mutex
 	values [][]Listener
@@ -248,6 +271,13 @@ type nilCloserOpener struct{}
 
 func (nilCloserOpener) ReverseForward(context.Context, string, string) (io.Closer, error) {
 	return nil, nil
+}
+
+type timeoutOpener struct{}
+
+func (timeoutOpener) ReverseForward(ctx context.Context, _, _ string) (io.Closer, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
 }
 
 type recordingDatagramOpener struct {

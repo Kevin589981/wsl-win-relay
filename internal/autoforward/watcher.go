@@ -30,6 +30,7 @@ type DatagramWatcher struct {
 	WindowsHost  string
 	WindowsHost6 string
 	Interval     time.Duration
+	OpenTimeout  time.Duration
 	Included     map[uint16]bool
 	Excluded     map[uint16]bool
 	Logger       *log.Logger
@@ -53,7 +54,7 @@ func (w *DatagramWatcher) Run(ctx context.Context) error {
 	}
 	runner := &Watcher{
 		Scanner: w.datagramScanner(), Opener: w.datagramOpener(), WindowsHost: w.WindowsHost,
-		WindowsHost6: w.WindowsHost6, Interval: w.Interval, Included: w.Included,
+		WindowsHost6: w.WindowsHost6, Interval: w.Interval, OpenTimeout: w.OpenTimeout, Included: w.Included,
 		Excluded: w.Excluded, Logger: w.Logger, Label: "auto-forward UDP",
 	}
 	w.runnerMu.Lock()
@@ -89,6 +90,7 @@ type Watcher struct {
 	WindowsHost  string
 	WindowsHost6 string
 	Interval     time.Duration
+	OpenTimeout  time.Duration
 	Included     map[uint16]bool
 	Excluded     map[uint16]bool
 	Logger       *log.Logger
@@ -208,7 +210,13 @@ func (w *Watcher) sync(ctx context.Context) error {
 		}
 		windowsAddr := net.JoinHostPort(windowsHost, strconv.Itoa(int(listener.Port)))
 		wslTarget := net.JoinHostPort(wslHost, strconv.Itoa(int(listener.Port)))
-		closer, openErr := w.Opener.ReverseForward(ctx, windowsAddr, wslTarget)
+		openCtx := ctx
+		cancelOpen := func() {}
+		if w.OpenTimeout > 0 {
+			openCtx, cancelOpen = context.WithTimeout(ctx, w.OpenTimeout)
+		}
+		closer, openErr := w.Opener.ReverseForward(openCtx, windowsAddr, wslTarget)
+		cancelOpen()
 		if openErr != nil {
 			w.mu.Lock()
 			firstRejection := !w.rejected[key]

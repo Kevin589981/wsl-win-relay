@@ -206,6 +206,9 @@ Useful controls:
 ```
 
 The SOCKS5 listener and explicit reverse-forward destinations are excluded automatically. Automatic mappings are removed when their WSL listener disappears. The watcher lives for the whole proxy process: when the Windows relay child is replaced, old mappings are closed and recreated on the replacement session after it becomes ready.
+Each automatic mapping attempt is bounded by `relay_dial_timeout`; a relay
+outage therefore cannot block listener discovery indefinitely, and the next
+scan retries it after the session recovers.
 
 To run the real WSL/Windows recovery check after building both binaries, use
 `./scripts/test-auto-rebind.sh`. It requires WSL Windows interop and verifies
