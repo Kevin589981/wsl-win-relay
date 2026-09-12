@@ -159,7 +159,7 @@ func TestWatcherLogsRejectionOnceAndRestoration(t *testing.T) {
 	scanner := &sequenceScanner{values: [][]Listener{{{Network: "tcp4", Port: 8000}}, {{Network: "tcp4", Port: 8000}}, {{Network: "tcp4", Port: 8000}}}}
 	opener := &recordingOpener{failures: 1, err: errors.New("address in use"), closed: make(chan string, 1)}
 	var logs bytes.Buffer
-	w := &Watcher{Scanner: scanner, Opener: opener, Logger: log.New(&logs, "", 0), active: make(map[listenerKey]activeMapping)}
+	w := &Watcher{Scanner: scanner, Opener: opener, RetryMin: 0, RetryMax: 0, Logger: log.New(&logs, "", 0), active: make(map[listenerKey]activeMapping)}
 	for i := 0; i < 3; i++ {
 		if err := w.sync(context.Background()); err != nil {
 			t.Fatal(err)
@@ -173,6 +173,28 @@ func TestWatcherLogsRejectionOnceAndRestoration(t *testing.T) {
 	}
 	if got := strings.Count(logs.String(), "auto-forward restored"); got != 1 {
 		t.Fatalf("restoration log count=%d logs=%q", got, logs.String())
+	}
+}
+
+func TestWatcherBacksOffRejectedMapping(t *testing.T) {
+	scanner := &sequenceScanner{values: [][]Listener{{{Network: "tcp4", Port: 8000}}, {{Network: "tcp4", Port: 8000}}, {{Network: "tcp4", Port: 8000}}}}
+	opener := &recordingOpener{failures: 1, err: errors.New("address in use"), closed: make(chan string, 1)}
+	w := &Watcher{Scanner: scanner, Opener: opener, RetryMin: 30 * time.Millisecond, RetryMax: 30 * time.Millisecond, Logger: log.New(io.Discard, "", 0), active: make(map[listenerKey]activeMapping)}
+	if err := w.sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(opener.opened) != 1 {
+		t.Fatalf("backoff did not suppress immediate retry: %v", opener.opened)
+	}
+	time.Sleep(35 * time.Millisecond)
+	if err := w.sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(opener.opened) != 2 {
+		t.Fatalf("mapping was not retried after backoff: %v", opener.opened)
 	}
 }
 

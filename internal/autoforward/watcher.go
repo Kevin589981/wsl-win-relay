@@ -85,19 +85,25 @@ func (w *DatagramWatcher) datagramScanner() Scanner {
 func (w *DatagramWatcher) datagramOpener() Opener { return datagramOpenerAdapter{opener: w.Opener} }
 
 type Watcher struct {
-	Scanner       Scanner
-	Opener        Opener
-	WindowsHost   string
-	WindowsHost6  string
-	Interval      time.Duration
-	OpenTimeout   time.Duration
-	Included      map[uint16]bool
-	Excluded      map[uint16]bool
-	Logger        *log.Logger
-	Label         string
+	Scanner      Scanner
+	Opener       Opener
+	WindowsHost  string
+	WindowsHost6 string
+	Interval     time.Duration
+	OpenTimeout  time.Duration
+	Included     map[uint16]bool
+	Excluded     map[uint16]bool
+	Logger       *log.Logger
+	Label        string
+	// RetryMin and RetryMax bound retries after a Windows mapping refusal.
+	// They remain policy knobs for tests and future operators, not config yet.
+	RetryMin      time.Duration
+	RetryMax      time.Duration
 	mu            sync.Mutex
 	active        map[listenerKey]activeMapping
 	rejected      map[listenerKey]bool
+	retryAfter    map[listenerKey]time.Time
+	retryFailures map[listenerKey]int
 	generation    uint64
 	attemptID     uint64
 	attemptCancel context.CancelFunc
@@ -116,6 +122,11 @@ type activeMapping struct {
 // Bound concurrent Windows bind/relay requests so a large procfs scan cannot
 // consume unbounded goroutines while still avoiding head-of-line blocking.
 const maxConcurrentOpens = 8
+
+const (
+	defaultRetryMin = time.Second
+	defaultRetryMax = 30 * time.Second
+)
 
 func (w *Watcher) Run(ctx context.Context) error {
 	if w.Scanner == nil || w.Opener == nil {
@@ -136,9 +147,12 @@ func (w *Watcher) Run(ctx context.Context) error {
 	if w.Label == "" {
 		w.Label = "auto-forward"
 	}
+	w.ensureRetryPolicy()
 	w.mu.Lock()
 	w.active = make(map[listenerKey]activeMapping)
 	w.rejected = make(map[listenerKey]bool)
+	w.retryAfter = make(map[listenerKey]time.Time)
+	w.retryFailures = make(map[listenerKey]int)
 	w.mu.Unlock()
 	defer w.closeAll()
 	ticker := time.NewTicker(w.Interval)
@@ -152,6 +166,18 @@ func (w *Watcher) Run(ctx context.Context) error {
 			return nil
 		case <-ticker.C:
 		}
+	}
+}
+
+func (w *Watcher) ensureRetryPolicy() {
+	if w.RetryMin <= 0 {
+		w.RetryMin = defaultRetryMin
+	}
+	if w.RetryMax <= 0 {
+		w.RetryMax = defaultRetryMax
+	}
+	if w.RetryMax < w.RetryMin {
+		w.RetryMax = w.RetryMin
 	}
 }
 
@@ -183,6 +209,12 @@ func (w *Watcher) sync(ctx context.Context) error {
 	if w.rejected == nil {
 		w.rejected = make(map[listenerKey]bool)
 	}
+	if w.retryAfter == nil {
+		w.retryAfter = make(map[listenerKey]time.Time)
+	}
+	if w.retryFailures == nil {
+		w.retryFailures = make(map[listenerKey]int)
+	}
 	var removed []activeMapping
 	for key, mapping := range w.active {
 		desiredListener, ok := desired[key]
@@ -190,6 +222,8 @@ func (w *Watcher) sync(ctx context.Context) error {
 			removed = append(removed, mapping)
 			delete(w.active, key)
 			delete(w.rejected, key)
+			delete(w.retryAfter, key)
+			delete(w.retryFailures, key)
 			w.Logger.Printf("%s removed Windows port %d (%s)", w.Label, mapping.listener.Port, mapping.listener.Network)
 		}
 	}
@@ -224,9 +258,13 @@ func (w *Watcher) sync(ctx context.Context) error {
 	for key, listener := range desired {
 		w.mu.Lock()
 		active, exists := w.active[key]
+		retryAt := w.retryAfter[key]
 		generation := w.generation
 		w.mu.Unlock()
 		if exists && active.listener == listener {
+			continue
+		}
+		if !retryAt.IsZero() && time.Now().Before(retryAt) {
 			continue
 		}
 		attempts = append(attempts, mappingAttempt{key: key, listener: listener, generation: generation})
@@ -288,6 +326,9 @@ func (w *Watcher) openOne(ctx context.Context, key listenerKey, listener Listene
 		w.mu.Lock()
 		firstRejection := !w.rejected[key]
 		w.rejected[key] = true
+		w.retryFailures[key]++
+		failureCount := w.retryFailures[key]
+		w.retryAfter[key] = time.Now().Add(w.retryDelay(failureCount))
 		w.mu.Unlock()
 		if firstRejection {
 			w.Logger.Printf("%s rejected %s -> %s: %v", w.Label, windowsAddr, wslTarget, openErr)
@@ -299,6 +340,9 @@ func (w *Watcher) openOne(ctx context.Context, key listenerKey, listener Listene
 		w.mu.Lock()
 		firstRejection := !w.rejected[key]
 		w.rejected[key] = true
+		w.retryFailures[key]++
+		failureCount := w.retryFailures[key]
+		w.retryAfter[key] = time.Now().Add(w.retryDelay(failureCount))
 		w.mu.Unlock()
 		if firstRejection {
 			w.Logger.Printf("%s rejected %s -> %s: %v", w.Label, windowsAddr, wslTarget, openErr)
@@ -308,6 +352,8 @@ func (w *Watcher) openOne(ctx context.Context, key listenerKey, listener Listene
 	w.mu.Lock()
 	wasRejected := w.rejected[key]
 	delete(w.rejected, key)
+	delete(w.retryAfter, key)
+	delete(w.retryFailures, key)
 	w.mu.Unlock()
 	if wasRejected {
 		w.Logger.Printf("%s restored %s -> %s", w.Label, windowsAddr, wslTarget)
@@ -328,10 +374,29 @@ func (w *Watcher) openOne(ctx context.Context, key listenerKey, listener Listene
 	w.Logger.Printf("%s added %s -> %s", w.Label, windowsAddr, wslTarget)
 }
 
+func (w *Watcher) retryDelay(failures int) time.Duration {
+	if w.RetryMin <= 0 || w.RetryMax <= 0 {
+		return 0
+	}
+	delay := w.RetryMin
+	for index := 1; index < failures && delay < w.RetryMax; index++ {
+		if delay > w.RetryMax/2 {
+			return w.RetryMax
+		}
+		delay *= 2
+	}
+	if delay > w.RetryMax {
+		return w.RetryMax
+	}
+	return delay
+}
+
 func (w *Watcher) closeAll() {
 	w.mu.Lock()
 	active := w.active
 	w.active = make(map[listenerKey]activeMapping)
+	w.retryAfter = make(map[listenerKey]time.Time)
+	w.retryFailures = make(map[listenerKey]int)
 	w.generation++
 	cancelAttempt := w.attemptCancel
 	w.attemptCancel = nil
@@ -351,6 +416,8 @@ func (w *Watcher) Reset() {
 	active := w.active
 	w.active = make(map[listenerKey]activeMapping)
 	w.rejected = make(map[listenerKey]bool)
+	w.retryAfter = make(map[listenerKey]time.Time)
+	w.retryFailures = make(map[listenerKey]int)
 	w.generation++
 	cancelAttempt := w.attemptCancel
 	w.attemptCancel = nil

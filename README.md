@@ -299,6 +299,10 @@ The SOCKS5 listener and explicit reverse-forward destinations are excluded autom
 Each automatic mapping attempt is bounded by `relay_dial_timeout`; a relay
 outage therefore cannot block listener discovery indefinitely, and the next
 scan retries it after the session recovers.
+When Windows rejects a discovered port, repeated attempts use a bounded
+exponential backoff (one second initially, capped at thirty seconds) instead
+of hammering the relay on every scan. A relay-session reset or disappearance of
+the WSL listener clears that backoff.
 
 To run the real WSL/Windows recovery check after building both binaries, use
 `./scripts/test-auto-rebind.sh`. It requires WSL Windows interop and verifies

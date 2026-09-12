@@ -96,6 +96,9 @@
       so rapid broker peer clear/set transitions cannot lose the reset event.
 - [x] Strict lease rebind releases stale peer reservations before replacement
       binds, preserving leases while preventing stale Windows EADDRINUSE.
+- [x] Automatic mapping refusals use bounded exponential retry backoff instead
+      of issuing a Windows bind attempt on every procfs scan; session resets
+      clear the backoff immediately.
 - [x] Broker-mode can be selected from the persistent JSON configuration while
       attach credentials remain environment-only.
 - [x] Optional systemd user broker unit, private token file, and bounded broker
