@@ -58,6 +58,11 @@ Provide `libwsl_win_relay_listen.so` and a `wsl-win-relay-run` launcher. The int
   and ordinary pthread/`CLONE_THREAD` listeners are covered. `vfork()`
   ownership semantics remain outside the interposer contract. The current
   native build is Linux amd64, matching the supported WSL binary target.
+- The interposer intentionally does not wrap the libc `vfork()` symbol.
+  `vfork()` is a `returns_twice` operation with a shared address space, and a
+  normal `dlsym`-based wrapper cannot safely preserve both compiler return
+  semantics and child-side pre-exec restrictions. Applications using vfork
+  should use automatic polling until a kernel-aware adapter is available.
 - Crash cleanup depends on daemon-side lease reaping rather than a `close()`
   callback.
 - A `listen()` call can wait up to two seconds when the relay control service
