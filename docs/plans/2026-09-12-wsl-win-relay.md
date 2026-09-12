@@ -69,9 +69,10 @@
       smoke test; child-side pre-exec networking remains unsupported by the
       shared-address-space contract.
 - [ ] Kernel-level coverage for unusual thread-group ownership and non-direct
-      vfork libc interactions, plus native aarch64 runtime validation;
-      setuid/setgid binaries remain intentionally rejected because neither
-      launcher path can preserve their semantics.
+      vfork libc interactions; setuid/setgid binaries remain intentionally
+      rejected because neither launcher path can preserve their semantics.
+      The aarch64 register adapter remains buildable, but aarch64 runtime
+      validation is intentionally outside this project's acceptance target.
 - [x] Phase-one opt-in ptrace supervisor (`wsl-win-relay-run --kernel`) now
       coordinates direct single-process static amd64 TCP/UDP `bind/listen`
       syscalls through the existing lease protocol; process-tree ownership is
