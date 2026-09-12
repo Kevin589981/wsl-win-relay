@@ -306,6 +306,9 @@ func TestRebindReplacesCommittedReservation(t *testing.T) {
 	if !oldCommitted || !oldClosed {
 		t.Fatalf("old reservation committed=%v closed=%v", oldCommitted, oldClosed)
 	}
+	if got := old.closes(); got != 1 {
+		t.Fatalf("old reservation close count=%d, want 1", got)
+	}
 	if !newCommitted || newClosed {
 		t.Fatalf("replacement committed=%v closed=%v", newCommitted, newClosed)
 	}
@@ -496,9 +499,10 @@ func TestCleanupSocketPathRemovesStaleSocket(t *testing.T) {
 }
 
 type fakeReservation struct {
-	mu        sync.Mutex
-	committed bool
-	closed    bool
+	mu         sync.Mutex
+	committed  bool
+	closed     bool
+	closeCount int
 }
 
 func (f *fakeReservation) Commit() error {
@@ -511,12 +515,19 @@ func (f *fakeReservation) Close() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.closed = true
+	f.closeCount++
 	return nil
 }
 func (f *fakeReservation) values() (bool, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.committed, f.closed
+}
+
+func (f *fakeReservation) closes() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.closeCount
 }
 
 func waitForSocket(t *testing.T, path string) {

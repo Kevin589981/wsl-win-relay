@@ -511,7 +511,6 @@ func (s *Server) Rebind(ctx context.Context, reserve ReserveFunc, reserveDatagra
 		}
 		entry.l.reservation = replacement
 		entry.l.mu.Unlock()
-		_ = old.Close()
 	}
 	if len(failures) != 0 {
 		return errors.New(strings.Join(failures, "; "))
