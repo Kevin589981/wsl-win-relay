@@ -44,6 +44,8 @@
       capability exchange, token authentication, and generation acknowledgements.
 - [x] Stable registry-entry summary and resume-ack codecs with deterministic
       ordering and bounded entry counts.
+- [x] Attach/resume handshake flow exchanges the summary and validates the
+      connector's epoch and acknowledged stable IDs before session activation.
 - [x] Non-zero normal Windows relay exit status is classified as fatal instead
       of causing an unbounded restart loop.
 - [ ] Kernel-level coverage for static binaries and `vfork()` ownership
