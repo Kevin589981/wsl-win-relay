@@ -25,7 +25,7 @@ GOPROXY=off go build -o "$tmp_dir/wsl-proxy" "$repo_dir/cmd/wsl-proxy"
 python3 -m http.server 18081 --bind 127.0.0.1 >"$tmp_dir/http.log" 2>&1 &
 http_pid=$!
 
-token=00112233445566778899aabbccddeeff
+token=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
 WSL_WIN_RELAY_ATTACH_TOKEN=$token \
 WSL_WIN_RELAY_BROKER_ENDPOINT="$tmp_dir/broker.sock" \
     "$tmp_dir/win-broker" -endpoint "$tmp_dir/broker.sock" -token-hex "$token" \
