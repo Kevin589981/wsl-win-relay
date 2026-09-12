@@ -134,6 +134,78 @@ func TestHandshakeInstallsGenerationAndReturnsPeerState(t *testing.T) {
 	}
 }
 
+func TestResumeHandshakeExchangesSummaryAndAcknowledgement(t *testing.T) {
+	registry, err := NewWithToken([]byte("secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+	wantSummary := Summary{Entries: []RegistryEntry{{ID: 4, Kind: EntryStream, State: EntryActive}, {ID: 8, Kind: EntryDatagram, State: EntryClosed}}}
+	serverResult := make(chan struct {
+		attachment *Attachment
+		peerCaps   uint64
+		lastEpoch  uint64
+		err        error
+	}, 1)
+	go func() {
+		attachment, peerCaps, lastEpoch, err := ServerResumeHandshake(right, registry, 0x30, wantSummary)
+		serverResult <- struct {
+			attachment *Attachment
+			peerCaps   uint64
+			lastEpoch  uint64
+			err        error
+		}{attachment, peerCaps, lastEpoch, err}
+	}()
+	epoch, peerCaps, summary, err := ClientResumeHandshake(left, []byte("secret"), 0x12, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if epoch != 1 || peerCaps != 0x30 || summary.Epoch != epoch || len(summary.Entries) != 2 {
+		t.Fatalf("client epoch=%d caps=%x summary=%+v", epoch, peerCaps, summary)
+	}
+	result := <-serverResult
+	if result.err != nil || result.attachment == nil || result.peerCaps != 0x12 || result.lastEpoch != 3 || !result.attachment.Current() {
+		t.Fatalf("server result=%+v", result)
+	}
+}
+
+func TestResumeHandshakeRejectsWrongEpochAndDetaches(t *testing.T) {
+	registry, err := NewWithToken([]byte("secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+	serverDone := make(chan error, 1)
+	go func() {
+		_, _, _, err := ServerResumeHandshake(right, registry, 0, Summary{})
+		serverDone <- err
+	}()
+	if _, _, err := ClientHandshake(left, []byte("secret"), 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	message, err := Read(left)
+	if err != nil || message.Type != MessageRegistrySummary {
+		t.Fatalf("summary message=%+v err=%v", message, err)
+	}
+	payload, err := EncodeResumeAck(99, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Write(left, Message{Type: MessageResumeAck, Payload: payload}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-serverDone; err == nil {
+		t.Fatal("wrong resume epoch was accepted")
+	}
+	if registry.CurrentEpoch() != 0 {
+		t.Fatal("failed resume left an attached generation")
+	}
+}
+
 func TestHandshakeRejectsInvalidTokenWithoutReplacingCurrent(t *testing.T) {
 	registry, err := NewWithToken([]byte("secret"))
 	if err != nil {

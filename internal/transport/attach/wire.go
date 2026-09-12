@@ -203,6 +203,14 @@ const (
 	summaryEntrySize  = 10
 )
 
+func (s Summary) IDs() []uint64 {
+	ids := make([]uint64, len(s.Entries))
+	for index, entry := range s.Entries {
+		ids[index] = entry.ID
+	}
+	return ids
+}
+
 func (e RegistryEntry) validate() error {
 	if e.ID == 0 {
 		return errors.New("registry entry id must be non-zero")
@@ -302,6 +310,95 @@ func DecodeResumeAck(payload []byte) (uint64, []uint64, error) {
 		ids[index], previous = id, id
 	}
 	return binary.BigEndian.Uint64(payload), ids, nil
+}
+
+func validateResumeAck(summary Summary, epoch uint64, ids []uint64) error {
+	if epoch != summary.Epoch {
+		return fmt.Errorf("resume epoch %d does not match summary epoch %d", epoch, summary.Epoch)
+	}
+	if len(ids) > len(summary.Entries) {
+		return errors.New("resume acknowledgement contains unknown entries")
+	}
+	entryIndex := 0
+	for _, id := range ids {
+		for entryIndex < len(summary.Entries) && summary.Entries[entryIndex].ID < id {
+			entryIndex++
+		}
+		if entryIndex == len(summary.Entries) || summary.Entries[entryIndex].ID != id {
+			return fmt.Errorf("resume acknowledgement references unknown entry %d", id)
+		}
+		entryIndex++
+	}
+	return nil
+}
+
+// ClientResumeHandshake performs attach negotiation, receives a registry
+// summary, and acknowledges every entry currently advertised by the broker.
+func ClientResumeHandshake(rw io.ReadWriter, token []byte, capabilities, lastEpoch uint64) (uint64, uint64, Summary, error) {
+	epoch, peerCapabilities, err := ClientHandshake(rw, token, capabilities, lastEpoch)
+	if err != nil {
+		return 0, 0, Summary{}, err
+	}
+	message, err := Read(rw)
+	if err != nil {
+		return 0, 0, Summary{}, err
+	}
+	if message.Type != MessageRegistrySummary {
+		return 0, 0, Summary{}, fmt.Errorf("expected registry summary, got %d", message.Type)
+	}
+	summary, err := DecodeSummary(message.Payload)
+	if err != nil {
+		return 0, 0, Summary{}, err
+	}
+	if err := validateResumeAck(summary, epoch, summary.IDs()); err != nil {
+		return 0, 0, Summary{}, err
+	}
+	payload, err := EncodeResumeAck(epoch, summary.IDs())
+	if err != nil {
+		return 0, 0, Summary{}, err
+	}
+	if err := Write(rw, Message{Type: MessageResumeAck, Payload: payload}); err != nil {
+		return 0, 0, Summary{}, err
+	}
+	return epoch, peerCapabilities, summary, nil
+}
+
+// ServerResumeHandshake completes attach negotiation and waits for the
+// connector to acknowledge the exact summary advertised for this epoch.
+func ServerResumeHandshake(rw io.ReadWriter, registry *Registry, capabilities uint64, summary Summary) (*Attachment, uint64, uint64, error) {
+	attachment, peerCapabilities, lastEpoch, err := ServerHandshake(rw, registry, capabilities)
+	if err != nil {
+		return nil, peerCapabilities, lastEpoch, err
+	}
+	summary.Epoch = attachment.Epoch()
+	payload, err := EncodeSummary(summary)
+	if err != nil {
+		_ = attachment.Detach()
+		return nil, peerCapabilities, lastEpoch, err
+	}
+	if err := Write(rw, Message{Type: MessageRegistrySummary, Payload: payload}); err != nil {
+		_ = attachment.Detach()
+		return nil, peerCapabilities, lastEpoch, err
+	}
+	message, err := Read(rw)
+	if err != nil {
+		_ = attachment.Detach()
+		return nil, peerCapabilities, lastEpoch, err
+	}
+	if message.Type != MessageResumeAck {
+		_ = attachment.Detach()
+		return nil, peerCapabilities, lastEpoch, fmt.Errorf("expected resume acknowledgement, got %d", message.Type)
+	}
+	ackEpoch, ids, err := DecodeResumeAck(message.Payload)
+	if err != nil {
+		_ = attachment.Detach()
+		return nil, peerCapabilities, lastEpoch, err
+	}
+	if err := validateResumeAck(summary, ackEpoch, ids); err != nil {
+		_ = attachment.Detach()
+		return nil, peerCapabilities, lastEpoch, err
+	}
+	return attachment, peerCapabilities, lastEpoch, nil
 }
 
 // ClientHandshake performs HELLO -> ATTACH and waits for ATTACH_OK.
