@@ -432,6 +432,20 @@ func runSession(parent context.Context, opts options, logger *log.Logger, socksL
 	dialer.set(client)
 	defer dialer.clear(client)
 	logger.Printf("Windows relay ready (capabilities 0x%x)", capabilities)
+	reverseForwards, err = forward.OpenAll(ctx, client, opts.reverse)
+	if err != nil {
+		return fmt.Errorf("register reverse forwards: %w", err)
+	}
+	reverseDatagramForwards, err = forward.OpenDatagramAll(ctx, client, opts.reverseUDP)
+	if err != nil {
+		return fmt.Errorf("register reverse UDP forwards: %w", err)
+	}
+	for _, mapping := range opts.reverse {
+		logger.Printf("reverse forwarding %s -> %s", mapping.Windows, mapping.WSL)
+	}
+	for _, mapping := range opts.reverseUDP {
+		logger.Printf("reverse UDP forwarding %s -> %s", mapping.Windows, mapping.WSL)
+	}
 	if control != nil {
 		rebindCtx, rebindCancel := context.WithTimeout(ctx, opts.relayDialTimeout)
 		rebindErr := control.Rebind(rebindCtx,
@@ -450,20 +464,6 @@ func runSession(parent context.Context, opts options, logger *log.Logger, socksL
 		if rebindErr != nil {
 			logger.Printf("strict-listen lease rebind: %v", rebindErr)
 		}
-	}
-	reverseForwards, err = forward.OpenAll(ctx, client, opts.reverse)
-	if err != nil {
-		return fmt.Errorf("register reverse forwards: %w", err)
-	}
-	reverseDatagramForwards, err = forward.OpenDatagramAll(ctx, client, opts.reverseUDP)
-	if err != nil {
-		return fmt.Errorf("register reverse UDP forwards: %w", err)
-	}
-	for _, mapping := range opts.reverse {
-		logger.Printf("reverse forwarding %s -> %s", mapping.Windows, mapping.WSL)
-	}
-	for _, mapping := range opts.reverseUDP {
-		logger.Printf("reverse UDP forwarding %s -> %s", mapping.Windows, mapping.WSL)
 	}
 
 	var autoDone chan error

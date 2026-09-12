@@ -288,6 +288,37 @@ func TestRebindKeepsLeaseWhenReplacementFails(t *testing.T) {
 	}
 }
 
+func TestRebindUsesDatagramReservationFactory(t *testing.T) {
+	old := &fakeReservation{}
+	server := &Server{leases: map[uint64]*lease{
+		11: {reservation: old, windows: "127.0.0.1:5353", wsl: "127.0.0.1:5353", datagram: true, owners: map[int]string{123: "start"}},
+	}}
+	replacement := &fakeReservation{}
+	if err := server.Rebind(context.Background(), func(context.Context, string, string) (Reservation, error) {
+		t.Fatal("TCP factory was used for a UDP lease")
+		return nil, nil
+	}, func(_ context.Context, windows, wsl string) (Reservation, error) {
+		if windows != "127.0.0.1:5353" || wsl != "127.0.0.1:5353" {
+			t.Fatalf("mapping %s -> %s", windows, wsl)
+		}
+		return replacement, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, oldClosed := old.values()
+	if !oldClosed {
+		t.Fatal("old UDP reservation was not closed")
+	}
+	server.mu.Lock()
+	current := server.leases[11]
+	server.mu.Unlock()
+	current.mu.Lock()
+	defer current.mu.Unlock()
+	if current.reservation != replacement {
+		t.Fatalf("UDP lease was not replaced: %#v", current)
+	}
+}
+
 func TestReaperKeepsLeaseWhileAnotherOwnerLives(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "control.sock")
 	reservation := &fakeReservation{}
