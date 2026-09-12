@@ -98,6 +98,9 @@ mappings. SOCKS5 UDP associations are reclaimed after
 Relay connection setup waits at most `relay_dial_timeout` (default `30s`) for a
 healthy Windows session; override it with `-relay-dial-timeout` when a longer
 recovery window is required.
+The startup capability handshake has its own `relay_handshake_timeout`
+(default `5s`), configurable with `-relay-handshake-timeout` when launching the
+Windows child is slow after recovery.
 
 Set `upstream_proxy` or `-upstream-proxy` when Windows itself should use an
 upstream proxy, for example `socks5h://matebookxpro.local:7890`. The default
