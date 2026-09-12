@@ -29,25 +29,26 @@ import (
 )
 
 type options struct {
-	socksListen         string
-	httpListen          string
-	relayExe            string
-	upstreamProxy       string
-	reverse             forward.Mappings
-	reverseUDP          forward.Mappings
-	autoForward         bool
-	autoForwardUDP      bool
-	autoForwardHost     string
-	autoForwardHost6    string
-	autoForwardInterval time.Duration
-	autoInclude         map[uint16]bool
-	autoUDPInclude      map[uint16]bool
-	autoExclude         map[uint16]bool
-	controlSocket       string
-	strictListenHost    string
-	strictListenHost6   string
-	udpAssociateIdle    time.Duration
-	relayDialTimeout    time.Duration
+	socksListen           string
+	httpListen            string
+	relayExe              string
+	upstreamProxy         string
+	reverse               forward.Mappings
+	reverseUDP            forward.Mappings
+	autoForward           bool
+	autoForwardUDP        bool
+	autoForwardHost       string
+	autoForwardHost6      string
+	autoForwardInterval   time.Duration
+	autoInclude           map[uint16]bool
+	autoUDPInclude        map[uint16]bool
+	autoExclude           map[uint16]bool
+	controlSocket         string
+	strictListenHost      string
+	strictListenHost6     string
+	udpAssociateIdle      time.Duration
+	relayHandshakeTimeout time.Duration
+	relayDialTimeout      time.Duration
 }
 
 var errRelayExited = errors.New("Windows relay exited")
@@ -145,13 +146,18 @@ func parseOptions(args []string) (options, error) {
 	if err != nil {
 		return options{}, err
 	}
+	relayHandshakeTimeout, err := fileConfig.RelayHandshakeDuration()
+	if err != nil {
+		return options{}, err
+	}
 	opts := options{
 		socksListen: fileConfig.SOCKS5Listen, httpListen: fileConfig.HTTPConnectListen,
 		relayExe: fileConfig.RelayExecutable, upstreamProxy: fileConfig.UpstreamProxy, autoForward: fileConfig.AutoForward.Enabled,
 		autoForwardHost: fileConfig.AutoForward.WindowsHost, autoForwardHost6: fileConfig.AutoForward.WindowsHost6, autoForwardInterval: interval,
 		controlSocket: fileConfig.ControlSocket, strictListenHost: fileConfig.StrictListenHost, strictListenHost6: fileConfig.StrictListenHost6,
-		udpAssociateIdle: udpAssociateIdle,
-		relayDialTimeout: relayDialTimeout,
+		udpAssociateIdle:      udpAssociateIdle,
+		relayHandshakeTimeout: relayHandshakeTimeout,
+		relayDialTimeout:      relayDialTimeout,
 	}
 	for _, mapping := range fileConfig.Reverse {
 		if err := opts.reverse.Set(mapping); err != nil {
@@ -186,9 +192,22 @@ func parseOptions(args []string) (options, error) {
 	set.StringVar(&opts.strictListenHost, "strict-listen-host", opts.strictListenHost, "Windows bind host for strict listener coordination")
 	set.StringVar(&opts.strictListenHost6, "strict-listen-host6", opts.strictListenHost6, "Windows IPv6 bind host for strict listener coordination")
 	set.DurationVar(&opts.udpAssociateIdle, "udp-associate-idle-timeout", opts.udpAssociateIdle, "idle timeout for SOCKS5 UDP associations")
+	set.DurationVar(&opts.relayHandshakeTimeout, "relay-handshake-timeout", opts.relayHandshakeTimeout, "maximum time to wait for the Windows relay handshake")
 	set.DurationVar(&opts.relayDialTimeout, "relay-dial-timeout", opts.relayDialTimeout, "maximum time to wait for a relay session to open a connection")
 	if err := set.Parse(args); err != nil {
 		return options{}, err
+	}
+	if opts.autoForwardInterval <= 0 {
+		return options{}, errors.New("auto-forward-interval must be positive")
+	}
+	if opts.udpAssociateIdle <= 0 {
+		return options{}, errors.New("udp-associate-idle-timeout must be positive")
+	}
+	if opts.relayHandshakeTimeout <= 0 {
+		return options{}, errors.New("relay-handshake-timeout must be positive")
+	}
+	if opts.relayDialTimeout <= 0 {
+		return options{}, errors.New("relay-dial-timeout must be positive")
 	}
 	if set.NArg() != 0 {
 		return options{}, fmt.Errorf("unexpected arguments: %s", strings.Join(set.Args(), " "))
@@ -377,7 +396,7 @@ func runSession(parent context.Context, opts options, logger *log.Logger, socksL
 
 	relayDone := make(chan error, 1)
 	go func() { relayDone <- client.Run(ctx) }()
-	handshakeCtx, handshakeCancel := context.WithTimeout(ctx, 5*time.Second)
+	handshakeCtx, handshakeCancel := context.WithTimeout(ctx, opts.relayHandshakeTimeout)
 	capabilities, err := client.Handshake(handshakeCtx, protocol.AllCapabilities)
 	handshakeCancel()
 	if err != nil {

@@ -10,18 +10,19 @@ import (
 )
 
 type File struct {
-	RelayExecutable   string            `json:"relay_exe"`
-	UpstreamProxy     string            `json:"upstream_proxy"`
-	SOCKS5Listen      string            `json:"socks5_listen"`
-	HTTPConnectListen string            `json:"http_connect_listen"`
-	ControlSocket     string            `json:"control_socket"`
-	StrictListenHost  string            `json:"strict_listen_host"`
-	StrictListenHost6 string            `json:"strict_listen_host6"`
-	RelayDialTimeout  string            `json:"relay_dial_timeout"`
-	UDPAssociateIdle  string            `json:"udp_associate_idle_timeout"`
-	Reverse           []string          `json:"reverse"`
-	ReverseUDP        []string          `json:"reverse_udp"`
-	AutoForward       AutoForwardConfig `json:"auto_forward"`
+	RelayExecutable       string            `json:"relay_exe"`
+	UpstreamProxy         string            `json:"upstream_proxy"`
+	SOCKS5Listen          string            `json:"socks5_listen"`
+	HTTPConnectListen     string            `json:"http_connect_listen"`
+	ControlSocket         string            `json:"control_socket"`
+	StrictListenHost      string            `json:"strict_listen_host"`
+	StrictListenHost6     string            `json:"strict_listen_host6"`
+	RelayHandshakeTimeout string            `json:"relay_handshake_timeout"`
+	RelayDialTimeout      string            `json:"relay_dial_timeout"`
+	UDPAssociateIdle      string            `json:"udp_associate_idle_timeout"`
+	Reverse               []string          `json:"reverse"`
+	ReverseUDP            []string          `json:"reverse_udp"`
+	AutoForward           AutoForwardConfig `json:"auto_forward"`
 }
 
 type AutoForwardConfig struct {
@@ -37,14 +38,15 @@ type AutoForwardConfig struct {
 
 func Default() File {
 	return File{
-		RelayExecutable:   "wsl-win-relay.exe",
-		SOCKS5Listen:      "127.0.0.1:1080",
-		ControlSocket:     "/tmp/wsl-win-relay-control.sock",
-		StrictListenHost:  "127.0.0.1",
-		StrictListenHost6: "::1",
-		RelayDialTimeout:  "30s",
-		UDPAssociateIdle:  "5m",
-		AutoForward:       AutoForwardConfig{WindowsHost: "127.0.0.1", WindowsHost6: "::1", Interval: "1s"},
+		RelayExecutable:       "wsl-win-relay.exe",
+		SOCKS5Listen:          "127.0.0.1:1080",
+		ControlSocket:         "/tmp/wsl-win-relay-control.sock",
+		StrictListenHost:      "127.0.0.1",
+		StrictListenHost6:     "::1",
+		RelayHandshakeTimeout: "5s",
+		RelayDialTimeout:      "30s",
+		UDPAssociateIdle:      "5m",
+		AutoForward:           AutoForwardConfig{WindowsHost: "127.0.0.1", WindowsHost6: "::1", Interval: "1s"},
 	}
 }
 
@@ -71,6 +73,9 @@ func Load(path string) (File, error) {
 		return File{}, err
 	}
 	if _, err := result.RelayDialDuration(); err != nil {
+		return File{}, err
+	}
+	if _, err := result.RelayHandshakeDuration(); err != nil {
 		return File{}, err
 	}
 	if err := validatePortLists(result.AutoForward); err != nil {
@@ -114,6 +119,14 @@ func (f File) RelayDialDuration() (time.Duration, error) {
 	duration, err := time.ParseDuration(f.RelayDialTimeout)
 	if err != nil || duration <= 0 {
 		return 0, fmt.Errorf("relay_dial_timeout must be a positive duration")
+	}
+	return duration, nil
+}
+
+func (f File) RelayHandshakeDuration() (time.Duration, error) {
+	duration, err := time.ParseDuration(f.RelayHandshakeTimeout)
+	if err != nil || duration <= 0 {
+		return 0, fmt.Errorf("relay_handshake_timeout must be a positive duration")
 	}
 	return duration, nil
 }

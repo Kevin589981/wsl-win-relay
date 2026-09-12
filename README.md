@@ -345,6 +345,12 @@ when one does not already exist. It rejects symlinked/non-regular config paths
 and enforces directory mode `0700` and file mode `0600` on every run. Build with `scripts/build-wsl.sh` first
 and set the Windows `relay_exe` path in the config.
 
+The startup handshake timeout defaults to five seconds and can be adjusted with
+`relay_handshake_timeout` or `-relay-handshake-timeout` when the Windows relay
+needs longer to start after a system/network recovery. This timeout only covers
+capability negotiation; connection establishment has its separate
+`relay_dial_timeout` setting.
+
 Relay-session recovery intentionally starts a fresh child and loses existing
 connections; it does not try to reuse protocol state from a broken stdio
 transport. See [ADR-0010](docs/adr/0010-relay-failure-supervision.md) for the

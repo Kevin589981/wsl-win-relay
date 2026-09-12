@@ -212,6 +212,19 @@ func TestParseOptionsRejectsUnexpectedArguments(t *testing.T) {
 	}
 }
 
+func TestParseOptionsRejectsNonPositiveDurationOverrides(t *testing.T) {
+	for _, argument := range []string{
+		"-auto-forward-interval=0",
+		"-udp-associate-idle-timeout=0",
+		"-relay-handshake-timeout=0",
+		"-relay-dial-timeout=0",
+	} {
+		if _, err := parseOptions([]string{argument}); err == nil {
+			t.Fatalf("argument %q should be rejected", argument)
+		}
+	}
+}
+
 func TestRelayArgumentsHasNoSyntheticSubcommand(t *testing.T) {
 	if got := relayArguments(options{}); len(got) != 0 {
 		t.Fatalf("unexpected arguments: %v", got)
@@ -225,7 +238,7 @@ func TestRelayArgumentsHasNoSyntheticSubcommand(t *testing.T) {
 
 func TestParseOptionsLoadsConfigThenAppliesCLIOverrides(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "relay.json")
-	content := `{"relay_exe":"from-config.exe","socks5_listen":"127.0.0.1:1100","relay_dial_timeout":"45s","reverse":["127.0.0.1:80=127.0.0.1:8080"],"auto_forward":{"enabled":true,"windows_host":"127.0.0.1","interval":"250ms","include":[8000],"exclude":[53]}}`
+	content := `{"relay_exe":"from-config.exe","socks5_listen":"127.0.0.1:1100","relay_handshake_timeout":"12s","relay_dial_timeout":"45s","reverse":["127.0.0.1:80=127.0.0.1:8080"],"auto_forward":{"enabled":true,"windows_host":"127.0.0.1","interval":"250ms","include":[8000],"exclude":[53]}}`
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +249,7 @@ func TestParseOptionsLoadsConfigThenAppliesCLIOverrides(t *testing.T) {
 	if opts.relayExe != "from-cli.exe" || opts.socksListen != "127.0.0.1:1100" || opts.autoForward {
 		t.Fatalf("options: %#v", opts)
 	}
-	if opts.autoForwardInterval != 250*time.Millisecond || opts.relayDialTimeout != 45*time.Second || !opts.autoInclude[8000] || !opts.autoExclude[53] || len(opts.reverse) != 1 {
+	if opts.autoForwardInterval != 250*time.Millisecond || opts.relayHandshakeTimeout != 12*time.Second || opts.relayDialTimeout != 45*time.Second || !opts.autoInclude[8000] || !opts.autoExclude[53] || len(opts.reverse) != 1 {
 		t.Fatalf("options: %#v", opts)
 	}
 }
