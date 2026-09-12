@@ -73,7 +73,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", s.Path, err)
 	}
-	defer func() { _ = listener.Close(); _ = os.Remove(s.Path); s.closeAll() }()
+	defer func() { _ = listener.Close(); cleanupSocketPath(s.Path); s.closeAll() }()
 	if err := os.Chmod(s.Path, 0o600); err != nil {
 		return fmt.Errorf("secure control socket: %w", err)
 	}
@@ -123,6 +123,22 @@ func prepareSocketPath(path string) error {
 
 func isStaleSocketProbeError(err error) bool {
 	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNRESET)
+}
+
+func cleanupSocketPath(path string) {
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSocket == 0 {
+		return
+	}
+	probe, err := net.DialTimeout("unix", path, 100*time.Millisecond)
+	if err == nil {
+		// A replacement server may already own this path. Never unlink it.
+		_ = probe.Close()
+		return
+	}
+	if isStaleSocketProbeError(err) {
+		_ = os.Remove(path)
+	}
 }
 
 func (s *Server) handle(ctx context.Context, conn net.Conn) {

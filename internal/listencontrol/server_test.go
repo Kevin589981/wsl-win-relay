@@ -321,6 +321,36 @@ func TestPrepareSocketPathRemovesStaleSocket(t *testing.T) {
 	}
 }
 
+func TestCleanupSocketPathPreservesActiveSocket(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "control.sock")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	cleanupSocketPath(path)
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("active socket was removed: %v", err)
+	}
+}
+
+func TestCleanupSocketPathRemovesStaleSocket(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "control.sock")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	cleanupSocketPath(path)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("stale socket remains, stat err=%v", err)
+	}
+}
+
 type fakeReservation struct {
 	mu        sync.Mutex
 	committed bool
