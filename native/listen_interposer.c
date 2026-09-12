@@ -13,6 +13,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <sys/syscall.h>
 #include <sys/un.h>
 #include <sys/types.h>
 #include <time.h>
@@ -27,6 +28,7 @@ typedef int (*dup3_fn)(int, int, int);
 typedef pid_t (*fork_fn)(void);
 typedef int (*close_range_fn)(unsigned int, unsigned int, int);
 typedef int (*fcntl_fn)(int, int, ...);
+typedef long (*syscall_fn)(long, ...);
 
 struct tracked_lease { uint64_t id; unsigned refs; };
 
@@ -45,9 +47,11 @@ static dup3_fn real_dup3;
 static fork_fn real_fork;
 static close_range_fn real_close_range;
 static fcntl_fn real_fcntl;
+static syscall_fn real_syscall;
 static pthread_once_t init_once = PTHREAD_ONCE_INIT;
 static pthread_mutex_t tracked_mu = PTHREAD_MUTEX_INITIALIZER;
 static struct tracked_fd *tracked;
+static __thread int syscall_interposer_depth;
 
 static void atfork_prepare(void);
 static void atfork_parent(void);
@@ -110,6 +114,7 @@ static void initialize(void) {
     real_fork = (fork_fn)dlsym(RTLD_NEXT, "fork");
     real_close_range = (close_range_fn)dlsym(RTLD_NEXT, "close_range");
     real_fcntl = (fcntl_fn)dlsym(RTLD_NEXT, "fcntl");
+    real_syscall = (syscall_fn)dlsym(RTLD_NEXT, "syscall");
     (void)pthread_atfork(atfork_prepare, atfork_parent, atfork_child);
 }
 
@@ -417,20 +422,19 @@ static int replace_tracking(int oldfd, int newfd, uint64_t *release) {
     return 0;
 }
 
-int listen(int sockfd, int backlog) {
-    pthread_once(&init_once, initialize);
-    if (real_listen == NULL || find_tracked(sockfd)) {
-        return real_listen == NULL ? (errno = ENOSYS, -1) : real_listen(sockfd, backlog);
+static int coordinated_listen(int sockfd, int backlog, listen_fn call) {
+    if (call == NULL || find_tracked(sockfd)) {
+        return call == NULL ? (errno = ENOSYS, -1) : call(sockfd, backlog);
     }
     int socket_type = 0;
     socklen_t type_length = sizeof(socket_type);
     if (getsockopt(sockfd, SOL_SOCKET, SO_TYPE, &socket_type, &type_length) < 0 || socket_type != SOCK_STREAM) {
-        return real_listen(sockfd, backlog);
+        return call(sockfd, backlog);
     }
     struct sockaddr_storage local;
     socklen_t local_length = sizeof(local);
     if (getsockname(sockfd, (struct sockaddr *)&local, &local_length) < 0) {
-        return real_listen(sockfd, backlog);
+        return call(sockfd, backlog);
     }
 	const char *network;
 	char host[INET6_ADDRSTRLEN];
@@ -438,22 +442,22 @@ int listen(int sockfd, int backlog) {
 	if (local.ss_family == AF_INET) {
 		network = "tcp4";
 		port = ntohs(((struct sockaddr_in *)&local)->sin_port);
-		if (inet_ntop(AF_INET, &((struct sockaddr_in *)&local)->sin_addr, host, sizeof(host)) == NULL) { return real_listen(sockfd, backlog); }
+		if (inet_ntop(AF_INET, &((struct sockaddr_in *)&local)->sin_addr, host, sizeof(host)) == NULL) { return call(sockfd, backlog); }
 	} else if (local.ss_family == AF_INET6) {
 		network = "tcp6";
 		port = ntohs(((struct sockaddr_in6 *)&local)->sin6_port);
-		if (inet_ntop(AF_INET6, &((struct sockaddr_in6 *)&local)->sin6_addr, host, sizeof(host)) == NULL) { return real_listen(sockfd, backlog); }
+		if (inet_ntop(AF_INET6, &((struct sockaddr_in6 *)&local)->sin6_addr, host, sizeof(host)) == NULL) { return call(sockfd, backlog); }
     } else {
-        return real_listen(sockfd, backlog);
+        return call(sockfd, backlog);
     }
     if (port == 0 || getenv("WSL_WIN_RELAY_CONTROL") == NULL) {
-        return real_listen(sockfd, backlog);
+        return call(sockfd, backlog);
     }
     uint64_t lease;
 	if (reserve_listener(network, port, host, &lease) < 0) {
         return -1;
     }
-    if (real_listen(sockfd, backlog) < 0) {
+	if (call(sockfd, backlog) < 0) {
         int saved = errno;
         (void)lease_operation("ABORT", lease);
         errno = saved;
@@ -471,58 +475,62 @@ int listen(int sockfd, int backlog) {
 		(void)real_close(sockfd);
 		errno = ENOMEM;
 		return -1;
-	}
+    }
     return 0;
 }
 
-int bind(int sockfd, const struct sockaddr *address, socklen_t address_length) {
+int listen(int sockfd, int backlog) {
     pthread_once(&init_once, initialize);
-    if (real_bind == NULL) {
+    return coordinated_listen(sockfd, backlog, real_listen);
+}
+
+static int coordinated_bind(int sockfd, const struct sockaddr *address, socklen_t address_length, bind_fn call) {
+    if (call == NULL) {
         errno = ENOSYS;
         return -1;
     }
     if (find_tracked(sockfd) || address == NULL) {
-        return real_bind(sockfd, address, address_length);
+        return call(sockfd, address, address_length);
     }
     int socket_type = 0;
     socklen_t type_length = sizeof(socket_type);
     if (getsockopt(sockfd, SOL_SOCKET, SO_TYPE, &socket_type, &type_length) < 0 || socket_type != SOCK_DGRAM) {
-        return real_bind(sockfd, address, address_length);
+        return call(sockfd, address, address_length);
     }
     const char *network;
     char host[INET6_ADDRSTRLEN];
     uint16_t port;
     if (address->sa_family == AF_INET) {
         if (address_length < sizeof(struct sockaddr_in)) {
-            return real_bind(sockfd, address, address_length);
+            return call(sockfd, address, address_length);
         }
         network = "udp4";
         const struct sockaddr_in *ipv4 = (const struct sockaddr_in *)address;
         port = ntohs(ipv4->sin_port);
         if (inet_ntop(AF_INET, &ipv4->sin_addr, host, sizeof(host)) == NULL) {
-            return real_bind(sockfd, address, address_length);
+            return call(sockfd, address, address_length);
         }
     } else if (address->sa_family == AF_INET6) {
         if (address_length < sizeof(struct sockaddr_in6)) {
-            return real_bind(sockfd, address, address_length);
+            return call(sockfd, address, address_length);
         }
         network = "udp6";
         const struct sockaddr_in6 *ipv6 = (const struct sockaddr_in6 *)address;
         port = ntohs(ipv6->sin6_port);
         if (inet_ntop(AF_INET6, &ipv6->sin6_addr, host, sizeof(host)) == NULL) {
-            return real_bind(sockfd, address, address_length);
+            return call(sockfd, address, address_length);
         }
     } else {
-        return real_bind(sockfd, address, address_length);
+        return call(sockfd, address, address_length);
     }
     if (port == 0 || getenv("WSL_WIN_RELAY_CONTROL") == NULL) {
-        return real_bind(sockfd, address, address_length);
+        return call(sockfd, address, address_length);
     }
     uint64_t lease;
     if (reserve_listener(network, port, host, &lease) < 0) {
         return -1;
     }
-    if (real_bind(sockfd, address, address_length) < 0) {
+    if (call(sockfd, address, address_length) < 0) {
         int saved = errno;
         (void)lease_operation("ABORT", lease);
         errno = saved;
@@ -535,6 +543,76 @@ int bind(int sockfd, const struct sockaddr *address, socklen_t address_length) {
         return -1;
     }
     return 0;
+}
+
+int bind(int sockfd, const struct sockaddr *address, socklen_t address_length) {
+    pthread_once(&init_once, initialize);
+    return coordinated_bind(sockfd, address, address_length, real_bind);
+}
+
+#ifdef SYS_listen
+static int raw_listen_call(int sockfd, int backlog) {
+    return real_syscall == NULL ? (errno = ENOSYS, -1) : (int)real_syscall(SYS_listen, sockfd, backlog);
+}
+#endif
+
+#ifdef SYS_bind
+static int raw_bind_call(int sockfd, const struct sockaddr *address, socklen_t address_length) {
+    return real_syscall == NULL ? (errno = ENOSYS, -1) : (int)real_syscall(SYS_bind, sockfd, address, address_length);
+}
+#endif
+
+/*
+ * Some dynamically linked programs bypass the libc listen()/bind() symbols
+ * and issue syscall(2) directly. Route those two calls through the same
+ * reservation lifecycle. The depth guard lets coordination call libc helpers
+ * without recursively trying to coordinate their internal syscall calls.
+ */
+long syscall(long number, ...) {
+    pthread_once(&init_once, initialize);
+    if (real_syscall == NULL) {
+        errno = ENOSYS;
+        return -1;
+    }
+    if (syscall_interposer_depth == 0) {
+#ifdef SYS_listen
+        if (number == SYS_listen) {
+            va_list arguments;
+            va_start(arguments, number);
+            int sockfd = va_arg(arguments, int);
+            int backlog = va_arg(arguments, int);
+            va_end(arguments);
+            syscall_interposer_depth++;
+            int result = coordinated_listen(sockfd, backlog, raw_listen_call);
+            syscall_interposer_depth--;
+            return result;
+        }
+#endif
+#ifdef SYS_bind
+        if (number == SYS_bind) {
+            va_list arguments;
+            va_start(arguments, number);
+            int sockfd = va_arg(arguments, int);
+            const struct sockaddr *address = va_arg(arguments, const struct sockaddr *);
+            socklen_t address_length = va_arg(arguments, socklen_t);
+            va_end(arguments);
+            syscall_interposer_depth++;
+            int result = coordinated_bind(sockfd, address, address_length, raw_bind_call);
+            syscall_interposer_depth--;
+            return result;
+        }
+#endif
+    }
+
+    /* Linux syscall(2) accepts at most six register-sized arguments. */
+    unsigned long arguments[6] = {0};
+    va_list values;
+    va_start(values, number);
+    for (size_t index = 0; index < 6; index++) {
+        arguments[index] = va_arg(values, unsigned long);
+    }
+    va_end(values);
+    return real_syscall(number, arguments[0], arguments[1], arguments[2], arguments[3], arguments[4], arguments[5]);
 }
 
 int close(int fd) {

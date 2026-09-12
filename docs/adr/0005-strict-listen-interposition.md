@@ -7,13 +7,18 @@ Accepted
 
 Polling can discover a WSL listener only after Linux has returned success. It cannot satisfy the stronger contract that a Windows bind failure also makes the WSL application's `listen(2)` fail.
 
-Linux dynamically linked applications can opt into function interposition without kernel changes. The relay protocol now supports reserving a bound-but-not-accepted Windows listener and committing it only after Linux begins listening.
+Linux dynamically linked applications can opt into function interposition
+without kernel changes. The relay protocol now supports reserving a
+bound-but-not-accepted Windows listener and committing it only after Linux
+begins listening. The interposer also handles direct `syscall(2)` calls for the
+two relevant syscall numbers when the application is dynamically linked.
 
 ## Decision
 
 Provide `libwsl_win_relay_listen.so` and a `wsl-win-relay-run` launcher. The interposer:
 
-1. Intercepts TCP `listen()` and non-zero UDP `bind()`.
+1. Intercepts TCP `listen()` and non-zero UDP `bind()` through libc symbols and
+   direct `syscall(SYS_listen/SYS_bind)` calls.
 2. Requests a Windows listener reservation over a mode-`0600` Unix socket.
 3. Returns the Windows error to the application if reservation fails.
 4. Calls the real Linux `listen()` only after Windows succeeds.
@@ -42,7 +47,9 @@ Provide `libwsl_win_relay_listen.so` and a `wsl-win-relay-run` launcher. The int
 
 ### Negative
 
-- Static binaries, setuid binaries, and programs that bypass libc are not interposed.
+- Static and setuid binaries are not interposed. Direct raw syscalls are
+  covered for dynamically linked programs, but a statically linked program
+  still requires a kernel-aware adapter.
 - Descriptor duplication through the standard `dup*()` calls,
   `fcntl(F_DUPFD*)`, and ordinary `fork()` are covered. `clone()` and `vfork()`
   ownership semantics remain outside the interposer contract. The current

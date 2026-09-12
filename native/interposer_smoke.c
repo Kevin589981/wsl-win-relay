@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -22,6 +23,19 @@ int main(void) {
         close_range((unsigned int)fd, (unsigned int)fd, 0);
         return 2;
     }
+    int raw = socket(AF_INET, SOCK_STREAM, 0);
+    if (raw < 0) {
+        close(fd);
+        return 14;
+    }
+    address.sin_port = htons(47126);
+    if (syscall(SYS_bind, raw, (struct sockaddr *)&address, sizeof(address)) < 0 ||
+        syscall(SYS_listen, raw, 16) < 0) {
+        close(raw);
+        close(fd);
+        return 15;
+    }
+    close(raw);
     int rejected = socket(AF_INET, SOCK_STREAM, 0);
     if (rejected < 0) {
         close(fd);
@@ -75,6 +89,18 @@ int main(void) {
         return 11;
     }
     close(ephemeral);
+    int raw_udp = socket(AF_INET, SOCK_DGRAM, 0);
+    if (raw_udp < 0) {
+        close(fd);
+        return 16;
+    }
+    address.sin_port = htons(47127);
+    if (syscall(SYS_bind, raw_udp, (struct sockaddr *)&address, sizeof(address)) < 0) {
+        close(raw_udp);
+        close(fd);
+        return 17;
+    }
+    close(raw_udp);
     pid_t child = fork();
     if (child < 0) {
         close_range((unsigned int)fd, (unsigned int)fd, 0);
