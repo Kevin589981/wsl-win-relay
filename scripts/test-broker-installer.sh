@@ -47,4 +47,15 @@ if HOME="$tmp_dir/home" \
     exit 1
 fi
 grep -q 'token file is missing or non-regular' "$tmp_dir/missing-token.out"
+printf '%s\n' "$(printf '%064x' 0)" >"$token_file"
+chmod 600 "$token_file"
+if HOME="$tmp_dir/home" \
+    XDG_CONFIG_HOME="$tmp_dir/config" \
+    PATH="$tmp_dir/bin:/usr/bin:/bin" \
+    WSL_WIN_RELAY_BROKER_EXE=/bin/echo \
+        "$repo_dir/scripts/install-broker-user-service.sh" >"$tmp_dir/mismatched-token.out" 2>&1; then
+    echo "broker installer unexpectedly accepted a mismatched token file" >&2
+    exit 1
+fi
+grep -q 'environment token does not match' "$tmp_dir/mismatched-token.out"
 echo "broker installer creates and preserves protected token file"
