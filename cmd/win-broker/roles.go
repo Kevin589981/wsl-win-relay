@@ -28,6 +28,12 @@ import (
 
 const workerStartupTimeout = 10 * time.Second
 
+const (
+	roleWorker       = "worker"
+	roleSocketHost   = "socket-host"
+	roleSocketBridge = "socket-bridge"
+)
+
 var errRoleTokenMismatch = errors.New("broker role token mismatch")
 
 func deriveEndpoint(endpoint, suffix string) string {
@@ -90,7 +96,7 @@ func (s *workerSupervisor) ensure(ctx context.Context) error {
 	defer s.ensureMu.Unlock()
 
 	probeCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
-	err := probeRole(probeCtx, s.endpoint, s.opts.tokenHex)
+	err := probeRole(probeCtx, s.endpoint, s.opts.tokenHex, roleWorker)
 	cancel()
 	if err == nil {
 		return nil
@@ -177,7 +183,7 @@ func (s *workerSupervisor) stop() {
 
 func ensureWorker(ctx context.Context, opts options, endpoint string, logger *log.Logger) (*exec.Cmd, error) {
 	probeCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
-	err := probeRole(probeCtx, endpoint, opts.tokenHex)
+	err := probeRole(probeCtx, endpoint, opts.tokenHex, roleWorker)
 	cancel()
 	if err == nil {
 		logger.Printf("reusing broker worker on %s", endpoint)
@@ -208,7 +214,7 @@ func ensureWorker(ctx context.Context, opts options, endpoint string, logger *lo
 	defer deadline.Stop()
 	for {
 		probeCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
-		dialErr := probeRole(probeCtx, endpoint, opts.tokenHex)
+		dialErr := probeRole(probeCtx, endpoint, opts.tokenHex, roleWorker)
 		cancel()
 		if dialErr == nil {
 			return worker, nil
@@ -270,7 +276,7 @@ func runWorker(opts options, logger *log.Logger) error {
 			}
 		}()
 	}
-	go monitorSocketHost(service, hostEndpoint, opts.tokenHex, stop)
+	go monitorSocketHost(service, hostEndpoint, opts.tokenHex, roleSocketHost, stop)
 	listener, err := localipc.Listen(opts.endpoint)
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", opts.endpoint, err)
@@ -286,7 +292,7 @@ func runWorker(opts options, logger *log.Logger) error {
 		_ = listener.Close()
 		_ = controlListener.Close()
 	}()
-	go serveWorkerControl(service, controlListener, stop, opts.tokenHex)
+	go serveWorkerControl(service, controlListener, stop, opts.tokenHex, roleWorker)
 	logger.Printf("broker bridge worker listening on %s (socket host %s)", opts.endpoint, hostEndpoint)
 	for {
 		conn, acceptErr := listener.Accept()
@@ -303,7 +309,7 @@ func runWorker(opts options, logger *log.Logger) error {
 	}
 }
 
-func monitorSocketHost(ctx context.Context, endpoint, tokenHex string, stop context.CancelFunc) {
+func monitorSocketHost(ctx context.Context, endpoint, tokenHex, role string, stop context.CancelFunc) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -312,7 +318,7 @@ func monitorSocketHost(ctx context.Context, endpoint, tokenHex string, stop cont
 			return
 		case <-ticker.C:
 			probeCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
-			err := probeRole(probeCtx, endpoint, tokenHex)
+			err := probeRole(probeCtx, endpoint, tokenHex, role)
 			cancel()
 			if err != nil {
 				stop()
@@ -337,7 +343,7 @@ func bridgeWorkerConnection(ctx context.Context, client net.Conn, endpoint strin
 
 func ensureSocketHost(ctx context.Context, opts options, endpoint string, logger *log.Logger) (*exec.Cmd, <-chan struct{}, error) {
 	probeCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
-	err := probeRole(probeCtx, endpoint, opts.tokenHex)
+	err := probeRole(probeCtx, endpoint, opts.tokenHex, roleSocketHost)
 	cancel()
 	if err == nil {
 		logger.Printf("reusing broker socket host on %s", endpoint)
@@ -375,7 +381,7 @@ func ensureSocketHost(ctx context.Context, opts options, endpoint string, logger
 	defer deadline.Stop()
 	for {
 		probeCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
-		dialErr := probeRole(probeCtx, endpoint, opts.tokenHex)
+		dialErr := probeRole(probeCtx, endpoint, opts.tokenHex, roleSocketHost)
 		cancel()
 		if dialErr == nil {
 			return host, done, nil
@@ -419,7 +425,7 @@ func runSocketHost(opts options, logger *log.Logger) error {
 	defer controlListener.Close()
 	service, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	go serveWorkerControl(service, controlListener, stop, opts.tokenHex)
+	go serveWorkerControl(service, controlListener, stop, opts.tokenHex, roleSocketHost)
 	b := broker.NewWithRegistry(registry, 0)
 	link := framed.New()
 	server := relay.NewServerWithLink(link, upstreamDialer.DialContext, upstreamDialer.OpenPacketContext)
@@ -437,7 +443,7 @@ func runSocketHost(opts options, logger *log.Logger) error {
 	return serveErr
 }
 
-func serveWorkerControl(ctx context.Context, listener net.Listener, stop context.CancelFunc, tokenHex string) {
+func serveWorkerControl(ctx context.Context, listener net.Listener, stop context.CancelFunc, tokenHex, role string) {
 	go func() {
 		<-ctx.Done()
 		_ = listener.Close()
@@ -455,7 +461,7 @@ func serveWorkerControl(ctx context.Context, listener net.Listener, stop context
 			line, _ := bufio.NewReader(io.LimitReader(conn, 128)).ReadString('\n')
 			fields := strings.Fields(line)
 			switch {
-			case len(fields) == 2 && fields[0] == "PING" && equalTokenHex(fields[1], tokenHex):
+			case len(fields) == 3 && fields[0] == "PING" && fields[2] == role && equalTokenHex(fields[1], tokenHex):
 				_, _ = io.WriteString(conn, "PONG\n")
 			case len(fields) == 1 && fields[0] == "STOP":
 				_, _ = io.WriteString(conn, "OK\n")
@@ -467,7 +473,7 @@ func serveWorkerControl(ctx context.Context, listener net.Listener, stop context
 	}
 }
 
-func probeRole(ctx context.Context, endpoint, tokenHex string) error {
+func probeRole(ctx context.Context, endpoint, tokenHex, role string) error {
 	conn, err := localipc.Dial(ctx, deriveEndpoint(endpoint, "control"))
 	if err != nil {
 		return err
@@ -476,7 +482,7 @@ func probeRole(ctx context.Context, endpoint, tokenHex string) error {
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
 	}
-	if _, err := io.WriteString(conn, "PING "+tokenHex+"\n"); err != nil {
+	if _, err := io.WriteString(conn, "PING "+tokenHex+" "+role+"\n"); err != nil {
 		return err
 	}
 	line, err := bufio.NewReader(io.LimitReader(conn, 64)).ReadString('\n')
@@ -499,7 +505,7 @@ func stopConflictingRole(ctx context.Context, endpoint string, logger *log.Logge
 	defer deadline.Stop()
 	for {
 		probeCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
-		err := probeRole(probeCtx, endpoint, "conflict-probe")
+		err := probeRole(probeCtx, endpoint, "conflict-probe", "conflict-probe")
 		cancel()
 		if !errors.Is(err, errRoleTokenMismatch) && err != nil {
 			return nil

@@ -32,16 +32,17 @@ func TestServeWorkerControlRequiresToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	serverCtx, serverCancel := context.WithCancel(context.Background())
+	defer serverCancel()
+	ctx := context.Background()
 	var stopOnce sync.Once
 	stopped := make(chan struct{})
-	go serveWorkerControl(ctx, listener, func() {
+	go serveWorkerControl(serverCtx, listener, func() {
 		stopOnce.Do(func() {
 			close(stopped)
-			cancel()
+			serverCancel()
 		})
-	}, "aabbcc")
+	}, "aabbcc", roleWorker)
 
 	request := func(line string) string {
 		dialCtx, dialCancel := context.WithTimeout(ctx, time.Second)
@@ -66,7 +67,7 @@ func TestServeWorkerControlRequiresToken(t *testing.T) {
 	if got := request("PING deadbeef\n"); got != "ERR" {
 		t.Fatalf("wrong-token probe response %q", got)
 	}
-	if got := request("PING AABBCC\n"); got != "PONG" {
+	if got := request("PING AABBCC worker\n"); got != "PONG" {
 		t.Fatalf("correct-token probe response %q", got)
 	}
 	if got := request("STOP\n"); got != "OK" {
@@ -85,25 +86,26 @@ func TestProbeRoleClassifiesMismatchAndStopsConflict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	serverCtx, serverCancel := context.WithCancel(context.Background())
+	defer serverCancel()
+	ctx := context.Background()
 	var stopOnce sync.Once
 	stopped := make(chan struct{})
-	go serveWorkerControl(ctx, listener, func() {
+	go serveWorkerControl(serverCtx, listener, func() {
 		stopOnce.Do(func() {
 			close(stopped)
-			cancel()
+			serverCancel()
 		})
-	}, "aabbcc")
+	}, "aabbcc", roleWorker)
 
 	probeCtx, probeCancel := context.WithTimeout(ctx, time.Second)
-	err = probeRole(probeCtx, endpoint, "deadbeef")
+	err = probeRole(probeCtx, endpoint, "deadbeef", roleWorker)
 	probeCancel()
 	if !errors.Is(err, errRoleTokenMismatch) {
 		t.Fatalf("wrong-token probe error %v, want token mismatch", err)
 	}
 	probeCtx, probeCancel = context.WithTimeout(ctx, time.Second)
-	err = probeRole(probeCtx, endpoint, "AABBCC")
+	err = probeRole(probeCtx, endpoint, "AABBCC", roleWorker)
 	probeCancel()
 	if err != nil {
 		t.Fatalf("correct-token probe: %v", err)
