@@ -369,6 +369,12 @@ Keep `wsl-proxy-linux` running, then launch an application through the wrapper:
 The wrapper waits up to two seconds for the strict-listen control socket and
 fails early with a diagnostic if the relay service is not running.
 
+It also rejects directly executed static ELF and setuid/setgid targets before
+launch. Those targets cannot load `LD_PRELOAD`, so allowing them through would
+silently disable the Windows-before-WSL bind contract. Scripts and other
+non-ELF entrypoints remain allowed; true static-binary coverage requires a
+future kernel-aware adapter.
+
 Before the application's libc `listen()` succeeds, the wrapper reserves
 Windows `127.0.0.1:8000` for IPv4 or `[::1]:8000` for IPv6. If Windows reports that the address is already in
 use, the application receives Linux `EADDRINUSE` and its `listen()` fails. If

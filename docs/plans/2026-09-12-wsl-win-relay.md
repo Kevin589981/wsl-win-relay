@@ -70,6 +70,9 @@
       shared-address-space contract.
 - [ ] Kernel-level coverage for static binaries and unusual thread-group
       ownership patterns; static/setuid binaries remain outside LD_PRELOAD.
+- [x] The strict launcher now fails closed for directly executed static ELF
+      and setuid/setgid targets instead of silently implying interposition;
+      true kernel-level coverage remains a separate adapter boundary.
 - [x] Opt-in broker-mode hot reconnect preserves existing TCP streams across
       connector/stdio replacement; a real delayed HTTP stream test covers the
       connector process boundary.

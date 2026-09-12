@@ -23,6 +23,37 @@ if [ ! -r "$library" ]; then
     exit 1
 fi
 
+resolve_target_path() {
+    target=$1
+    case "$target" in
+        */*) printf '%s\n' "$target" ;;
+        *) command -v "$target" 2>/dev/null || true ;;
+    esac
+}
+
+validate_target_support() {
+    target_path=$(resolve_target_path "$1")
+    [ -f "$target_path" ] || return 0
+    permissions=$(stat -c '%A' "$target_path" 2>/dev/null || stat -f '%Sp' "$target_path" 2>/dev/null || true)
+    case "$permissions" in
+        *s*)
+            echo "strict listener interposition refuses setuid/setgid target: $target_path" >&2
+            return 1
+            ;;
+    esac
+    if ! command -v readelf >/dev/null 2>&1; then
+        return 0
+    fi
+    if readelf -h "$target_path" 2>/dev/null | grep -q '^ELF'; then
+        if ! readelf -l "$target_path" 2>/dev/null | grep -q 'INTERP'; then
+            echo "strict listener interposition requires a dynamically linked ELF target: $target_path" >&2
+            return 1
+        fi
+    fi
+}
+
+validate_target_support "$1"
+
 for _ in $(seq 1 "$retry_attempts"); do
     [ -S "$control" ] && break
     sleep 0.1
