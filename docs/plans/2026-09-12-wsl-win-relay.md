@@ -71,9 +71,10 @@
 - [x] The kernel supervisor explicitly handles the `PTRACE_EVENT_VFORK_DONE`
       notification emitted for traced `vfork()` parents instead of treating it
       as an unknown event.
-- [ ] Kernel-level coverage for unusual thread-group ownership and non-direct
-      vfork libc interactions; setuid/setgid binaries remain intentionally
-      rejected because neither launcher path can preserve their semantics.
+- [ ] Kernel-level coverage for non-direct vfork libc interactions remains
+      open; the leader-exit/sibling-listener ownership path is covered by the
+      native smoke test. Setuid/setgid binaries remain intentionally rejected
+      because neither launcher path can preserve their semantics.
       The aarch64 register adapter remains buildable, but aarch64 runtime
       validation is intentionally outside this project's acceptance target.
 - [x] Phase-one opt-in ptrace supervisor (`wsl-win-relay-run --kernel`) now

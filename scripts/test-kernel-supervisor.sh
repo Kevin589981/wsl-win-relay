@@ -33,6 +33,7 @@ printf '%s\n' \
     '#include <unistd.h>' \
     'static void *thread_close(void *argument) { usleep(1000000); close(*(int *)argument); return NULL; }' \
     'static void *thread_exit_group(void *argument) { (void)argument; usleep(100000); syscall(SYS_exit_group, 0); return NULL; }' \
+    'static void *thread_listen_after_leader_exit(void *argument) { (void)argument; usleep(100000); int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0}; address.sin_family = AF_INET; address.sin_port = htons(47145); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK); if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return (void *)1; close(fd); return NULL; }' \
     'int main(int argc, char **argv) {' \
     '  if (argc > 1 && strcmp(argv[1], "env") == 0) return getenv("LD_PRELOAD") == NULL ? 0 : 8;' \
     '  if (argc > 1 && strcmp(argv[1], "fork") == 0) {' \
@@ -77,6 +78,11 @@ printf '%s\n' \
     '    address.sin_family = AF_INET; address.sin_port = htons(47132); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
     '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 2;' \
     '    if (pthread_create(&thread, NULL, thread_close, &fd) != 0) return 4;' \
+    '    syscall(SYS_exit, 0); return 6;' \
+    '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "leader-exit-thread-listen") == 0) {' \
+    '    pthread_t thread;' \
+    '    if (pthread_create(&thread, NULL, thread_listen_after_leader_exit, NULL) != 0) return 4;' \
     '    syscall(SYS_exit, 0); return 6;' \
     '  }' \
     '  if (argc > 1 && strcmp(argv[1], "signal") == 0) {' \
@@ -343,6 +349,13 @@ grep -q 'RESERVE .* tcp4 47132' "$tmp_dir/leader-sys-exit.log"
 grep -q '^ADOPT ' "$tmp_dir/leader-sys-exit.log"
 test "$(grep -Ec '^ADOPT ' "$tmp_dir/leader-sys-exit.log")" -eq 1
 test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/leader-sys-exit.log")" -eq 2
+stop_control
+
+start_control "$tmp_dir/leader-exit-thread-listen.sock" "$tmp_dir/leader-exit-thread-listen.log"
+WSL_WIN_RELAY_CONTROL="$tmp_dir/leader-exit-thread-listen.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" leader-exit-thread-listen
+grep -q 'RESERVE .* tcp4 47145' "$tmp_dir/leader-exit-thread-listen.log"
+grep -q '^ADOPT ' "$tmp_dir/leader-exit-thread-listen.log"
+test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/leader-exit-thread-listen.log")" -eq 2
 stop_control
 
 start_control "$tmp_dir/signal.sock" "$tmp_dir/signal.log"
