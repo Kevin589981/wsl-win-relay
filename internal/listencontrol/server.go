@@ -330,7 +330,13 @@ func (s *Server) handleCommit(conn net.Conn, parts []string) {
 		return
 	}
 	l.mu.Lock()
-	err := l.reservation.Commit()
+	reservation := l.reservation
+	if reservation == nil {
+		l.mu.Unlock()
+		writeError(conn, 5, "lease has no reservation")
+		return
+	}
+	err := reservation.Commit()
 	if err == nil {
 		l.committed = true
 	}
@@ -376,7 +382,9 @@ func (s *Server) remove(id uint64) {
 		l.mu.Lock()
 		reservation := l.reservation
 		l.mu.Unlock()
-		_ = reservation.Close()
+		if reservation != nil {
+			_ = reservation.Close()
+		}
 	}
 }
 
@@ -409,7 +417,9 @@ func (s *Server) closeAll() {
 		l.mu.Lock()
 		reservation := l.reservation
 		l.mu.Unlock()
-		_ = reservation.Close()
+		if reservation != nil {
+			_ = reservation.Close()
+		}
 	}
 }
 
@@ -438,6 +448,12 @@ func (s *Server) Rebind(ctx context.Context, reserve ReserveFunc, reserveDatagra
 	s.mu.Unlock()
 	var failures []string
 	for _, entry := range entries {
+		select {
+		case <-ctx.Done():
+			failures = append(failures, fmt.Sprintf("lease %d: %v", entry.id, ctx.Err()))
+			continue
+		default:
+		}
 		entry.l.mu.Lock()
 		windows, wsl, datagram := entry.l.windows, entry.l.wsl, entry.l.datagram
 		entry.l.mu.Unlock()
@@ -458,6 +474,10 @@ func (s *Server) Rebind(ctx context.Context, reserve ReserveFunc, reserveDatagra
 		}
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("lease %d: %v", entry.id, err))
+			continue
+		}
+		if replacement == nil {
+			failures = append(failures, fmt.Sprintf("lease %d: reservation backend returned nil", entry.id))
 			continue
 		}
 		entry.l.mu.Lock()

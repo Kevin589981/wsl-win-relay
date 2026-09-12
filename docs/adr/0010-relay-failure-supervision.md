@@ -22,7 +22,9 @@ failed session, starts a fresh Windows relay process after a bounded
 exponential backoff (two seconds initially, capped at thirty seconds). After a
 session has stayed healthy for at least one minute, a later failure starts again
 at the initial two-second delay. Each restart performs the capability handshake
-again and recreates configured reverse mappings and control state.
+again and recreates configured reverse mappings. The strict control socket stays
+alive in the WSL process, so its live leases are rebound to the new relay
+session instead of being discarded.
 
 Treat local bind errors, invalid configuration, capability mismatches, and
 reverse registration failures during a healthy session as fatal. The existing
