@@ -10,9 +10,10 @@ reverse-UDP flows across connector replacement. Automatic polling mappings are
 rebound by the long-lived WSL watcher after a connector replacement. A broker
 instance ID now lets the WSL proxy detect a broker process restart and rebuild
 stale peer state plus mappings without restarting the proxy. Established
-socket-host-owned sockets still end when the socket host crashes. ADR-0016
-introduces process-isolated frontend and bridge-worker roles so either bridge
-crash no longer tears down socket-host-owned sockets. The broker installer selects
+socket-owner-owned sockets still end when the socket owner crashes. ADR-0016
+introduces process-isolated frontend, bridge-worker, and socket-host bridge
+roles so any outer bridge crash no longer tears down socket-owner-owned sockets.
+The broker installer selects
 broker mode as the proxy service default through a private environment flag,
 while JSON and command-line settings remain explicit overrides.
 
@@ -30,9 +31,9 @@ the peer state belongs to the terminated process.
 
 ## Decision
 
-Add a Windows-side broker mode as the persistent ownership layer. The broker
-owns outbound sockets, reverse listeners, UDP flow tables, and stream state for
-the lifetime of the broker process. A small Windows connector, launched by WSL
+Add a Windows-side broker mode as the persistent ownership layer. The socket
+owner owns outbound sockets, reverse listeners, UDP flow tables, and stream
+state for the lifetime of the owner process. A small Windows connector, launched by WSL
 through interop, bridges the WSL byte stream to the broker over a Windows-only
 IPC transport. The WSL proxy may restart the connector without restarting the
 broker.
@@ -114,5 +115,6 @@ alive and makes the connector retry with bounded backoff.
    making broker mode the long-running-service default. The optional systemd
    broker unit now supplies the supervisor and private default flag, and
    instance-loss detection rebuilds mappings after restart.
-7. Split the broker into replaceable frontend and bridge-worker roles plus a
-   persistent socket host as specified by [ADR-0016](0016-process-isolated-socket-owner.md).
+7. Split the broker into replaceable frontend, bridge-worker, and socket-host
+   bridge roles plus a persistent socket owner as specified by
+   [ADR-0016](0016-process-isolated-socket-owner.md).
