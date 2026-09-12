@@ -46,3 +46,16 @@ func TestRelayDialDurationRejectsNonPositiveValues(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadRejectsZeroAutomaticForwardPorts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	for _, field := range []string{"include", "udp_include", "exclude"} {
+		content := `{"auto_forward":{"` + field + `":[0]}}`
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil {
+			t.Fatalf("expected zero-port rejection for %s", field)
+		}
+	}
+}

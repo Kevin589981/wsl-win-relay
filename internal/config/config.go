@@ -73,7 +73,25 @@ func Load(path string) (File, error) {
 	if _, err := result.RelayDialDuration(); err != nil {
 		return File{}, err
 	}
+	if err := validatePortLists(result.AutoForward); err != nil {
+		return File{}, err
+	}
 	return result, nil
+}
+
+func validatePortLists(config AutoForwardConfig) error {
+	for name, ports := range map[string][]uint16{
+		"auto_forward.include":     config.Include,
+		"auto_forward.udp_include": config.UDPInclude,
+		"auto_forward.exclude":     config.Exclude,
+	} {
+		for _, port := range ports {
+			if port == 0 {
+				return fmt.Errorf("%s must contain ports between 1 and 65535", name)
+			}
+		}
+	}
+	return nil
 }
 
 func (f File) AutoForwardDuration() (time.Duration, error) {
