@@ -26,6 +26,10 @@ work follows the same model:
   record. Process children have a copied fd table; `CLONE_THREAD` tasks share
   their group's fd table, so descriptor numbers retain Linux thread-group
   semantics.
+- Descriptor lifecycle also covers `fcntl(F_DUPFD*)` and `close_range()` so
+  static applications do not leave Windows mappings behind after bulk or
+  libc-level descriptor cleanup. `CLOSE_RANGE_UNSHARE` is rejected because it
+  changes the calling task's descriptor-table ownership model.
 - `PTRACE_O_TRACEFORK` and `PTRACE_O_TRACECLONE` attach process-style children
   before they can execute another syscall. The event handler clones inherited
   fd state and issues `ADOPT child-pid lease` once per inherited lease.

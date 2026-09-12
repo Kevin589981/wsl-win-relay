@@ -395,9 +395,9 @@ same control socket. Process-style `fork()`, `clone(SIGCHLD)`, non-thread
 state and inherit lease ownership with `ADOPT`/`RELEASE`. The kernel adapter is
 deliberately opt-in and traces `vfork()` children through the same process
 ownership path; unusual thread-group teardown remains unsupported. The source
-includes an aarch64 ptrace register adapter, but native aarch64 runtime
-validation is still pending. Setuid/setgid targets are rejected in
-both launcher modes because ptrace cannot preserve their privilege semantics.
+includes an aarch64 ptrace register adapter, but aarch64 is outside the current
+verification target. Setuid/setgid targets are rejected in both launcher modes
+because ptrace cannot preserve their privilege semantics.
 Use the default interposer for dynamically linked applications.
 
 Before the application's libc `listen()` succeeds, the wrapper reserves
@@ -443,8 +443,9 @@ opt-in `--kernel` adapter; setuid binaries remain rejected. Child-side
 networking before `vfork()` `exec`/`_exit` is supported only for direct
 syscall-safe operations. Ordinary pthread/`CLONE_THREAD`
 listeners share the process lease by design and are covered; unusual
-thread-group teardown patterns are covered by the opt-in kernel supervisor's
-shared-group path; unusual signal/exec interactions still require validation.
+thread-group teardown and signal/exec interactions remain outside the strict
+adapter contract. `close_range(CLOSE_RANGE_UNSHARE)` is rejected rather than
+silently weakening descriptor ownership guarantees.
 The native interposer targets the Linux
 amd64 build produced by the WSL scripts. The daemon tracks multiple process
 owners and reaps leases from processes that exit without closing their

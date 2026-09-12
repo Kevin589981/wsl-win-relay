@@ -854,9 +854,30 @@ static int trace_target(void) {
                 if (!thread_child) free(child_group);
                 return -1;
             }
-            if (ptrace(PTRACE_SETOPTIONS, child->pid, 0, options) < 0 ||
-                ptrace(PTRACE_SYSCALL, child->pid, 0, 0) < 0) return -1;
-            if (ptrace(PTRACE_SYSCALL, pid, 0, 0) < 0) return -1;
+            int child_ready = 1;
+            if (ptrace(PTRACE_SETOPTIONS, child->pid, 0, options) < 0) {
+                if (errno == ESRCH) {
+                    /* A vfork child can exec/_exit before the parent event is
+                     * serviced. Its pending wait status will still reap the
+                     * task; the parent must be resumed either way. */
+                    child_ready = 0;
+                } else {
+                    if (debug_enabled()) fprintf(stderr, "strict-supervisor: set child options %ld: %s\n", (long)child->pid, strerror(errno));
+                    return -1;
+                }
+            }
+            if (child_ready && ptrace(PTRACE_SYSCALL, child->pid, 0, 0) < 0) {
+                if (errno != ESRCH) {
+                    if (debug_enabled()) fprintf(stderr, "strict-supervisor: resume child %ld: %s\n", (long)child->pid, strerror(errno));
+                    return -1;
+                }
+            }
+            if (ptrace(PTRACE_SYSCALL, pid, 0, 0) < 0) {
+                if (errno != ESRCH) {
+                    if (debug_enabled()) fprintf(stderr, "strict-supervisor: resume parent %ld: %s\n", (long)pid, strerror(errno));
+                    return -1;
+                }
+            }
             continue;
         }
         if (signal_number == SIGTRAP && event == PTRACE_EVENT_EXIT) {

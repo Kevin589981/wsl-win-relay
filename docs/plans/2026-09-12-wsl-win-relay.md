@@ -87,6 +87,9 @@
       ownership remains a fail-closed follow-up boundary;
       non-thread `clone3()` and ordinary `CLONE_THREAD` are traced when
       supported.
+- [x] Static descriptor cleanup through `fcntl(F_DUPFD*)` and
+      `close_range()` is tracked with the same lease ownership rules;
+      descriptor-table unsharing remains explicitly rejected in strict mode.
 - [x] ptrace register access is isolated for amd64 and aarch64 in
       `native/strict_supervisor_regs.h`; unsupported architectures fail at
       compile time until a dedicated adapter is added.
