@@ -9,7 +9,13 @@ Users want WSL TCP listeners to appear automatically on Windows even when HNS fo
 
 ## Decision
 
-Add an opt-in watcher that polls both proc files, normalizes duplicate IPv4/IPv6 ports, registers new Windows reverse forwards, and removes mappings when WSL listeners disappear. Bind Windows loopback by default. Support allowlists, exclusions, and a configurable interval.
+Add an opt-in watcher that polls both proc files, keeps one representative
+listener per address family and port, registers new Windows reverse forwards,
+and removes mappings when WSL listeners disappear. A wildcard listener is the
+representative when several sockets share a family and port. Keep IPv4 and
+IPv6 mappings independent because Windows can bind both loopback families to
+the same port. Bind Windows loopback by default. Support allowlists,
+exclusions, and a configurable interval.
 
 Treat strict synchronized rejection as a different mode implemented with pre-listen application interposition or an equivalent kernel-aware mechanism. Do not misrepresent polling as atomic cross-kernel binding.
 
