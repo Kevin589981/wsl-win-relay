@@ -27,10 +27,12 @@ printf '%s\n' \
     '#include <fcntl.h>' \
     '#include <linux/sched.h>' \
     '#include <pthread.h>' \
+    '#include <spawn.h>' \
     '#include <signal.h>' \
     '#include <sys/syscall.h>' \
     '#include <sys/wait.h>' \
     '#include <unistd.h>' \
+    'extern char **environ;' \
     'static volatile int leader_listener_fd = -1;' \
     'static void *thread_close(void *argument) { usleep(1000000); close(*(int *)argument); return NULL; }' \
     'static void *thread_exit_group(void *argument) { (void)argument; usleep(100000); syscall(SYS_exit_group, 0); return NULL; }' \
@@ -66,6 +68,18 @@ printf '%s\n' \
     '      close(fd); _exit(0);' \
     '    }' \
     '    return waitpid(child, 0, 0) == child ? 0 : 6;' \
+    '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "spawn-child") == 0) {' \
+    '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0};' \
+    '    address.sin_family = AF_INET; address.sin_port = htons(47147); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
+    '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 2;' \
+    '    close(fd); return 0;' \
+    '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "posix-spawn") == 0) {' \
+    '    pid_t child = -1; char *spawn_argv[] = { argv[0], (char *)"spawn-child", NULL };' \
+    '    int spawn_error = posix_spawn(&child, argv[0], NULL, NULL, spawn_argv, environ);' \
+    '    if (spawn_error != 0) return spawn_error;' \
+    '    return waitpid(child, NULL, 0) == child ? 0 : 6;' \
     '  }' \
     '  if (argc > 1 && strcmp(argv[1], "thread") == 0) {' \
     '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0}; pthread_t thread;' \
@@ -265,6 +279,13 @@ WSL_WIN_RELAY_CONTROL="$tmp_dir/vfork.sock" "$repo_dir/scripts/wsl-win-relay-run
 grep -q 'RESERVE .* tcp4 47133' "$tmp_dir/vfork.log"
 grep -q '^COMMIT ' "$tmp_dir/vfork.log"
 grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/vfork.log"
+stop_control
+
+start_control "$tmp_dir/posix-spawn.sock" "$tmp_dir/posix-spawn.log"
+WSL_WIN_RELAY_CONTROL="$tmp_dir/posix-spawn.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" posix-spawn
+grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/posix-spawn.log"
+grep -q '^COMMIT ' "$tmp_dir/posix-spawn.log"
+grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/posix-spawn.log"
 stop_control
 
 start_control "$tmp_dir/thread.sock" "$tmp_dir/thread.log"
