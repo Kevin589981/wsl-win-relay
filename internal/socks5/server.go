@@ -270,14 +270,7 @@ func (s *Server) ServeConn(ctx context.Context, client net.Conn) error {
 			_ = writeReply(client, replyCommandNotSupported, nil)
 			return errors.New("UDP relay is unavailable")
 		}
-		openCtx, cancel := s.dialContext(ctx)
-		packet, openErr := packetDialer.OpenPacketContext(openCtx)
-		cancel()
-		if openErr != nil {
-			_ = writeReply(client, mapDialError(openErr), nil)
-			return openErr
-		}
-		return s.serveUDPAssociateWithPacket(ctx, client, packet)
+		return s.serveUDPAssociate(ctx, client, packetDialer)
 	}
 	if request.command != commandConnect {
 		_ = writeReply(client, replyCommandNotSupported, nil)
