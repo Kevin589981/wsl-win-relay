@@ -4,6 +4,7 @@ set -eu
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 proxy_bin=${WWR_PROXY_BIN:-"$repo_dir/bin/wsl-proxy-linux"}
 relay_exe=${WWR_RELAY_EXE:-"$repo_dir/bin/wsl-win-relay.exe"}
+windows_shell=${WWR_WINDOWS_SHELL:-powershell.exe}
 port=${WWR_AUTO_TEST_PORT:-47140}
 proxy_listen=${WWR_AUTO_TEST_PROXY_LISTEN:-127.0.0.1:11086}
 work=$(mktemp -d "${TMPDIR:-/tmp}/wsl-win-relay-auto-rebind.XXXXXX")
@@ -33,8 +34,8 @@ if [ ! -f "$relay_exe" ]; then
 	echo "missing Windows relay executable: $relay_exe (build the Windows binary)" >&2
 	exit 1
 fi
-if ! command -v powershell.exe >/dev/null 2>&1; then
-	echo "powershell.exe is required for the Windows-side probe (enable WSL interop)" >&2
+if [ ! -x "$windows_shell" ] && ! command -v "$windows_shell" >/dev/null 2>&1; then
+	echo "Windows shell is required for the probe: $windows_shell (set WWR_WINDOWS_SHELL or enable WSL interop)" >&2
 	exit 1
 fi
 
@@ -46,7 +47,7 @@ server_pid=$!
 proxy_pid=$!
 
 probe_windows_port() {
-	powershell.exe -NoProfile -NonInteractive -Command \
+	"$windows_shell" -NoProfile -NonInteractive -Command \
 		"try { [System.Net.Sockets.TcpClient]::new('127.0.0.1',$port).Close(); exit 0 } catch { exit 1 }" \
 		>/dev/null 2>&1
 }
