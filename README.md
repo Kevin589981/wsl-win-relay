@@ -475,7 +475,8 @@ the relay running:
 sudo env WWR_TUN_PROXY=socks5://127.0.0.1:1080 ./scripts/transparent-relay.sh
 ```
 
-The script creates `tun0`, adds split default routes, starts tun2socks, and
+The script creates `tun0`, adds split default routes, keeps a configured
+non-loopback proxy endpoint on the original uplink, starts tun2socks, and
 restores routes and the optional DNS file on exit. Set `WWR_DNS=1.1.1.1` when
 WSL DNS is unavailable; set `WWR_UPLINK_INTERFACE` if the default interface
 cannot be detected. Root, `iproute2`, `/dev/net/tun`, and tun2socks are required.

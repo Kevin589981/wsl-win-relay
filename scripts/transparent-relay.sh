@@ -37,6 +37,7 @@ dns_was_present=0
 dns_symlink=0
 dns_link_target=
 tun_pid=
+proxy_route_file=
 
 cleanup() {
     trap - EXIT INT TERM
@@ -51,6 +52,17 @@ cleanup() {
     if [ "$route6_added" -eq 1 ]; then
         ip -6 route del ::/1 dev "$device" 2>/dev/null || true
         ip -6 route del 8000::/1 dev "$device" 2>/dev/null || true
+    fi
+    if [ -n "${proxy_route_file:-}" ] && [ -f "$proxy_route_file" ]; then
+        while read -r family address; do
+            [ -n "$family" ] || continue
+            if [ "$family" = 6 ]; then
+                ip -6 route del "$address/128" 2>/dev/null || true
+            else
+                ip route del "$address/32" 2>/dev/null || true
+            fi
+        done < "$proxy_route_file"
+        rm -f "$proxy_route_file"
     fi
     if [ -n "$dns_backup" ]; then
         if [ "$dns_symlink" -eq 1 ]; then
@@ -88,6 +100,79 @@ fi
 if [ -z "$uplink" ]; then
     echo "unable to determine uplink interface; set WWR_UPLINK_INTERFACE" >&2
     exit 1
+fi
+
+proxy_host=
+proxy_authority=${proxy#*://}
+proxy_authority=${proxy_authority%%/*}
+proxy_authority=${proxy_authority%%\?*}
+proxy_authority=${proxy_authority##*@}
+case "$proxy_authority" in
+    \[*\]:*) proxy_host=${proxy_authority#\[}; proxy_host=${proxy_host%%\]*} ;;
+    *:*) proxy_host=${proxy_authority%:*} ;;
+    *) proxy_host=$proxy_authority ;;
+esac
+
+proxy_addresses=
+case "$proxy_host" in
+    ""|localhost|127.*|::1)
+        ;;
+    *:*)
+        proxy_addresses=$proxy_host
+        ;;
+    *[!0-9.]*|*[!0-9])
+        if ! command -v getent >/dev/null 2>&1; then
+            echo "getent is required to resolve the non-loopback TUN proxy $proxy_host" >&2
+            exit 1
+        fi
+        proxy_addresses=$(getent ahosts "$proxy_host" | awk '{print $1}' | sort -u)
+        ;;
+    *)
+        proxy_addresses=$proxy_host
+        ;;
+esac
+if [ -n "$proxy_host" ] && [ -n "$proxy_addresses" ]; then
+    proxy_route_file=$(mktemp /tmp/wsl-win-relay-proxy-route.XXXXXX)
+    while read -r proxy_address; do
+        [ -n "$proxy_address" ] || continue
+        route_family=4
+        route_prefix=32
+        route_line=$(ip route get "$proxy_address" 2>/dev/null | awk 'NR==1 {print}')
+        case "$proxy_address" in
+            *:*)
+                route_family=6
+                route_prefix=128
+                route_line=$(ip -6 route get "$proxy_address" 2>/dev/null | awk 'NR==1 {print}')
+                ;;
+        esac
+        route_dev=$(printf '%s\n' "$route_line" | awk '{for (i = 1; i <= NF; i++) if ($i == "dev") {print $(i + 1); exit}}')
+        route_via=$(printf '%s\n' "$route_line" | awk '{for (i = 1; i <= NF; i++) if ($i == "via") {print $(i + 1); exit}}')
+        if [ -z "$route_dev" ]; then
+            echo "unable to determine uplink route for TUN proxy $proxy_address" >&2
+            exit 1
+        fi
+        if [ "$route_family" -eq 6 ]; then
+            if ip -6 route show exact "$proxy_address/$route_prefix" 2>/dev/null | grep -q .; then
+                continue
+            fi
+        elif ip route show exact "$proxy_address/$route_prefix" 2>/dev/null | grep -q .; then
+            continue
+        fi
+        if [ "$route_family" -eq 6 ]; then
+            if [ -n "$route_via" ]; then
+                ip -6 route add "$proxy_address/$route_prefix" via "$route_via" dev "$route_dev"
+            else
+                ip -6 route add "$proxy_address/$route_prefix" dev "$route_dev"
+            fi
+        elif [ -n "$route_via" ]; then
+            ip route add "$proxy_address/$route_prefix" via "$route_via" dev "$route_dev"
+        else
+            ip route add "$proxy_address/$route_prefix" dev "$route_dev"
+        fi
+        printf '%s %s\n' "$route_family" "$proxy_address" >> "$proxy_route_file"
+    done <<EOF
+$proxy_addresses
+EOF
 fi
 
 if ip link show "$device" >/dev/null 2>&1; then
