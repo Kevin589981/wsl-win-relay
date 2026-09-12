@@ -1,7 +1,7 @@
 # ADR-0012: Add Explicit Reverse UDP Forwarding
 
 ## Status
-Accepted
+Accepted; automatic-discovery boundary superseded by [ADR-0013](0013-allowlisted-udp-discovery.md)
 
 ## Context
 
@@ -24,10 +24,13 @@ Expose explicit mappings through `reverse_udp` configuration entries and the
 repeatable `-reverse-udp WINDOWS_ADDR=WSL_TARGET` flag. Bind failures are
 returned during mapping registration just like reverse TCP failures.
 
-Do not include UDP sockets in automatic `/proc` polling yet. Linux proc UDP
-tables do not reliably identify which bound sockets are servers versus
-ephemeral client sockets, so automatic mirroring would create surprising
-Windows listeners and port conflicts.
+At the time of this decision, do not include UDP sockets in unrestricted
+automatic `/proc` polling. Linux proc UDP tables do not reliably identify
+which bound sockets are servers versus ephemeral client sockets, so mapping
+every row would create surprising Windows listeners and port conflicts. The
+later allowlisted adapter is defined separately in ADR-0013; this decision
+still governs the explicit reverse UDP protocol and its endpoint-preserving
+flow model.
 
 ## Consequences
 
@@ -43,7 +46,7 @@ Windows listeners and port conflicts.
 
 - Each active source endpoint consumes one local ephemeral UDP socket and flow;
   idle flows expire after five minutes.
-- Automatic UDP port discovery remains a future feature requiring stronger
-  socket classification or an application-level registration path.
+- Unrestricted UDP port discovery remains unsupported; the allowlisted
+  polling adapter intentionally accepts a documented procfs ambiguity.
 - UDP firewall policy after bind still cannot be represented as a WSL bind
   failure.
