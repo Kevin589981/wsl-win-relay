@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Kevin589981/wsl-win-relay/internal/netutil"
 )
 
 const maxProxyHeader = 64 << 10
@@ -158,7 +160,7 @@ func (d *Dialer) OpenPacketContext(ctx context.Context) (net.PacketConn, error) 
 		relayHost, _, _ = net.SplitHostPort(d.proxy.Host)
 	}
 	_, relayPort, _ := net.SplitHostPort(bind)
-	relayAddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(relayHost, relayPort))
+	relayAddr, err := netutil.ResolveUDPAddr(ctx, "udp", net.JoinHostPort(relayHost, relayPort))
 	if err != nil {
 		close(finished)
 		_ = control.Close()

@@ -19,6 +19,9 @@
       metadata; the WSL build and CI paths inject and verify matching values.
 - [x] SOCKS5 TCP CONNECT and UDP ASSOCIATE, plus optional HTTP CONNECT and
       absolute-form cleartext HTTP forwarding.
+- [x] UDP endpoint resolution is context-aware on WSL and Windows; per-object
+      cancellation interrupts in-flight DNS when an association or reverse
+      mapping closes instead of leaking blocked resolver goroutines.
 - [x] JSON configuration uses the accurate `http_proxy_listen` name for the
       HTTP frontend while normalizing the legacy `http_connect_listen` alias
       and rejecting conflicting values.

@@ -1029,6 +1029,82 @@ func TestDatagramDecodeErrorsUseMatchingFrameType(t *testing.T) {
 	}
 }
 
+func TestReverseDatagramCloseCancelsEndpointResolution(t *testing.T) {
+	client := NewClient(&discardReadWriter{})
+	started := make(chan struct{})
+	finished := make(chan struct{})
+	client.resolveUDP = func(ctx context.Context, _, _ string) (*net.UDPAddr, error) {
+		close(started)
+		<-ctx.Done()
+		close(finished)
+		return nil, ctx.Err()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	listener := newClientReverseDatagram(client, 1, "127.0.0.1:5353", mustUDPAddr(t, "127.0.0.1:9"), ctx)
+	listener.cancel = cancel
+	done := make(chan struct{})
+	go func() {
+		listener.handle(protocol.Frame{Type: protocol.TypeListenDatagramData, StreamID: 1, Payload: mustDatagramPayload(t, "blocked.invalid:49001", []byte("request"))})
+		close(done)
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("endpoint resolution did not start")
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("endpoint resolution was not canceled")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("datagram handler did not return")
+	}
+}
+
+func TestServerDatagramCloseCancelsTargetResolution(t *testing.T) {
+	server := NewServer(&discardReadWriter{}, nil)
+	started := make(chan struct{})
+	finished := make(chan struct{})
+	server.resolveUDP = func(ctx context.Context, _, _ string) (*net.UDPAddr, error) {
+		close(started)
+		<-ctx.Done()
+		close(finished)
+		return nil, ctx.Err()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	packet := &errorPacketConn{closed: make(chan struct{})}
+	datagram := &serverDatagram{conn: packet, ctx: ctx, cancel: cancel, incoming: make(chan []byte, 1), done: make(chan struct{})}
+	server.datagrams[2] = datagram
+	done := make(chan struct{})
+	go func() {
+		server.writeDatagrams(2, datagram)
+		close(done)
+	}()
+	datagram.incoming <- mustDatagramPayload(t, "blocked.invalid:53", []byte("request"))
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("target resolution did not start")
+	}
+	server.removeDatagram(2)
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("target resolution was not canceled")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("datagram writer did not return")
+	}
+}
+
 func TestSlowStreamDoesNotBlockOtherStreams(t *testing.T) {
 	clientSide, serverSide := net.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())

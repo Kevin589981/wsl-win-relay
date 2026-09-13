@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Kevin589981/wsl-win-relay/internal/netutil"
 	"github.com/Kevin589981/wsl-win-relay/internal/protocol"
 	"github.com/Kevin589981/wsl-win-relay/internal/transport/framed"
 )
@@ -28,6 +29,7 @@ const closeFrameTimeout = 250 * time.Millisecond
 type Client struct {
 	rw                io.ReadWriter
 	transport         frameTransport
+	resolveUDP        func(context.Context, string, string) (*net.UDPAddr, error)
 	writeMu           sync.Mutex
 	mu                sync.Mutex
 	streams           map[uint32]*clientStream
@@ -56,7 +58,7 @@ type helloResult struct {
 }
 
 func NewClient(rw io.ReadWriter) *Client {
-	c := &Client{rw: rw, streams: make(map[uint32]*clientStream), listeners: make(map[uint32]*clientListener), datagrams: make(map[uint32]*clientPacketConn), reverseDatagrams: make(map[uint32]*clientReverseDatagram), closed: make(chan struct{}), helloDone: make(chan helloResult, 1)}
+	c := &Client{rw: rw, resolveUDP: netutil.ResolveUDPAddr, streams: make(map[uint32]*clientStream), listeners: make(map[uint32]*clientListener), datagrams: make(map[uint32]*clientPacketConn), reverseDatagrams: make(map[uint32]*clientReverseDatagram), closed: make(chan struct{}), helloDone: make(chan helloResult, 1)}
 	c.nextID.Store(^uint32(0))
 	return c
 }
@@ -306,22 +308,26 @@ func (c *Client) ReverseDatagramForward(ctx context.Context, windowsAddr, target
 	if windowsAddr == "" || target == "" || len(windowsAddr) > protocol.MaxTargetSize || len(target) > protocol.MaxTargetSize {
 		return nil, fmt.Errorf("invalid reverse datagram address")
 	}
-	targetAddr, err := net.ResolveUDPAddr("udp", target)
+	targetAddr, err := netutil.ResolveUDPAddr(ctx, "udp", target)
 	if err != nil {
 		return nil, fmt.Errorf("resolve reverse datagram target: %w", err)
 	}
 	id := c.nextID.Add(2)
-	l := newClientReverseDatagram(c, id, windowsAddr, targetAddr, ctx)
+	listenerCtx, listenerCancel := context.WithCancel(context.Background())
+	l := newClientReverseDatagram(c, id, windowsAddr, targetAddr, listenerCtx)
+	l.cancel = listenerCancel
 	c.mu.Lock()
 	c.reverseDatagrams[id] = l
 	c.mu.Unlock()
 	if err := c.write(protocol.Frame{Type: protocol.TypeListenDatagramOpen, StreamID: id, Payload: []byte(windowsAddr)}); err != nil {
+		listenerCancel()
 		c.removeReverseDatagram(id)
 		return nil, err
 	}
 	select {
 	case result := <-l.ready:
 		if result.err != nil {
+			listenerCancel()
 			c.removeReverseDatagram(id)
 			return nil, result.err
 		}
@@ -812,6 +818,7 @@ type clientReverseDatagram struct {
 	boundAddress     string
 	target           *net.UDPAddr
 	ctx              context.Context
+	cancel           context.CancelFunc
 	ready            chan listenerReady
 	readyOnce        sync.Once
 	done             chan struct{}
@@ -852,7 +859,7 @@ func (l *clientReverseDatagram) handle(frame protocol.Frame) {
 			l.fail(err)
 			return
 		}
-		remote, err := net.ResolveUDPAddr("udp", endpoint)
+		remote, err := l.client.resolveUDP(l.ctx, "udp", endpoint)
 		if err != nil {
 			l.fail(err)
 			return
@@ -893,6 +900,9 @@ func (l *clientReverseDatagram) fail(err error) {
 	l.readyOnce.Do(func() { l.ready <- listenerReady{err: err} })
 	l.closeOnce.Do(func() {
 		close(l.done)
+		if l.cancel != nil {
+			l.cancel()
+		}
 		l.client.removeReverseDatagram(l.id)
 		l.mu.Lock()
 		flows := make([]*reverseDatagramFlow, 0, len(l.flows))
@@ -921,6 +931,9 @@ func (l *clientReverseDatagram) removeFlow(flow *reverseDatagramFlow) {
 func (l *clientReverseDatagram) Close() error {
 	l.closeOnce.Do(func() {
 		close(l.done)
+		if l.cancel != nil {
+			l.cancel()
+		}
 		l.client.removeReverseDatagram(l.id)
 		l.mu.Lock()
 		flows := make([]*reverseDatagramFlow, 0, len(l.flows))
