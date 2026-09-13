@@ -68,6 +68,7 @@ jobs:
           cache: false
       - run: ./scripts/build-wsl.sh
       - run: sh -n scripts/*.sh scripts/wsl-win-relay-run
+      - run: ./scripts/test-user-installer.sh
       - run: ./scripts/test-launcher-preflight.sh
       - run: ./scripts/test-kernel-supervisor.sh
       - run: ./scripts/test-interposer.sh

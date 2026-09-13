@@ -15,6 +15,9 @@ install -m 0755 "$repo_dir/bin/wsl-proxy-linux" "$bin_dir/wsl-proxy-linux"
 install -m 0755 "$repo_dir/scripts/wsl-win-relay-run" "$bin_dir/wsl-win-relay-run"
 install -m 0755 "$repo_dir/scripts/run-user-service.sh" "$bin_dir/wsl-win-relay-service"
 install -m 0755 "$repo_dir/scripts/run-broker-user-service.sh" "$bin_dir/wsl-win-relay-broker-service"
+if [ -x "$repo_dir/bin/wsl-win-relay-strict" ]; then
+    install -m 0755 "$repo_dir/bin/wsl-win-relay-strict" "$bin_dir/wsl-win-relay-strict"
+fi
 if [ -r "$repo_dir/lib/libwsl_win_relay_listen.so" ]; then
     mkdir -p "$lib_dir"
     install -m 0755 "$repo_dir/lib/libwsl_win_relay_listen.so" "$lib_dir/libwsl_win_relay_listen.so"

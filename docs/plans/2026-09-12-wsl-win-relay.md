@@ -34,6 +34,10 @@
       path and restores both symlink shape and original contents in the smoke
       test, keeping container and namespace verification off the host resolver.
 - [x] systemd user-service installer and private configuration handling.
+- [x] The user-service installer deploys the kernel strict supervisor alongside
+      its launcher, so installed static-target coordination does not depend on
+      paths inside the source checkout; an isolated installer smoke verifies
+      the binary and protected configuration deployment.
 - [x] Independent IPv4/IPv6 Windows bind hosts for automatic and strict
       listener mappings.
 - [x] Session-independent local SOCKS5/HTTP listeners with a reconnecting

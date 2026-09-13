@@ -560,10 +560,12 @@ listener errors remain fatal. Automatic TCP/UDP mappings are also
 process-scoped: they are detached from a failed child and rebound through the
 reconnecting session dialer, so a transient relay restart does not leave a
 stale Windows listener behind. The
-installer copies the built Linux proxy to `~/bin/wsl-proxy-linux`, the service
-wrapper to `~/bin/wsl-win-relay-service`, and the strict-listen launcher to
-`~/bin/wsl-win-relay-run`; when the native library is present it also installs
-it under `~/lib`. It creates a private
+installer copies the built Linux proxy to `~/bin/wsl-proxy-linux`, the
+service wrappers to `~/bin/wsl-win-relay-service` and
+`~/bin/wsl-win-relay-broker-service`, the strict-listen launcher to
+`~/bin/wsl-win-relay-run`, and the kernel supervisor to
+`~/bin/wsl-win-relay-strict`; when the native library is present it also
+installs it under `~/lib`. It creates a private
 `${XDG_CONFIG_HOME:-~/.config}/wsl-win-relay/config.json` from the example only
 when one does not already exist. It rejects symlinked/non-regular config paths
 and enforces directory mode `0700` and file mode `0600` on every run. Build with `scripts/build-wsl.sh` first
