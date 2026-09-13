@@ -358,6 +358,8 @@
 - [x] Broker installation records and validates the Windows connector path;
       the proxy service wrapper overrides `relay_exe` in broker mode so a new
       installation cannot accidentally launch the stdio relay from stale JSON.
+- [x] Broker installation restarts an already-installed proxy user unit after
+      broker startup, while still allowing either unit to be installed first.
 - [x] Process-isolated broker frontend/bridge-worker/socket-host/socket-owner
       design is documented in ADR-0016; only the socket owner owns relay state.
 - [x] Frontend, bridge-worker, and socket-host bridge crash recovery preserves

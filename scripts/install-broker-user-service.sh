@@ -130,6 +130,14 @@ fi
 systemctl --user daemon-reload
 systemctl --user enable wsl-win-relay-broker.service
 systemctl --user restart wsl-win-relay-broker.service
-echo "enabled and restarted wsl-win-relay-broker.service"
+if systemctl --user cat wsl-win-relay.service >/dev/null 2>&1; then
+    systemctl --user restart wsl-win-relay.service
+    proxy_restart=" and wsl-win-relay.service"
+else
+    proxy_restart=
+fi
+echo "enabled and restarted wsl-win-relay-broker.service$proxy_restart"
 echo "broker mode is now the default for the proxy service when this env file is loaded"
-echo "restart wsl-win-relay.service to attach it to the broker"
+if [ -z "$proxy_restart" ]; then
+    echo "install or restart wsl-win-relay.service to attach it to the broker"
+fi

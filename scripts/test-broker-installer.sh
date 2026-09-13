@@ -9,9 +9,10 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 mkdir -p "$tmp_dir/home" "$tmp_dir/config" "$tmp_dir/bin"
-printf '%s\n' '#!/bin/sh' 'exit 0' >"$tmp_dir/bin/systemctl"
+printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$*" >>"$WWR_TEST_SYSTEMCTL_LOG"' >"$tmp_dir/bin/systemctl"
 chmod 700 "$tmp_dir/bin/systemctl"
 export WSL_WIN_RELAY_CONNECTOR_EXE=/bin/true
+export WWR_TEST_SYSTEMCTL_LOG=$tmp_dir/systemctl.log
 
 HOME="$tmp_dir/home" \
 XDG_CONFIG_HOME="$tmp_dir/config" \
@@ -31,6 +32,7 @@ token=$(sed -n "s/^WSL_WIN_RELAY_ATTACH_TOKEN='\([^']*\)'$/\1/p" "$env_file")
 grep -Fqx "WSL_WIN_RELAY_ATTACH_TOKEN_FILE='$token_file'" "$env_file"
 grep -Fqx 'WSL_WIN_RELAY_BROKER_MODE=1' "$env_file"
 grep -Fqx "WSL_WIN_RELAY_CONNECTOR_EXE='/bin/true'" "$env_file"
+grep -Fqx -- '--user restart wsl-win-relay.service' "$WWR_TEST_SYSTEMCTL_LOG"
 grep -Fqx "WSL_WIN_RELAY_UPSTREAM_PROXY='socks5h://matebookxpro.local:7890'" "$env_file"
 
 if HOME="$tmp_dir/home" \

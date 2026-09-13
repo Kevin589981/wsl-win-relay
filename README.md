@@ -101,6 +101,9 @@ defaults to `wsl-win-connector.exe` beside the broker executable and can be
 overridden with an absolute mounted path. The proxy service wrapper passes this
 path as `-relay-exe` in broker mode, so the JSON configuration does not need to
 be rewritten and cannot accidentally launch the stdio relay.
+When the proxy user unit is already installed, the broker installer restarts it
+after the broker is ready so the connector override takes effect immediately;
+otherwise it leaves the independent proxy installation order unchanged.
 
 New broker installations also create `attach.token` with mode `0600` and pass
 that path to the Windows broker (the wrapper converts a WSL path with
