@@ -54,18 +54,39 @@ if ! command -v python3 >/dev/null 2>&1; then
 	echo "python3 is required for the reverse forwarding interop smoke" >&2
 	exit 1
 fi
+if [ ! -x "$windows_shell" ] && ! command -v "$windows_shell" >/dev/null 2>&1; then
+	echo "Windows PowerShell is required for broker cleanup: $windows_shell (set WWR_WINDOWS_SHELL)" >&2
+	exit 1
+fi
 pick_free_port() {
 	python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()'
+}
+pick_windows_free_port() {
+	"$windows_shell" -NoProfile -NonInteractive -Command \
+		"\$listener = [System.Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); \$listener.Start(); [Console]::Out.Write((\$listener.LocalEndpoint).Port); \$listener.Stop()" | tr -d '\r'
+}
+port_available_in_wsl() {
+	python3 -c 'import socket, sys; s = socket.socket(); s.bind(("127.0.0.1", int(sys.argv[1]))); s.close()' "$1" >/dev/null 2>&1
+}
+pick_shared_free_port() {
+	for _ in $(seq 1 20); do
+		candidate=$(pick_windows_free_port) || continue
+		case "$candidate" in
+			''|*[!0-9]*) continue ;;
+		esac
+		if port_available_in_wsl "$candidate"; then
+			printf '%s\n' "$candidate"
+			return 0
+		fi
+	done
+	echo "could not find a TCP port available in both Windows and WSL" >&2
+	return 1
 }
 if [ -z "$socks_listen" ]; then
 	socks_listen="127.0.0.1:$(pick_free_port)"
 fi
 if [ -z "$reverse_port" ]; then
-	reverse_port=$(pick_free_port)
-fi
-if [ ! -x "$windows_shell" ] && ! command -v "$windows_shell" >/dev/null 2>&1; then
-	echo "Windows PowerShell is required for broker cleanup: $windows_shell (set WWR_WINDOWS_SHELL)" >&2
-	exit 1
+	reverse_port=$(pick_shared_free_port)
 fi
 
 token=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
