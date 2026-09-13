@@ -20,7 +20,8 @@ milestone is usable and tested:
 - Explicit reverse UDP forwarding with per-source flow isolation.
 - Multiplexed Windows-side UDP sockets with endpoint-preserving datagram frames.
 - SOCKS5 UDP ASSOCIATE for DNS, QUIC-capable clients, and other UDP traffic.
-- Optional HTTP CONNECT proxy for tools that only support `HTTP_PROXY`.
+- Optional HTTP proxy for tools that only support `HTTP_PROXY`, including
+  CONNECT tunnels and cleartext HTTP forwarding.
 - Optional Windows-side HTTP CONNECT or SOCKS5/SOCKS5H upstream proxy; SOCKS5
   upstreams also carry relay UDP via UDP ASSOCIATE.
 - Per-stream 256 KiB credit windows that isolate slow TCP consumers.
@@ -195,8 +196,8 @@ SOCKS5 / HTTP CONNECT / TUN transparent adapter
       Windows WinSock
 ```
 
-The SOCKS5 and HTTP CONNECT adapters are suitable for proxy-aware command-line
-tools. The TUN adapter is implemented as an opt-in operational layer and needs
+The SOCKS5 and HTTP adapters are suitable for proxy-aware command-line tools.
+The TUN adapter is implemented as an opt-in operational layer and needs
 root, `/dev/net/tun`, `iproute2`, and the pinned `tun2socks` binary; it remains
 separate from the relay core so it can be replaced without changing stream or
 datagram semantics.
@@ -282,7 +283,7 @@ uses Windows resolution. SOCKS fragmentation
 (`FRAG != 0`) is rejected because there is no interoperable fragmentation
 standard in common clients.
 
-For clients that only support an HTTP proxy, enable the optional CONNECT listener:
+For clients that only support an HTTP proxy, enable the optional HTTP listener:
 
 ```bash
 ./bin/wsl-proxy-linux \
@@ -290,10 +291,13 @@ For clients that only support an HTTP proxy, enable the optional CONNECT listene
   -http-listen 127.0.0.1:8080
 
 HTTPS_PROXY=http://127.0.0.1:8080 curl https://example.com
+HTTP_PROXY=http://127.0.0.1:8080 curl http://example.com
 ```
 
-Only CONNECT is accepted. Plain HTTP forwarding is deliberately not implemented;
-clients using `HTTP_PROXY` for cleartext URLs should use SOCKS or request CONNECT.
+HTTPS requests use CONNECT and cleartext `http://` requests use absolute-form
+HTTP forwarding. Each cleartext request is forwarded over one origin connection
+with proxy-only headers removed and `Connection: close` enforced. HTTPS URLs
+must still use CONNECT; the listener is loopback-only by default.
 
 To expose a WSL service on a Windows port, add an explicit reverse mapping:
 

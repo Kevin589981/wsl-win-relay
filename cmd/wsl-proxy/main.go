@@ -189,7 +189,7 @@ func parseOptions(args []string) (options, error) {
 	set.SetOutput(io.Discard)
 	set.StringVar(&configPath, "config", configPath, "JSON configuration file")
 	set.StringVar(&opts.socksListen, "listen", opts.socksListen, "SOCKS5 listen address")
-	set.StringVar(&opts.httpListen, "http-listen", opts.httpListen, "optional HTTP CONNECT proxy listen address")
+	set.StringVar(&opts.httpListen, "http-listen", opts.httpListen, "optional HTTP proxy listen address (CONNECT and plain HTTP)")
 	set.StringVar(&opts.relayExe, "relay-exe", opts.relayExe, "Windows relay executable")
 	set.BoolVar(&opts.brokerMode, "broker-mode", opts.brokerMode, "reuse one relay client across reconnecting broker connector processes")
 	set.StringVar(&opts.upstreamProxy, "upstream-proxy", opts.upstreamProxy, "optional Windows-side HTTP CONNECT or SOCKS5 proxy URL")
@@ -364,7 +364,7 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 		httpDone = make(chan error, 1)
 		httpProxy := &httpproxy.Server{Listener: httpListener, Dialer: dialer, Logger: logger, DialTimeout: opts.relayDialTimeout, HandshakeTimeout: opts.proxyHandshakeTimeout}
 		go func() { httpDone <- httpProxy.Serve(ctx) }()
-		logger.Printf("HTTP CONNECT proxy listening on %s", httpListener.Addr())
+		logger.Printf("HTTP proxy listening on %s (CONNECT and plain HTTP)", httpListener.Addr())
 	}
 	var autoDone chan error
 	var autoUDPDone chan error

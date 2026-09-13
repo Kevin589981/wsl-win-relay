@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Kevin589981/wsl-win-relay/internal/netserve"
@@ -66,11 +67,10 @@ func (s *Server) ServeConn(ctx context.Context, client net.Conn) error {
 		return err
 	}
 	if request.Body != nil {
-		_ = request.Body.Close()
+		defer request.Body.Close()
 	}
 	if request.Method != http.MethodConnect {
-		writeError(client, http.StatusMethodNotAllowed)
-		return errors.New("only CONNECT is supported")
+		return s.forwardHTTP(ctx, client, request)
 	}
 	target := request.Host
 	if target == "" {
@@ -92,6 +92,50 @@ func (s *Server) ServeConn(ctx context.Context, client net.Conn) error {
 		return err
 	}
 	return bridge(&bufferedConn{Conn: client, reader: reader}, remote)
+}
+
+func (s *Server) forwardHTTP(ctx context.Context, client net.Conn, request *http.Request) error {
+	if request.URL == nil || !request.URL.IsAbs() || !strings.EqualFold(request.URL.Scheme, "http") {
+		writeError(client, http.StatusBadRequest)
+		return errors.New("plain HTTP proxy requests require an absolute http URL")
+	}
+	host := request.URL.Hostname()
+	if host == "" {
+		writeError(client, http.StatusBadRequest)
+		return errors.New("plain HTTP proxy request has no target host")
+	}
+	port := request.URL.Port()
+	if port == "" {
+		port = "80"
+	}
+	target := net.JoinHostPort(host, port)
+	dialCtx, cancel := s.dialContext(ctx)
+	remote, err := s.Dialer.DialContext(dialCtx, target)
+	cancel()
+	if err != nil {
+		writeError(client, http.StatusBadGateway)
+		return err
+	}
+	defer remote.Close()
+
+	// Forward one request per connection. Removing proxy-only headers and
+	// forcing close avoids forwarding hop-by-hop state into the origin server.
+	request.RequestURI = ""
+	request.URL.Scheme = ""
+	request.URL.Host = ""
+	request.Header.Del("Proxy-Connection")
+	request.Header.Del("Proxy-Authorization")
+	request.Header.Del("Connection")
+	request.Header.Set("Connection", "close")
+	request.Close = true
+	if err := request.Write(remote); err != nil {
+		return err
+	}
+	if cw, ok := remote.(interface{ CloseWrite() error }); ok {
+		_ = cw.CloseWrite()
+	}
+	_, err = io.Copy(client, remote)
+	return err
 }
 
 type handshakeReader struct {
