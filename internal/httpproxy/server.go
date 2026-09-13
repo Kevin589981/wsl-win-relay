@@ -2,6 +2,7 @@ package httpproxy
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -55,19 +56,20 @@ func (s *Server) ServeConn(ctx context.Context, client net.Conn) error {
 	if err := client.SetDeadline(time.Now().Add(timeout)); err != nil {
 		return err
 	}
-	limited := &handshakeReader{reader: client, remaining: maxRequestHeaderBytes, bounded: true}
-	reader := bufio.NewReader(limited)
-	request, err := http.ReadRequest(reader)
+	stream := &requestStream{reader: client}
+	request, reader, err := readRequest(stream)
 	if err != nil {
 		writeError(client, http.StatusBadRequest)
 		return err
 	}
-	limited.bounded = false
 	if err := client.SetDeadline(time.Time{}); err != nil {
 		return err
 	}
 	if request.Method != http.MethodConnect {
-		return s.serveHTTP(ctx, client, reader, request, timeout)
+		return s.serveHTTP(ctx, client, stream, reader, request, timeout)
+	}
+	if err := captureBuffered(reader, stream); err != nil {
+		return err
 	}
 	target := request.Host
 	if target == "" {
@@ -88,12 +90,15 @@ func (s *Server) ServeConn(ctx context.Context, client net.Conn) error {
 	if _, err := io.WriteString(client, "HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
 		return err
 	}
-	return bridge(&bufferedConn{Conn: client, reader: reader}, remote)
+	return bridge(&bufferedConn{Conn: client, reader: stream}, remote)
 }
 
-func (s *Server) serveHTTP(ctx context.Context, client net.Conn, reader *bufio.Reader, request *http.Request, timeout time.Duration) error {
+func (s *Server) serveHTTP(ctx context.Context, client net.Conn, stream *requestStream, reader *bufio.Reader, request *http.Request, timeout time.Duration) error {
 	for {
 		if err := s.forwardHTTP(ctx, client, request); err != nil {
+			return err
+		}
+		if err := captureBuffered(reader, stream); err != nil {
 			return err
 		}
 		if request.Close {
@@ -105,7 +110,7 @@ func (s *Server) serveHTTP(ctx context.Context, client net.Conn, reader *bufio.R
 			}
 			return err
 		}
-		next, err := http.ReadRequest(reader)
+		next, nextReader, err := readRequest(stream)
 		if isClientDisconnect(err) {
 			return nil
 		}
@@ -120,6 +125,7 @@ func (s *Server) serveHTTP(ctx context.Context, client net.Conn, reader *bufio.R
 			writeError(client, http.StatusBadRequest)
 			return errors.New("CONNECT cannot follow a plain HTTP proxy request")
 		}
+		reader = nextReader
 		request = next
 	}
 }
@@ -203,6 +209,91 @@ func stripHopByHopHeaders(header http.Header) {
 	}
 }
 
+// requestStream preserves bytes that http.ReadRequest buffered beyond the
+// current request body, allowing each request to have its own bounded parser.
+// It is single-consumer state owned by one HTTP proxy connection.
+type requestStream struct {
+	reader  io.Reader
+	pending []byte
+}
+
+func (s *requestStream) Read(p []byte) (int, error) {
+	if len(s.pending) > 0 {
+		n := copy(p, s.pending)
+		s.pending = s.pending[n:]
+		return n, nil
+	}
+	return s.reader.Read(p)
+}
+
+func (s *requestStream) prepend(data []byte) {
+	if len(data) == 0 {
+		return
+	}
+	pending := make([]byte, len(data)+len(s.pending))
+	copy(pending, data)
+	copy(pending[len(data):], s.pending)
+	s.pending = pending
+}
+
+type requestHeaderReader struct {
+	stream      *requestStream
+	bytes       int
+	complete    bool
+	window      [4]byte
+	windowBytes int
+}
+
+func (r *requestHeaderReader) Read(p []byte) (int, error) {
+	if !r.complete && r.bytes >= maxRequestHeaderBytes {
+		return 0, errors.New("HTTP proxy request headers exceed limit")
+	}
+	if !r.complete {
+		remaining := maxRequestHeaderBytes - r.bytes
+		if len(p) > remaining {
+			p = p[:remaining]
+		}
+	}
+	n, err := r.stream.Read(p)
+	for _, value := range p[:n] {
+		if r.complete {
+			break
+		}
+		r.bytes++
+		if r.windowBytes < len(r.window) {
+			r.window[r.windowBytes] = value
+			r.windowBytes++
+		} else {
+			copy(r.window[:], r.window[1:])
+			r.window[len(r.window)-1] = value
+		}
+		if r.windowBytes == len(r.window) && bytes.Equal(r.window[:], []byte("\r\n\r\n")) {
+			r.complete = true
+		}
+	}
+	return n, err
+}
+
+func readRequest(stream *requestStream) (*http.Request, *bufio.Reader, error) {
+	headerReader := &requestHeaderReader{stream: stream}
+	reader := bufio.NewReader(headerReader)
+	request, err := http.ReadRequest(reader)
+	return request, reader, err
+}
+
+func captureBuffered(reader *bufio.Reader, stream *requestStream) error {
+	buffered := reader.Buffered()
+	if buffered == 0 {
+		return nil
+	}
+	data, err := reader.Peek(buffered)
+	if err != nil {
+		return err
+	}
+	stream.prepend(append([]byte(nil), data...))
+	return nil
+}
+
 type handshakeReader struct {
 	reader    io.Reader
 	remaining int64
@@ -238,7 +329,7 @@ func writeError(conn net.Conn, status int) {
 
 type bufferedConn struct {
 	net.Conn
-	reader *bufio.Reader
+	reader io.Reader
 }
 
 func (c *bufferedConn) Read(p []byte) (int, error) { return c.reader.Read(p) }

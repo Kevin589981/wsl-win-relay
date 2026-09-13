@@ -19,7 +19,9 @@
       closes accepted clients and drains their handlers.
 - [x] Plain HTTP proxy clients can send sequential absolute-form requests on
       one connection; each request uses a fresh origin connection and response
-      hop-by-hop headers are removed before returning it to the client.
+      hop-by-hop headers are removed before returning it to the client. Every
+      request header block remains capped at 64 KiB, including later requests
+      after parser read-ahead.
 - [x] Windows-side HTTP CONNECT and SOCKS5/SOCKS5H upstream support.
 - [x] Explicit TCP and UDP reverse forwarding with bind-error propagation.
 - [x] Reverse UDP source flows use connected WSL sockets, preventing an

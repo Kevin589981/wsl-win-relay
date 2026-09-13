@@ -32,9 +32,11 @@ Keep CONNECT as a byte tunnel and add absolute-form forwarding for plain HTTP:
   intermediaries that interpret a FIN as termination of the entire tunnel.
 - Absolute `https://` requests and relative-form requests are rejected with
   `400`; clients must use CONNECT for TLS. Dial failures return `502`.
-- The existing 64 KiB header and handshake deadlines apply before dispatch;
-  request bodies continue to stream through `net/http` without an additional
-  fixed-size buffer.
+- Every HTTP request header block is bounded at 64 KiB, including subsequent
+  requests on a keep-alive client connection. The handshake deadline is applied
+  while each request is parsed; request bodies continue to stream through
+  `net/http` without an additional fixed-size buffer. Parser read-ahead is
+  returned to the shared client stream before the next request is decoded.
 
 ## Consequences
 

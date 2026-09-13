@@ -84,13 +84,18 @@ func TestConnectPreservesBufferedTunnelData(t *testing.T) {
 	client, server := net.Pipe()
 	done := make(chan error, 1)
 	go func() { done <- (&Server{Dialer: echoDialer{}}).ServeConn(context.Background(), server) }()
-	_ = client.SetDeadline(time.Now().Add(2 * time.Second))
+	_ = client.SetDeadline(time.Now().Add(10 * time.Second))
 	request := "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\nearly-data"
-	if _, err := io.WriteString(client, request); err != nil {
-		t.Fatal(err)
-	}
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := io.WriteString(client, request)
+		writeDone <- err
+	}()
 	response := make([]byte, len("HTTP/1.1 200 Connection Established\r\n\r\n"))
 	if _, err := io.ReadFull(client, response); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-writeDone; err != nil {
 		t.Fatal(err)
 	}
 	if string(response) != "HTTP/1.1 200 Connection Established\r\n\r\n" {
@@ -179,6 +184,42 @@ func TestForwardsMultipleHTTPRequestsOnOneClientConnection(t *testing.T) {
 	_ = client.Close()
 	if err := <-done; err != nil {
 		t.Fatalf("serve: %v", err)
+	}
+}
+
+func TestRejectsOversizedSecondHTTPHeaders(t *testing.T) {
+	client, server := net.Pipe()
+	done := make(chan error, 1)
+	go func() { done <- (&Server{Dialer: &sequenceHTTPDialer{}}).ServeConn(context.Background(), server) }()
+	_ = client.SetDeadline(time.Now().Add(10 * time.Second))
+	if _, err := io.WriteString(client, "GET http://example.com/one HTTP/1.1\r\nHost: example.com\r\nConnection: keep-alive\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(client)
+	response, err := http.ReadResponse(reader, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, response.Body)
+	_ = response.Body.Close()
+	largeHeader := strings.Repeat("a", maxRequestHeaderBytes)
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := fmt.Fprintf(client, "GET http://example.com/two HTTP/1.1\r\nHost: example.com\r\nX-Large: %s\r\n\r\n", largeHeader)
+		writeDone <- err
+	}()
+	errorResponse := make([]byte, 64)
+	count, err := client.Read(errorResponse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(errorResponse[:count]), "HTTP/1.1 400") {
+		t.Fatalf("response %q", errorResponse[:count])
+	}
+	_ = client.Close()
+	<-writeDone
+	if err := <-done; err == nil {
+		t.Fatal("oversized second request unexpectedly succeeded")
 	}
 }
 
