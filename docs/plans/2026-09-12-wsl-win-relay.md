@@ -62,6 +62,9 @@
       WSL listener port while avoiding mirrored shared-namespace collisions.
 - [x] Optional atomic JSON status publication for automatic mappings, including
       the actual Windows-facing address when a port offset is configured.
+- [x] Mapping status includes active/rejected state, last bind error, and retry
+      time; rejected-only state and backoff are cleared when a listener
+      disappears or changes identity.
 - [x] Capability-negotiated TCP and UDP listener acknowledgements can return
       the address actually allocated by Windows while retaining empty-payload
       compatibility with older peers.

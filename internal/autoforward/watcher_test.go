@@ -236,15 +236,14 @@ func TestWatcherRejectsOutOfRangeWindowsPortOffset(t *testing.T) {
 }
 
 func TestWatcherUsesWindowsAllocatedPort(t *testing.T) {
-	statusPath := t.TempDir() + "/mappings.json"
 	scanner := &sequenceScanner{values: [][]Listener{{{Network: "tcp4", Host: "127.0.0.1", Port: 8000}}, {}}}
 	opener := &allocatedOpener{boundAddress: "127.0.0.1:49152", closed: make(chan string, 1)}
 	var logs bytes.Buffer
-	w := &Watcher{Scanner: scanner, Opener: opener, WindowsPortAuto: true, Status: NewStatusStore(statusPath), Interval: time.Millisecond, Logger: log.New(&logs, "", 0)}
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	if err := w.Run(ctx); err != nil {
-		t.Fatal(err)
+	w := &Watcher{Scanner: scanner, Opener: opener, WindowsHost: "127.0.0.1", WindowsHost6: "::1", WindowsPortAuto: true, Logger: log.New(&logs, "", 0), active: make(map[listenerKey]activeMapping)}
+	for range 2 {
+		if err := w.sync(context.Background()); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if len(opener.opened) != 1 || opener.opened[0] != "127.0.0.1:0=127.0.0.1:8000" {
 		t.Fatalf("opened: %v", opener.opened)
@@ -375,6 +374,63 @@ func TestWatcherLogsRejectionOnceAndRestoration(t *testing.T) {
 	}
 	if got := strings.Count(logs.String(), "auto-forward restored"); got != 1 {
 		t.Fatalf("restoration log count=%d logs=%q", got, logs.String())
+	}
+}
+
+func TestWatcherPublishesRejectedThenActiveState(t *testing.T) {
+	path := t.TempDir() + "/mappings.json"
+	listener := Listener{Network: "tcp4", Host: "127.0.0.1", Port: 8000}
+	scanner := &sequenceScanner{values: [][]Listener{{listener}, {}, {listener}}}
+	opener := &recordingOpener{failures: 1, err: errors.New("address in use"), closed: make(chan string, 1)}
+	w := &Watcher{Scanner: scanner, Opener: opener, Status: NewStatusStore(path), StatusOwner: "tcp", Logger: log.New(io.Discard, "", 0), active: make(map[listenerKey]activeMapping)}
+	if err := w.sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	readDocument := func() mappingStatusDocument {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var document mappingStatusDocument
+		if err := json.Unmarshal(data, &document); err != nil {
+			t.Fatal(err)
+		}
+		return document
+	}
+	document := readDocument()
+	if len(document.Mappings) != 1 || document.Mappings[0].State != "rejected" || document.Mappings[0].Error != "address in use" || document.Mappings[0].RetryAt == "" {
+		t.Fatalf("rejected status: %#v", document.Mappings)
+	}
+	if err := w.sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	document = readDocument()
+	if len(document.Mappings) != 0 || len(w.rejected) != 0 || len(w.retryAfter) != 0 {
+		t.Fatalf("disappeared rejection remains: status=%#v rejected=%#v retry=%#v", document.Mappings, w.rejected, w.retryAfter)
+	}
+	if err := w.sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	document = readDocument()
+	if len(document.Mappings) != 1 || document.Mappings[0].State != "active" || document.Mappings[0].Error != "" || document.Mappings[0].RetryAt != "" {
+		t.Fatalf("active status: %#v", document.Mappings)
+	}
+}
+
+func TestWatcherRetriesImmediatelyWhenRejectedListenerIdentityChanges(t *testing.T) {
+	first := Listener{Network: "tcp4", Host: "127.0.0.1", Port: 8000}
+	second := Listener{Network: "tcp4", Host: "127.0.0.2", Port: 8000}
+	scanner := &sequenceScanner{values: [][]Listener{{first}, {second}}}
+	opener := &recordingOpener{failures: 1, err: errors.New("address in use"), closed: make(chan string, 1)}
+	w := &Watcher{Scanner: scanner, Opener: opener, WindowsHost: "127.0.0.1", RetryMin: time.Hour, RetryMax: time.Hour, Logger: log.New(io.Discard, "", 0), active: make(map[listenerKey]activeMapping)}
+	if err := w.sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(opener.opened) != 2 || opener.opened[1] != "127.0.0.1:8000=127.0.0.2:8000" {
+		t.Fatalf("changed listener was not retried immediately: %v", opener.opened)
 	}
 }
 

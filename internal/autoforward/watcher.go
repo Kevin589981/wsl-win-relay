@@ -26,13 +26,15 @@ type DatagramOpener interface {
 	ReverseDatagramForward(context.Context, string, string) (io.Closer, error)
 }
 
-// MappingStatus is the machine-readable representation of one active
-// automatic mapping. The WSL target remains the source listener's address;
-// WindowsAddress may differ when a port offset is configured.
+// MappingStatus is the machine-readable representation of one desired
+// automatic mapping and its current Windows registration state.
 type MappingStatus struct {
 	Network        string `json:"network"`
 	WindowsAddress string `json:"windows_address"`
 	WSLAddress     string `json:"wsl_address"`
+	State          string `json:"state"`
+	Error          string `json:"error,omitempty"`
+	RetryAt        string `json:"retry_at,omitempty"`
 }
 
 type mappingStatusDocument struct {
@@ -97,7 +99,13 @@ func (s *StatusStore) writeLocked() error {
 		if mappings[i].Network != mappings[j].Network {
 			return mappings[i].Network < mappings[j].Network
 		}
-		return mappings[i].WindowsAddress < mappings[j].WindowsAddress
+		if mappings[i].WindowsAddress != mappings[j].WindowsAddress {
+			return mappings[i].WindowsAddress < mappings[j].WindowsAddress
+		}
+		if mappings[i].WSLAddress != mappings[j].WSLAddress {
+			return mappings[i].WSLAddress < mappings[j].WSLAddress
+		}
+		return mappings[i].State < mappings[j].State
 	})
 	if s.hasLast && equalMappingStatuses(s.last, mappings) {
 		if _, err := os.Stat(s.path); err == nil {
@@ -222,6 +230,8 @@ type Watcher struct {
 	mu            sync.Mutex
 	active        map[listenerKey]activeMapping
 	rejected      map[listenerKey]bool
+	rejectedAt    map[listenerKey]Listener
+	rejectedError map[listenerKey]string
 	retryAfter    map[listenerKey]time.Time
 	retryFailures map[listenerKey]int
 	generation    uint64
@@ -276,6 +286,8 @@ func (w *Watcher) Run(ctx context.Context) error {
 	w.mu.Lock()
 	w.active = make(map[listenerKey]activeMapping)
 	w.rejected = make(map[listenerKey]bool)
+	w.rejectedAt = make(map[listenerKey]Listener)
+	w.rejectedError = make(map[listenerKey]string)
 	w.retryAfter = make(map[listenerKey]time.Time)
 	w.retryFailures = make(map[listenerKey]int)
 	w.mu.Unlock()
@@ -341,27 +353,49 @@ func (w *Watcher) sync(ctx context.Context) error {
 	if w.retryAfter == nil {
 		w.retryAfter = make(map[listenerKey]time.Time)
 	}
+	if w.rejectedAt == nil {
+		w.rejectedAt = make(map[listenerKey]Listener)
+	}
+	if w.rejectedError == nil {
+		w.rejectedError = make(map[listenerKey]string)
+	}
 	if w.retryFailures == nil {
 		w.retryFailures = make(map[listenerKey]int)
 	}
 	var removed []activeMapping
+	statusChanged := false
 	for key, mapping := range w.active {
 		desiredListener, ok := desired[key]
 		if !ok || desiredListener != mapping.listener {
 			removed = append(removed, mapping)
 			delete(w.active, key)
 			delete(w.rejected, key)
+			delete(w.rejectedAt, key)
+			delete(w.rejectedError, key)
 			delete(w.retryAfter, key)
 			delete(w.retryFailures, key)
+			statusChanged = true
 			_, rawPort, _ := net.SplitHostPort(mapping.windowsAddress)
 			w.Logger.Printf("%s removed Windows port %s (%s)", w.Label, rawPort, mapping.listener.Network)
 		}
+	}
+	for key, rejectedListener := range w.rejectedAt {
+		desiredListener, stillDesired := desired[key]
+		if stillDesired && desiredListener == rejectedListener {
+			continue
+		}
+		delete(w.rejected, key)
+		delete(w.rejectedAt, key)
+		delete(w.rejectedError, key)
+		delete(w.retryAfter, key)
+		delete(w.retryFailures, key)
+		statusChanged = true
 	}
 	w.mu.Unlock()
 	for _, mapping := range removed {
 		w.closeMapping(mapping.closer)
 	}
-	if len(removed) > 0 {
+	if statusChanged {
 		w.publishStatus()
 	}
 	attemptCtx, cancelAttempt := context.WithCancel(ctx)
@@ -468,6 +502,8 @@ func (w *Watcher) openOne(ctx context.Context, key listenerKey, listener Listene
 		w.mu.Lock()
 		firstRejection := !w.rejected[key]
 		w.rejected[key] = true
+		w.rejectedAt[key] = listener
+		w.rejectedError[key] = openErr.Error()
 		w.retryFailures[key]++
 		failureCount := w.retryFailures[key]
 		w.retryAfter[key] = time.Now().Add(w.retryDelay(failureCount))
@@ -482,6 +518,8 @@ func (w *Watcher) openOne(ctx context.Context, key listenerKey, listener Listene
 		w.mu.Lock()
 		firstRejection := !w.rejected[key]
 		w.rejected[key] = true
+		w.rejectedAt[key] = listener
+		w.rejectedError[key] = openErr.Error()
 		w.retryFailures[key]++
 		failureCount := w.retryFailures[key]
 		w.retryAfter[key] = time.Now().Add(w.retryDelay(failureCount))
@@ -494,6 +532,8 @@ func (w *Watcher) openOne(ctx context.Context, key listenerKey, listener Listene
 	w.mu.Lock()
 	wasRejected := w.rejected[key]
 	delete(w.rejected, key)
+	delete(w.rejectedAt, key)
+	delete(w.rejectedError, key)
 	delete(w.retryAfter, key)
 	delete(w.retryFailures, key)
 	w.mu.Unlock()
@@ -558,7 +598,18 @@ func (w *Watcher) publishStatus() {
 	w.mu.Lock()
 	mappings := make([]MappingStatus, 0, len(w.active))
 	for _, mapping := range w.active {
-		mappings = append(mappings, MappingStatus{Network: mapping.listener.Network, WindowsAddress: mapping.windowsAddress, WSLAddress: mapping.wslAddress})
+		mappings = append(mappings, MappingStatus{Network: mapping.listener.Network, WindowsAddress: mapping.windowsAddress, WSLAddress: mapping.wslAddress, State: "active"})
+	}
+	for key, listener := range w.rejectedAt {
+		if _, active := w.active[key]; active {
+			continue
+		}
+		windowsAddr, wslAddr := w.mappingAddresses(listener)
+		retryAt := ""
+		if value := w.retryAfter[key]; !value.IsZero() {
+			retryAt = value.UTC().Format(time.RFC3339Nano)
+		}
+		mappings = append(mappings, MappingStatus{Network: listener.Network, WindowsAddress: windowsAddr, WSLAddress: wslAddr, State: "rejected", Error: w.rejectedError[key], RetryAt: retryAt})
 	}
 	w.mu.Unlock()
 	err := w.Status.Publish(w.StatusOwner, mappings)
@@ -638,6 +689,8 @@ func (w *Watcher) closeAll() {
 	w.active = make(map[listenerKey]activeMapping)
 	w.retryAfter = make(map[listenerKey]time.Time)
 	w.retryFailures = make(map[listenerKey]int)
+	w.rejectedAt = make(map[listenerKey]Listener)
+	w.rejectedError = make(map[listenerKey]string)
 	w.generation++
 	cancelAttempt := w.attemptCancel
 	w.attemptCancel = nil
@@ -657,6 +710,8 @@ func (w *Watcher) Reset() {
 	active := w.active
 	w.active = make(map[listenerKey]activeMapping)
 	w.rejected = make(map[listenerKey]bool)
+	w.rejectedAt = make(map[listenerKey]Listener)
+	w.rejectedError = make(map[listenerKey]string)
 	w.retryAfter = make(map[listenerKey]time.Time)
 	w.retryFailures = make(map[listenerKey]int)
 	w.generation++

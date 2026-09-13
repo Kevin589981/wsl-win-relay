@@ -15,8 +15,9 @@ to an otherwise local control plane.
 
 Add an optional `auto_forward.status_file` configuration field and
 `-auto-forward-status` flag. The watcher writes a versioned JSON document with
-the publishing process ID, an RFC3339 update timestamp, active network family,
-Windows address, and WSL address. Updates use a
+the publishing process ID, an RFC3339 update timestamp, network family,
+Windows address, WSL address, and active/rejected state. Rejected mappings also
+include the last error and scheduled retry time. Updates use a
 same-directory temporary file, mode `0600`, `fsync`, and rename so readers
 never observe a partial document. Unchanged snapshots are not rewritten during
 the procfs polling loop, while an externally removed file is recreated. The

@@ -453,7 +453,9 @@ operator or another local tool needs to discover the actual Windows-facing
 ports. The file is updated atomically only when the mapping set changes (or
 when the file was removed), has mode `0600` and version `1`, and
 contains `process_id`, an RFC3339 `updated_at`, and the active network family
-plus `windows_address` and `wsl_address` for each mapping. It is removed when
+plus `windows_address`, `wsl_address`, and `state` for each desired mapping.
+Rejected entries include the last `error` and `retry_at`; active entries omit
+those fields. It is removed when
 the last watcher exits normally. A file left after a crash is advisory only;
 consumers should verify `process_id` and `updated_at` before acting on it. The
 status file is optional and does not alter the relay protocol.
