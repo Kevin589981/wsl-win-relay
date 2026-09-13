@@ -23,7 +23,7 @@ func TestReserveCommitAndClose(t *testing.T) {
 	server := &Server{Path: path, ProcessIdentity: func(int) (string, error) { return "start", nil }, Reserve: func(_ context.Context, windows, wsl string) (Reservation, error) {
 		mu.Lock()
 		defer mu.Unlock()
-		if windows != "127.0.0.1:8000" || wsl != "127.0.0.1:8000" {
+		if windows != "127.0.0.1:8000" || wsl != "127.0.0.2:8000" {
 			t.Fatalf("mapping %s -> %s", windows, wsl)
 		}
 		return reservation, nil
@@ -33,11 +33,21 @@ func TestReserveCommitAndClose(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(ctx) }()
 	waitForSocket(t, path)
-	response := request(t, path, "RESERVE 123 tcp4 8000\n")
+	response := request(t, path, "RESERVE 123 tcp4 8000 127.0.0.2 socket:[42]\n")
 	if !strings.HasPrefix(response, "OK ") {
 		t.Fatalf("reserve: %q", response)
 	}
 	id := strings.TrimSpace(strings.TrimPrefix(response, "OK "))
+	server.mu.Lock()
+	lease := server.leases[1]
+	gotTarget := ""
+	if lease != nil {
+		gotTarget = lease.ownerTargets[123]
+	}
+	server.mu.Unlock()
+	if gotTarget != "socket:[42]" {
+		t.Fatalf("stored owner target %q", gotTarget)
+	}
 	if got := request(t, path, "COMMIT "+id+"\n"); got != "OK\n" {
 		t.Fatalf("commit: %q", got)
 	}

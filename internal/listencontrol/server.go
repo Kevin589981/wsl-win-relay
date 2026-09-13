@@ -227,7 +227,7 @@ func (s *Server) handleReserve(ctx context.Context, conn net.Conn, parts []strin
 		windowsHost = s.WindowsHost6
 		wslHost = "::1"
 	}
-	if len(parts) == 5 && parts[4] != "" {
+	if len(parts) >= 5 && parts[4] != "" {
 		wslHost = parts[4]
 		if (parts[2] == "tcp4" || parts[2] == "udp4") && (wslHost == "0.0.0.0" || wslHost == "::") {
 			wslHost = "127.0.0.1"
