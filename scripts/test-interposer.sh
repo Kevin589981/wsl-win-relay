@@ -75,4 +75,4 @@ LD_PRELOAD="$repo_dir/lib/libwsl_win_relay_listen.so" \
 grep -q 'RESERVE .* tcp4 47132' "$reject_log"
 test "$(grep -Ec '^ADOPT ' "$reject_log")" -eq 2
 test "$(grep -Ec '^RELEASE ' "$reject_log")" -eq 2
-echo "native interposer TCP/UDP, raw syscall, clone, clone3, optional vfork, pthread, and fail-closed adoption lifecycle passed"
+echo "native interposer TCP/UDP, raw syscall, callback clone, clone3, optional vfork, pthread, and fail-closed adoption lifecycle passed"

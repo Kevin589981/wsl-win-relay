@@ -179,6 +179,9 @@
 - [x] Dynamic raw `clone()` and `clone3()` paths fail closed for non-thread
       `CLONE_FILES`; `clone3()` flags are read with `process_vm_readv` so an
       invalid caller pointer cannot crash the interposer.
+- [x] Dynamic libc callback-style `clone()` rejects `CLONE_FILES` and
+      `CLONE_VM|CLONE_VFORK` while tracked listeners exist; the interposer smoke
+      covers both fail-closed paths before any child is created.
 - [x] Dynamic `RESERVE`/`ADOPT` requests carry an optional Linux socket inode
       identity, allowing the control daemon to reclaim a lease when the
       descriptor disappears across successful `execve()` without requiring

@@ -474,7 +474,8 @@ dynamic interposer rejects process-style
 `CLONE_FILES` in the raw/libc `clone()` paths because its tracking table is
 process-local. When tracked listeners exist, raw process-style clone syscalls
 are rejected before creation, while the libc callback form uses a gate
-trampoline; `CLONE_VM`/`CLONE_VFORK` callback variants are rejected because
+trampoline; `CLONE_FILES`, `CLONE_VM`, and `CLONE_VFORK` callback variants are
+rejected because
 their address-space contract cannot safely carry the gate. It applies the same
 check to `clone3()` by safely reading the caller's flags; malformed or
 unreadable clone arguments fail closed with `ENOTSUP`. Static or shared-fd

@@ -238,6 +238,30 @@ int main(int argc, char **argv) {
         return 19;
     }
     free(clone_stack);
+    /* Callback-style process clones that either share the descriptor table
+     * or the address space cannot be adopted safely by the dynamic tracker. */
+    void *rejected_clone_stack = malloc(65536);
+    if (rejected_clone_stack == NULL) {
+        close(fd);
+        return 29;
+    }
+    errno = 0;
+    pid_t shared_files_clone = clone(clone_noop, (char *)rejected_clone_stack + 65536,
+        CLONE_FILES | SIGCHLD, NULL);
+    if (shared_files_clone != -1 || errno != ENOTSUP) {
+        free(rejected_clone_stack);
+        close(fd);
+        return 30;
+    }
+    errno = 0;
+    pid_t shared_vm_clone = clone(clone_noop, (char *)rejected_clone_stack + 65536,
+        CLONE_VM | CLONE_VFORK | SIGCHLD, NULL);
+    if (shared_vm_clone != -1 || errno != ENOTSUP) {
+        free(rejected_clone_stack);
+        close(fd);
+        return 31;
+    }
+    free(rejected_clone_stack);
 #ifdef SYS_clone3
     struct clone_args clone3_arguments = {0};
     clone3_arguments.exit_signal = SIGCHLD;
