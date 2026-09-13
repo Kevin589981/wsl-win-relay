@@ -101,8 +101,12 @@ static int reject_shared_files_clone3(const void *arguments, size_t size, uint64
     if (flags_out != NULL) {
         *flags_out = 0;
     }
-    if (!relay_control_enabled() || arguments == NULL || size < sizeof(uint64_t)) {
+    if (!relay_control_enabled()) {
         return 0;
+    }
+    if (arguments == NULL || size < sizeof(uint64_t)) {
+        errno = ENOTSUP;
+        return 1;
     }
     uint64_t flags = 0;
     struct iovec local = {.iov_base = &flags, .iov_len = sizeof(flags)};

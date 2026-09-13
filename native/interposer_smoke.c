@@ -327,6 +327,14 @@ int main(int argc, char **argv) {
         if (syscall(SYS_clone3, (void *)1, sizeof(shared_clone3)) != -1 || errno != ENOTSUP) {
             return 28;
         }
+        errno = 0;
+        if (syscall(SYS_clone3, NULL, sizeof(shared_clone3)) != -1 || errno != ENOTSUP) {
+            return 29;
+        }
+        errno = 0;
+        if (syscall(SYS_clone3, &shared_clone3, 0) != -1 || errno != ENOTSUP) {
+            return 30;
+        }
 #endif
         return 0;
     }
