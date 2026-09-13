@@ -48,7 +48,7 @@ func Listen(name string) (net.Listener, error) {
 	}
 	if err := os.Chmod(name, 0o600); err != nil {
 		_ = listener.Close()
-		if current, statErr := os.Lstat(name); statErr == nil && os.SameFile(info, current) {
+		if current, statErr := os.Lstat(name); statErr == nil && current.Mode()&os.ModeSocket != 0 && os.SameFile(info, current) {
 			_ = os.Remove(name)
 		}
 		return nil, fmt.Errorf("restrict local IPC socket: %w", err)
@@ -73,7 +73,7 @@ func (l *listenerWithCleanup) Close() error {
 	err := l.Listener.Close()
 	var removeErr error
 	if current, statErr := os.Lstat(l.path); statErr == nil {
-		if l.fileInfo == nil || os.SameFile(l.fileInfo, current) {
+		if current.Mode()&os.ModeSocket != 0 && (l.fileInfo == nil || os.SameFile(l.fileInfo, current)) {
 			removeErr = os.Remove(l.path)
 		}
 	} else if !os.IsNotExist(statErr) {
