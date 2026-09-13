@@ -27,6 +27,9 @@ plain HTTP:
   The request is marked `Connection: close`, so one client connection carries
   one origin request and response. This bounds lifecycle state without adding a
   second HTTP session multiplexer.
+- The frontend does not send a relay half-close after writing the request. The
+  complete HTTP message framing is sufficient for the origin, while avoiding
+  intermediaries that interpret a FIN as termination of the entire tunnel.
 - Absolute `https://` requests and relative-form requests are rejected with
   `400`; clients must use CONNECT for TLS. Dial failures return `502`.
 - The existing 64 KiB header and handshake deadlines apply before dispatch;

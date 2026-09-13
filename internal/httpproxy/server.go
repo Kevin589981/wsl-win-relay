@@ -129,9 +129,6 @@ func (s *Server) forwardHTTP(ctx context.Context, client net.Conn, request *http
 	if err := request.Write(remote); err != nil {
 		return err
 	}
-	if cw, ok := remote.(interface{ CloseWrite() error }); ok {
-		_ = cw.CloseWrite()
-	}
 	_, err = io.Copy(client, remote)
 	return err
 }

@@ -132,8 +132,8 @@ interop and working Windows egress, run:
 ```
 
 The smoke builds the Linux proxy and Windows broker/connector, starts the
-broker on a per-user named pipe, performs a SOCKS5 request to
-`https://example.com`, and has a Windows PowerShell process reach a temporary
+broker on a per-user named pipe, performs SOCKS5 and plain HTTP proxy requests
+to `example.com`, and has a Windows PowerShell process reach a temporary
 WSL HTTP service through an explicit reverse mapping. Set `WWR_WINDOWS_SHELL`
 to an absolute mounted path when `powershell.exe`/`pwsh.exe` is not in the WSL
 `PATH`. WSL does not automatically export arbitrary environment

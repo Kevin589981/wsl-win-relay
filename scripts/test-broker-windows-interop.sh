@@ -6,6 +6,7 @@ proxy_bin=${WWR_PROXY_BIN:-"$repo_dir/bin/wsl-proxy-linux"}
 broker_exe=${WWR_BROKER_EXE:-"$repo_dir/bin/wsl-win-broker.exe"}
 connector_exe=${WWR_CONNECTOR_EXE:-"$repo_dir/bin/wsl-win-connector.exe"}
 socks_listen=${WWR_BROKER_INTEROP_LISTEN:-}
+http_listen=${WWR_BROKER_INTEROP_HTTP_LISTEN:-}
 reverse_port=${WWR_BROKER_INTEROP_REVERSE_PORT:-}
 endpoint=${WWR_BROKER_INTEROP_ENDPOINT:-"wsl-win-relay-interop-$$"}
 upstream_proxy=${WWR_WINDOWS_UPSTREAM_PROXY:-}
@@ -85,6 +86,9 @@ pick_shared_free_port() {
 if [ -z "$socks_listen" ]; then
 	socks_listen="127.0.0.1:$(pick_free_port)"
 fi
+if [ -z "$http_listen" ]; then
+	http_listen="127.0.0.1:$(pick_free_port)"
+fi
 if [ -z "$reverse_port" ]; then
 	reverse_port=$(pick_shared_free_port)
 fi
@@ -117,6 +121,7 @@ WSLENV="$wslenv" \
 WSL_WIN_RELAY_BROKER_ENDPOINT="$endpoint" \
 WSL_WIN_RELAY_ATTACH_TOKEN="$token" \
 	"$proxy_bin" -broker-mode -relay-exe "$connector_exe" -listen "$socks_listen" \
+		-http-listen "$http_listen" \
 		-reverse "127.0.0.1:$reverse_port=127.0.0.1:$reverse_port" >"$work/proxy.log" 2>&1 &
 proxy_pid=$!
 
@@ -138,6 +143,12 @@ if ! curl --noproxy "" --proxy "socks5h://$socks_listen" --connect-timeout 5 --m
 	exit 1
 fi
 grep -qi "Example Domain" "$work/response.html"
+if ! curl --noproxy "" --proxy "http://$http_listen" --connect-timeout 5 --max-time 15 -fsS http://example.com/ >"$work/http-response.html" 2>"$work/http-curl.err"; then
+	echo "Windows broker HTTP proxy request failed" >&2
+	cat "$work/broker.log" "$work/proxy.log" "$work/http-curl.err" >&2 || true
+	exit 1
+fi
+grep -qi "Example Domain" "$work/http-response.html"
 if ! "$windows_shell" -NoProfile -NonInteractive -Command \
 	"\$response = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:$reverse_port' -TimeoutSec 10; if (\$response.StatusCode -ne 200) { exit 1 }; [Console]::Out.Write(\$response.Content)" \
 	>"$work/reverse-response.html" 2>"$work/reverse.err"; then
@@ -147,7 +158,7 @@ if ! "$windows_shell" -NoProfile -NonInteractive -Command \
 fi
 grep -q "wsl-win-relay reverse interop $endpoint" "$work/reverse-response.html"
 if [ -n "$upstream_proxy" ]; then
-	echo "WSL proxy reached example.com through Windows broker and upstream $upstream_proxy; Windows reverse mapping reached WSL HTTP service"
+	echo "WSL SOCKS5 and HTTP proxies reached example.com through Windows broker and upstream $upstream_proxy; Windows reverse mapping reached WSL HTTP service"
 else
-	echo "WSL proxy attached to Windows broker over named pipe, reached example.com, and Windows reverse mapping reached WSL HTTP service"
+	echo "WSL SOCKS5 and HTTP proxies attached to Windows broker over named pipe, reached example.com, and Windows reverse mapping reached WSL HTTP service"
 fi
