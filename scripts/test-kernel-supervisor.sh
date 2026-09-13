@@ -93,6 +93,16 @@ printf '%s\n' \
     '    if (child == 0) { execlp("static-target", "static-target", "spawn-child", (char *)NULL); _exit(127); }' \
     '    return waitpid(child, 0, 0) == child ? 0 : 6;' \
     '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "vfork-execvpe") == 0) {' \
+    '    char executable[PATH_MAX]; if (realpath(argv[0], executable) == NULL) return 4;' \
+    '    char *slash = strrchr(executable, '\''/'\''); if (slash == NULL) return 4; *slash = '\''\0'\'';' \
+    '    if (setenv("PATH", executable, 1) != 0) return 4;' \
+    '    char *child_environment[] = { (char *)"WWR_VFORK_EXECVPE=ok", (char *)"PATH=/usr/bin:/bin", NULL };' \
+    '    pid_t child = vfork();' \
+    '    if (child < 0) return 7;' \
+    '    if (child == 0) { char *child_argv[] = { (char *)"static-target", (char *)"spawn-child", NULL }; execvpe("static-target", child_argv, child_environment); _exit(127); }' \
+    '    return waitpid(child, 0, 0) == child ? 0 : 6;' \
+    '  }' \
     '  if (argc > 1 && strcmp(argv[1], "vfork-fexecve") == 0) {' \
     '    int executable_fd = open("/proc/self/exe", O_PATH | O_CLOEXEC); if (executable_fd < 0) return 4;' \
     '    pid_t child = vfork();' \
@@ -392,6 +402,13 @@ WSL_WIN_RELAY_CONTROL="$tmp_dir/vfork-execvp.sock" "$repo_dir/scripts/wsl-win-re
 grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/vfork-execvp.log"
 grep -q '^COMMIT ' "$tmp_dir/vfork-execvp.log"
 grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/vfork-execvp.log"
+stop_control
+
+start_control "$tmp_dir/vfork-execvpe.sock" "$tmp_dir/vfork-execvpe.log"
+WSL_WIN_RELAY_CONTROL="$tmp_dir/vfork-execvpe.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" vfork-execvpe
+grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/vfork-execvpe.log"
+grep -q '^COMMIT ' "$tmp_dir/vfork-execvpe.log"
+grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/vfork-execvpe.log"
 stop_control
 
 start_control "$tmp_dir/vfork-fexecve.sock" "$tmp_dir/vfork-fexecve.log"

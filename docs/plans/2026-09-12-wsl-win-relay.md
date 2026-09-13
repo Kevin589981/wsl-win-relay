@@ -96,6 +96,9 @@
 - [x] The static lifecycle smoke covers a direct `vfork()` followed by
       `fexecve()` from an `O_PATH` executable descriptor, exercising the
       descriptor-based `execveat` path.
+- [x] The static lifecycle smoke covers a direct `vfork()` followed by
+      `execvpe()` with an explicit child environment, extending PATH lookup
+      and post-exec lease cleanup coverage beyond `execvp()`.
 - [x] The static lifecycle smoke covers `daemon()` detaching the root leader
       before a child listener binds, validating lease tracking across the
       long-running service daemonization boundary.
