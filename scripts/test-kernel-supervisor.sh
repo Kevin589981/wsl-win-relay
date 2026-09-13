@@ -170,6 +170,17 @@ printf '%s\n' \
     '    posix_spawn_file_actions_destroy(&actions); if (spawn_error != 0) return spawn_error;' \
     '    int result = waitpid(child, NULL, 0) == child ? 0 : 6; close(fd); return result;' \
     '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "posix-spawn-open") == 0) {' \
+    '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0};' \
+    '    address.sin_family = AF_INET; address.sin_port = htons(47151); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
+    '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 2;' \
+    '    posix_spawn_file_actions_t actions; if (posix_spawn_file_actions_init(&actions) != 0) return 4;' \
+    '    if (posix_spawn_file_actions_addopen(&actions, 12, "/dev/null", O_RDONLY, 0) != 0) return 4;' \
+    '    pid_t child = -1; char *spawn_argv[] = { argv[0], (char *)"spawn-child", NULL };' \
+    '    int spawn_error = posix_spawn(&child, argv[0], &actions, NULL, spawn_argv, environ);' \
+    '    posix_spawn_file_actions_destroy(&actions); if (spawn_error != 0) return spawn_error;' \
+    '    int result = waitpid(child, NULL, 0) == child ? 0 : 6; close(fd); return result;' \
+    '  }' \
     '  if (argc > 1 && strcmp(argv[1], "thread") == 0) {' \
     '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0}; pthread_t thread;' \
     '    address.sin_family = AF_INET; address.sin_port = htons(47130); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
@@ -455,6 +466,14 @@ grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/posix-spawn-dup.log"
 grep -q 'RESERVE .* tcp4 47149' "$tmp_dir/posix-spawn-dup.log"
 grep -q '^ADOPT ' "$tmp_dir/posix-spawn-dup.log"
 grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/posix-spawn-dup.log"
+stop_control
+
+start_control "$tmp_dir/posix-spawn-open.sock" "$tmp_dir/posix-spawn-open.log"
+WSL_WIN_RELAY_CONTROL="$tmp_dir/posix-spawn-open.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" posix-spawn-open
+grep -q 'RESERVE .* tcp4 47151' "$tmp_dir/posix-spawn-open.log"
+grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/posix-spawn-open.log"
+grep -q '^COMMIT ' "$tmp_dir/posix-spawn-open.log"
+test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/posix-spawn-open.log")" -ge 2
 stop_control
 
 start_control "$tmp_dir/posix-spawn-close.sock" "$tmp_dir/posix-spawn-close.log"

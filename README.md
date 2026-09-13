@@ -499,6 +499,9 @@ and cleanup protocol. The same shell path is exercised with a forced Windows
 bind rejection and must return a failure without committing the lease.
 It also pauses and resumes a traced listener with `SIGSTOP`/`SIGCONT`, keeping
 the lease alive across an ordinary service stop/continue cycle.
+The spawn file-action coverage also includes an `addopen()` action before the
+listener child execs, so ordinary pre-exec file setup does not disturb lease
+tracking.
 The lifecycle smoke additionally execs from a non-leader pthread and checks
 that both the inherited listener and the replacement image's listener leases
 are tracked and released after Linux resets the thread-group identity. Cleanup

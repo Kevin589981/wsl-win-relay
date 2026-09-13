@@ -87,6 +87,9 @@
 - [x] The static lifecycle smoke covers `posix_spawnp()` PATH lookup in
       addition to direct `posix_spawn()` and file-action variants, including
       inherited listener lease adoption and cleanup.
+- [x] The static lifecycle smoke covers a `posix_spawn_file_actions_addopen()`
+      action before the listener child execs, extending pre-exec file-action
+      coverage beyond dup/close operations.
 - [x] The static lifecycle smoke covers a direct `vfork()` followed by
       `execl()` into a listener child, exercising parent resume and exec-time
       lease cleanup independently of the `posix_spawn*()` wrappers.
