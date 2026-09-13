@@ -187,6 +187,21 @@ printf '%s\n' \
     '    posix_spawnattr_destroy(&attributes); if (spawn_error != 0) return spawn_error;' \
     '    return waitpid(child, NULL, 0) == child ? 0 : 6;' \
     '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "posix-spawnp-vfork") == 0) {' \
+    '    char executable[PATH_MAX]; if (realpath(argv[0], executable) == NULL) return 4;' \
+    '    char *slash = strrchr(executable, '\''/'\''); if (slash == NULL) return 4; *slash = '\''\0'\'';' \
+    '    if (setenv("PATH", executable, 1) != 0) return 4;' \
+    '    posix_spawnattr_t attributes; if (posix_spawnattr_init(&attributes) != 0) return 4;' \
+    '#ifdef POSIX_SPAWN_USEVFORK' \
+    '    if (posix_spawnattr_setflags(&attributes, POSIX_SPAWN_USEVFORK) != 0) { posix_spawnattr_destroy(&attributes); return 4; }' \
+    '#else' \
+    '    posix_spawnattr_destroy(&attributes); return 77;' \
+    '#endif' \
+    '    pid_t child = -1; char *spawn_argv[] = { (char *)"static-target", (char *)"spawn-child", NULL };' \
+    '    int spawn_error = posix_spawnp(&child, "static-target", NULL, &attributes, spawn_argv, environ);' \
+    '    posix_spawnattr_destroy(&attributes); if (spawn_error != 0) return spawn_error;' \
+    '    return waitpid(child, NULL, 0) == child ? 0 : 6;' \
+    '  }' \
     '  if (argc > 1 && strcmp(argv[1], "posix-spawn-attrs") == 0) {' \
     '    posix_spawnattr_t attributes; sigset_t empty, defaults; if (posix_spawnattr_init(&attributes) != 0) return 4;' \
     '    if (sigemptyset(&empty) != 0 || sigemptyset(&defaults) != 0 || sigaddset(&defaults, SIGPIPE) != 0 ||' \
@@ -633,6 +648,22 @@ grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/posix-spawn-close.log"
 grep -q 'RESERVE .* tcp4 47148' "$tmp_dir/posix-spawn-close.log"
 grep -q '^ADOPT ' "$tmp_dir/posix-spawn-close.log"
 grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/posix-spawn-close.log"
+stop_control
+
+start_control "$tmp_dir/posix-spawnp-vfork.sock" "$tmp_dir/posix-spawnp-vfork.log"
+set +e
+WSL_WIN_RELAY_CONTROL="$tmp_dir/posix-spawnp-vfork.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" posix-spawnp-vfork
+posix_spawnp_vfork_status=$?
+set -e
+if [ "$posix_spawnp_vfork_status" -ne 0 ] && [ "$posix_spawnp_vfork_status" -ne 77 ]; then
+    echo "posix_spawnp(POSIX_SPAWN_USEVFORK) target failed with status $posix_spawnp_vfork_status" >&2
+    exit 1
+fi
+if [ "$posix_spawnp_vfork_status" -eq 0 ]; then
+    grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/posix-spawnp-vfork.log"
+    grep -q '^COMMIT ' "$tmp_dir/posix-spawnp-vfork.log"
+    grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/posix-spawnp-vfork.log"
+fi
 stop_control
 
 start_control "$tmp_dir/posix-spawn-attrs.sock" "$tmp_dir/posix-spawn-attrs.log"
