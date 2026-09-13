@@ -246,6 +246,10 @@ func (b *Broker) ServeAttachedWith(ctx context.Context, listener net.Listener, l
 			onAttach(session)
 		}
 		if _, err := link.Attach(conn); err != nil {
+			// The handshake installed a registry attachment before the frame
+			// link accepted the transport. Release it on this failure path so a
+			// closed link cannot leave a phantom current generation behind.
+			_ = session.Close()
 			_ = conn.Close()
 			continue
 		}

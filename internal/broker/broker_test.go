@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/Kevin589981/wsl-win-relay/internal/protocol"
 	"github.com/Kevin589981/wsl-win-relay/internal/transport/attach"
@@ -210,6 +211,44 @@ func TestBrokerServeAttachedReplacesLinkWithoutStoppingListener(t *testing.T) {
 	}
 	cancel()
 	_ = second.Close()
+	if err := <-serveDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("serve attached err=%v", err)
+	}
+}
+
+func TestBrokerServeAttachedDetachesWhenLinkIsClosed(t *testing.T) {
+	broker, err := New(0x40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := framed.New()
+	if err := link.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- broker.ServeAttached(ctx, listener, link) }()
+	conn, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, _, _, err := attach.ClientResumeHandshake(conn, broker.Token(), 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for broker.registry.CurrentEpoch() != 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := broker.registry.CurrentEpoch(); got != 0 {
+		t.Fatalf("failed link attach left current epoch %d", got)
+	}
+	cancel()
 	if err := <-serveDone; !errors.Is(err, context.Canceled) {
 		t.Fatalf("serve attached err=%v", err)
 	}
