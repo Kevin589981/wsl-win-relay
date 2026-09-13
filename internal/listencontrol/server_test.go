@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -439,6 +440,35 @@ func TestReaperKeepsLeaseWhileAnotherOwnerLives(t *testing.T) {
 func TestReaperDropsOwnerWhenSocketDescriptorDisappears(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("requires Linux procfs descriptor inspection")
+	}
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tcpListener := listener.(*net.TCPListener)
+	file, err := tcpListener.File()
+	if err != nil {
+		listener.Close()
+		t.Fatal(err)
+	}
+	target, err := os.Readlink(filepath.Join("/proc", strconv.Itoa(os.Getpid()), "fd", strconv.Itoa(int(file.Fd()))))
+	if err != nil {
+		file.Close()
+		listener.Close()
+		t.Fatal(err)
+	}
+	if !processHasDescriptor(os.Getpid(), target) {
+		t.Fatalf("reaper did not find live socket target %q", target)
+	}
+	if err := file.Close(); err != nil {
+		listener.Close()
+		t.Fatal(err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if processHasDescriptor(os.Getpid(), target) {
+		t.Fatalf("reaper found closed socket target %q", target)
 	}
 	reservation := &fakeReservation{}
 	pid := os.Getpid()
