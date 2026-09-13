@@ -90,6 +90,9 @@
 - [x] The static lifecycle smoke covers a direct `vfork()` followed by
       `execvp()` PATH lookup, extending the parent-resume and exec-time cleanup
       check to the libc PATH-search wrapper.
+- [x] The static lifecycle smoke covers `daemon()` detaching the root leader
+      before a child listener binds, validating lease tracking across the
+      long-running service daemonization boundary.
 - [ ] Kernel-level coverage for non-direct vfork libc interactions remains
       open for implementations beyond the `system()`, `popen()`, `posix_spawn`,
       and `posix_spawnp`

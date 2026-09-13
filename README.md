@@ -479,6 +479,9 @@ The native lifecycle smoke also exercises `posix_spawnp()` PATH lookup and
 direct `vfork()` followed by `execl()` or `execvp()`; these paths retain the
 same bounded ownership and cleanup guarantees. The kernel adapter does not
 promise arbitrary child-side work between `vfork()` and `exec`/`_exit`.
+The static lifecycle smoke also covers `daemon()` detaching the root leader
+before a child listener binds, which is a supported process-tree boundary for
+long-running services.
 The native interposer targets the Linux
 amd64 build produced by the WSL scripts. The daemon tracks multiple process
 owners and reaps leases from processes that exit without closing their

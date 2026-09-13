@@ -52,7 +52,8 @@ work follows the same model:
   confirms the tracked parent still has an unfinished create syscall, and
   rejects all unmatched stops. `system()` and `popen()` nested-vfork launches,
   plus `posix_spawnp()` PATH lookup and direct `vfork()`/`execl()` and
-  `vfork()`/`execvp()` children are covered by the static smoke test.
+  `vfork()`/`execvp()` children are covered by the static smoke test. The same
+  smoke covers `daemon()` root-leader detachment before a child listener binds.
 - Lease teardown will use owner-scoped `RELEASE pid lease`; a lease is closed
   by the control server only after its final owner disappears. `CLOSE` remains
   reserved for a lease with no child owner.

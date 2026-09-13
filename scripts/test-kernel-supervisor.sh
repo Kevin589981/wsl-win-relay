@@ -17,6 +17,7 @@ if ! command -v gcc >/dev/null 2>&1; then
 fi
 
 printf '%s\n' \
+    '#define _GNU_SOURCE' \
     '#include <arpa/inet.h>' \
     '#include <netinet/in.h>' \
     '#include <stdio.h>' \
@@ -48,6 +49,13 @@ printf '%s\n' \
     '    if (child < 0) return errno == ENOTSUP ? 0 : 7;' \
     '    if (child == 0) { usleep(100000); close(fd); _exit(0); }' \
     '    close(fd); return waitpid(child, 0, 0) == child ? 0 : 6;' \
+    '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "daemon") == 0) {' \
+    '    if (daemon(1, 1) < 0) return errno == ENOSYS ? 77 : 7;' \
+    '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0};' \
+    '    address.sin_family = AF_INET; address.sin_port = htons(47152); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
+    '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 2;' \
+    '    close(fd); return 0;' \
     '  }' \
     '  if (argc > 1 && strcmp(argv[1], "clone3") == 0) {' \
     '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0};' \
@@ -560,5 +568,12 @@ WSL_WIN_RELAY_CONTROL="$tmp_dir/fork.sock" "$repo_dir/scripts/wsl-win-relay-run"
 grep -q 'RESERVE .* tcp4 47128' "$tmp_dir/fork.log"
 grep -q '^ADOPT ' "$tmp_dir/fork.log"
 test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/fork.log")" -eq 2
+stop_control
+
+start_control "$tmp_dir/daemon.sock" "$tmp_dir/daemon.log"
+WSL_WIN_RELAY_CONTROL="$tmp_dir/daemon.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" daemon
+grep -q 'RESERVE .* tcp4 47152' "$tmp_dir/daemon.log"
+grep -q '^COMMIT ' "$tmp_dir/daemon.log"
+grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/daemon.log"
 stop_control
 echo "kernel supervisor coordinated static TCP/UDP, vfork exec paths, and propagated rejection"
