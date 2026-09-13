@@ -11,9 +11,21 @@ if [ "$#" -eq 0 ]; then
     exit 2
 fi
 
-repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-library=${WSL_WIN_RELAY_PRELOAD:-"$repo_dir/lib/libwsl_win_relay_listen.so"}
-kernel_supervisor=${WSL_WIN_RELAY_KERNEL_SUPERVISOR:-"$repo_dir/bin/wsl-win-relay-strict"}
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
+default_library="$repo_dir/lib/libwsl_win_relay_listen.so"
+default_kernel_supervisor="$repo_dir/bin/wsl-win-relay-strict"
+# The user-service installer places the launcher and supervisor in ~/bin and
+# the shared library in ~/lib, while source checkouts keep the repository
+# layout. Resolve both layouts without requiring environment overrides.
+if [ ! -r "$default_library" ] && [ -r "$script_dir/../lib/libwsl_win_relay_listen.so" ]; then
+    default_library="$script_dir/../lib/libwsl_win_relay_listen.so"
+fi
+if [ ! -x "$default_kernel_supervisor" ] && [ -x "$script_dir/wsl-win-relay-strict" ]; then
+    default_kernel_supervisor="$script_dir/wsl-win-relay-strict"
+fi
+library=${WSL_WIN_RELAY_PRELOAD:-$default_library}
+kernel_supervisor=${WSL_WIN_RELAY_KERNEL_SUPERVISOR:-$default_kernel_supervisor}
 control=${WSL_WIN_RELAY_CONTROL:-/tmp/wsl-win-relay-control.sock}
 retry_seconds=${WSL_WIN_RELAY_CONTROL_RETRY_SECONDS:-2}
 case "$retry_seconds" in

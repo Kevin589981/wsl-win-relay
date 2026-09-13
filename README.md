@@ -571,6 +571,9 @@ installs it under `~/lib`. It creates a private
 when one does not already exist. It rejects symlinked/non-regular config paths
 and enforces directory mode `0700` and file mode `0600` on every run. Build with `scripts/build-wsl.sh` first
 and set the Windows `relay_exe` path in the config.
+The installed launcher resolves its sibling supervisor in `~/bin` and the
+shared library in `~/lib` automatically; no path overrides are required for
+the standard layout.
 
 The startup handshake timeout defaults to five seconds and can be adjusted with
 `relay_handshake_timeout` or `-relay-handshake-timeout` when the Windows relay
