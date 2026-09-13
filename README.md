@@ -640,7 +640,10 @@ prevents two supervisors from silently publishing different reservation state.
 The control service bounds the initial request line at 15 seconds and closes
 all accepted connections before shutdown completes. A client that connects but
 does not send a request therefore cannot retain a handler across service
-restart. Socket cleanup also preserves a path replaced by another owner.
+restart. Error responses are normalized to one line and capped at 255 bytes so
+they fit both native client buffers even when a backend returns a very long or
+malformed diagnostic. Socket cleanup also preserves a path replaced by another
+owner.
 
 This propagates bind/listen errors, not later firewall policy. A Windows
 firewall rule that drops or rejects clients after the socket is bound does not

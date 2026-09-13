@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Kevin589981/wsl-win-relay/internal/transport/localipc"
 )
@@ -33,6 +34,9 @@ const (
 	DefaultMaxConnections    = 64
 	DefaultMaxLeases         = 512
 	DefaultMaxOwnersPerLease = 256
+	// MaxControlResponseBytes fits the smallest native client buffer while
+	// leaving one byte for its terminating NUL.
+	MaxControlResponseBytes = 255
 )
 
 type Server struct {
@@ -763,7 +767,19 @@ func (s *Server) ensureLeases() {
 	}
 }
 func writeError(w io.Writer, errno int, message string) {
-	message = strings.ReplaceAll(message, "\n", " ")
-	_, _ = fmt.Fprintf(w, "ERR %d %s\n", errno, message)
+	prefix := fmt.Sprintf("ERR %d ", errno)
+	message = strings.NewReplacer("\r", " ", "\n", " ").Replace(message)
+	message = strings.ToValidUTF8(message, "\uFFFD")
+	maximum := MaxControlResponseBytes - len(prefix) - 1
+	if maximum < 0 {
+		maximum = 0
+	}
+	if len(message) > maximum {
+		message = message[:maximum]
+		for len(message) > 0 && !utf8.ValidString(message) {
+			message = message[:len(message)-1]
+		}
+	}
+	_, _ = io.WriteString(w, prefix+message+"\n")
 }
 func errnoFor(error) int { return 98 }

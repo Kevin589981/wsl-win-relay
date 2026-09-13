@@ -2,6 +2,7 @@ package listencontrol
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestReserveCommitAndClose(t *testing.T) {
@@ -441,6 +443,48 @@ func TestRebindReplacesCommittedReservation(t *testing.T) {
 	defer current.mu.Unlock()
 	if current.reservation != replacement || !current.committed {
 		t.Fatalf("lease was not replaced: %#v", current)
+	}
+}
+
+func TestWriteErrorBoundsAndNormalizesControlLine(t *testing.T) {
+	var response bytes.Buffer
+	message := "first\r\n" + strings.Repeat("界", MaxControlResponseBytes)
+	writeError(&response, 98, message)
+	line := response.String()
+	if len(line) > MaxControlResponseBytes {
+		t.Fatalf("response length=%d, want at most %d", len(line), MaxControlResponseBytes)
+	}
+	if !strings.HasPrefix(line, "ERR 98 first  ") || !strings.HasSuffix(line, "\n") {
+		t.Fatalf("response framing=%q", line)
+	}
+	if strings.Count(line, "\n") != 1 || strings.Contains(line, "\r") {
+		t.Fatalf("response contains injected line ending: %q", line)
+	}
+	if !utf8.ValidString(line) {
+		t.Fatal("response truncation split a UTF-8 sequence")
+	}
+}
+
+func TestWriteErrorReplacesInvalidUTF8WithinLimit(t *testing.T) {
+	var response bytes.Buffer
+	writeError(&response, 5, string([]byte{'x', 0xff, 'y'}))
+	if got := response.String(); got != "ERR 5 x\uFFFDy\n" {
+		t.Fatalf("response=%q", got)
+	}
+}
+
+func TestReserveBackendErrorFitsNativeControlBuffer(t *testing.T) {
+	server := &Server{
+		ProcessIdentity: func(int) (string, error) { return "start", nil },
+		Reserve: func(context.Context, string, string) (Reservation, error) {
+			return nil, errors.New(strings.Repeat("backend failure ", 100))
+		},
+	}
+	response := invokeControlHandler(t, func(conn net.Conn) {
+		server.handleReserve(context.Background(), conn, []string{"RESERVE", "123", "tcp4", "8000"})
+	})
+	if len(response) > MaxControlResponseBytes || !strings.HasPrefix(response, "ERR 98 ") {
+		t.Fatalf("response length=%d value=%q", len(response), response)
 	}
 }
 

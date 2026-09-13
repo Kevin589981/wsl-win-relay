@@ -133,6 +133,8 @@
 - [x] Strict control handlers, active-plus-pending leases, and owners per lease
       have independently configurable caps; saturation fails new work with
       `ENOSPC` without disturbing established Windows reservations.
+- [x] Strict backend errors are normalized to one valid UTF-8 control line and
+      capped at 255 bytes, matching the smallest native response buffer.
 - [x] Automatic TCP and allowlisted UDP mappings are process-scoped and
       rebound through the session-aware dialer after relay child replacement.
 - [x] Generation-safe attach registry with per-instance token authentication
