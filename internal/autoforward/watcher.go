@@ -230,7 +230,7 @@ func (w *Watcher) sync(ctx context.Context) error {
 			delete(w.rejected, key)
 			delete(w.retryAfter, key)
 			delete(w.retryFailures, key)
-			w.Logger.Printf("%s removed Windows port %d (%s)", w.Label, mapping.listener.Port, mapping.listener.Network)
+			w.Logger.Printf("%s removed Windows port %d (%s)", w.Label, w.windowsPort(mapping.listener), mapping.listener.Network)
 		}
 	}
 	w.mu.Unlock()
@@ -313,7 +313,7 @@ func (w *Watcher) openOne(ctx context.Context, key listenerKey, listener Listene
 	if w.OpenTimeout > 0 {
 		openCtx, cancelOpen = context.WithTimeout(ctx, w.OpenTimeout)
 	}
-	mappedPort := int(listener.Port) + w.WindowsPortOffset
+	mappedPort := w.windowsPort(listener)
 	var closer io.Closer
 	var openErr error
 	if mappedPort < 1 || mappedPort > 65535 {
@@ -389,6 +389,10 @@ func (w *Watcher) openOne(ctx context.Context, key listenerKey, listener Listene
 		return
 	}
 	w.Logger.Printf("%s added %s -> %s", w.Label, windowsAddr, wslTarget)
+}
+
+func (w *Watcher) windowsPort(listener Listener) int {
+	return int(listener.Port) + w.WindowsPortOffset
 }
 
 func formatMappingRejection(err error) string {

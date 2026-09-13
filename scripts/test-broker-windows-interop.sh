@@ -9,11 +9,16 @@ socks_listen=${WWR_BROKER_INTEROP_LISTEN:-}
 http_listen=${WWR_BROKER_INTEROP_HTTP_LISTEN:-}
 reverse_port=${WWR_BROKER_INTEROP_REVERSE_PORT:-}
 auto_port=${WWR_BROKER_INTEROP_AUTO_PORT:-}
+auto_forward_offset=${WWR_BROKER_INTEROP_AUTO_FORWARD_OFFSET:-0}
 reverse_wsl_host=${WWR_BROKER_INTEROP_WSL_HOST:-127.0.0.2}
 endpoint=${WWR_BROKER_INTEROP_ENDPOINT:-"wsl-win-relay-interop-$$"}
 upstream_proxy=${WWR_WINDOWS_UPSTREAM_PROXY:-}
 service_wrapper=${WWR_BROKER_INTEROP_SERVICE_WRAPPER:-0}
 windows_shell=${WWR_WINDOWS_SHELL:-powershell.exe}
+case "$auto_forward_offset" in
+	-[0-9]*|[0-9]*) ;;
+	*) echo "WWR_BROKER_INTEROP_AUTO_FORWARD_OFFSET must be an integer" >&2; exit 1 ;;
+esac
 work=$(mktemp -d "${TMPDIR:-/tmp}/wsl-win-relay-broker-interop.XXXXXX")
 broker_pid=
 proxy_pid=
@@ -91,6 +96,30 @@ pick_shared_free_port() {
 	echo "could not find a TCP port available in both Windows and WSL" >&2
 	return 1
 }
+port_available_in_windows() {
+	"$windows_shell" -NoProfile -NonInteractive -Command \
+		"try { \$listener = [System.Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $1); \$listener.Start(); \$listener.Stop(); exit 0 } catch { exit 1 }" \
+		>/dev/null 2>&1
+}
+pick_auto_port() {
+	if [ "$auto_forward_offset" -eq 0 ]; then
+		pick_shared_free_port
+		return
+	fi
+	for _ in $(seq 1 40); do
+		candidate=$(pick_free_port) || continue
+		target=$((candidate + auto_forward_offset))
+		if [ "$target" -lt 1 ] || [ "$target" -gt 65535 ]; then
+			continue
+		fi
+		if port_available_in_wsl "$candidate" && port_available_in_windows "$target"; then
+			printf '%s\n' "$candidate"
+			return 0
+		fi
+	done
+	echo "could not find ports for automatic mapping offset $auto_forward_offset" >&2
+	return 1
+}
 if [ -z "$socks_listen" ]; then
 	socks_listen="127.0.0.1:$(pick_free_port)"
 fi
@@ -101,7 +130,12 @@ if [ -z "$reverse_port" ]; then
 	reverse_port=$(pick_shared_free_port)
 fi
 if [ -z "$auto_port" ]; then
-	auto_port=$(pick_shared_free_port)
+	auto_port=$(pick_auto_port)
+fi
+auto_windows_port=$((auto_port + auto_forward_offset))
+if [ "$auto_windows_port" -lt 1 ] || [ "$auto_windows_port" -gt 65535 ]; then
+	echo "automatic Windows port $auto_windows_port is outside 1..65535" >&2
+	exit 1
 fi
 
 token=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
@@ -153,7 +187,7 @@ WSL_WIN_RELAY_ATTACH_TOKEN="$token" \
 	"$proxy_bin" -broker-mode -relay-exe "$connector_exe" -listen "$socks_listen" \
 		-http-listen "$http_listen" \
 		-reverse "127.0.0.1:$reverse_port=$reverse_wsl_host:$reverse_port" \
-		-auto-forward -auto-forward-include "$auto_port" >"$work/proxy.log" 2>&1 &
+		-auto-forward -auto-forward-port-offset "$auto_forward_offset" -auto-forward-include "$auto_port" >"$work/proxy.log" 2>&1 &
 proxy_pid=$!
 
 for _ in $(seq 1 60); do
@@ -204,18 +238,18 @@ if [ "${ready_after:-0}" -le "$ready_before" ]; then
 fi
 
 for _ in $(seq 1 60); do
-	if grep -q "auto-forward added 127.0.0.1:$auto_port" "$work/proxy.log"; then
+	if grep -q "auto-forward added 127.0.0.1:$auto_windows_port" "$work/proxy.log"; then
 		break
 	fi
 	sleep 0.5
 done
-if ! grep -q "auto-forward added 127.0.0.1:$auto_port" "$work/proxy.log"; then
+if ! grep -q "auto-forward added 127.0.0.1:$auto_windows_port" "$work/proxy.log"; then
 	echo "Windows automatic mapping was not created" >&2
 	cat "$work/broker.log" "$work/proxy.log" "$work/auto-http.log" >&2 || true
 	exit 1
 fi
 if ! "$windows_shell" -NoProfile -NonInteractive -Command \
-	"\$response = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:$auto_port' -TimeoutSec 10; if (\$response.StatusCode -ne 200) { exit 1 }; [Console]::Out.Write(\$response.Content)" \
+	"\$response = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:$auto_windows_port' -TimeoutSec 10; if (\$response.StatusCode -ne 200) { exit 1 }; [Console]::Out.Write(\$response.Content)" \
 	>"$work/auto-response.html" 2>"$work/auto-reverse.err"; then
 	echo "Windows automatic mapping request failed" >&2
 	cat "$work/broker.log" "$work/proxy.log" "$work/auto-http.log" "$work/auto-reverse.err" >&2 || true
@@ -226,12 +260,12 @@ kill "$auto_http_pid" 2>/dev/null || true
 wait "$auto_http_pid" 2>/dev/null || true
 auto_http_pid=
 for _ in $(seq 1 60); do
-	if grep -q "auto-forward removed Windows port $auto_port (tcp4)" "$work/proxy.log"; then
+	if grep -q "auto-forward removed Windows port $auto_windows_port (tcp4)" "$work/proxy.log"; then
 		break
 	fi
 	sleep 0.5
 done
-if ! grep -q "auto-forward removed Windows port $auto_port (tcp4)" "$work/proxy.log"; then
+if ! grep -q "auto-forward removed Windows port $auto_windows_port (tcp4)" "$work/proxy.log"; then
 	echo "Windows automatic mapping was not removed" >&2
 	cat "$work/broker.log" "$work/proxy.log" "$work/auto-http.log" >&2 || true
 	exit 1
