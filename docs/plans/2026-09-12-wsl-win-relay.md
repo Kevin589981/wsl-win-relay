@@ -47,6 +47,9 @@
 - [x] Optional root systemd service installation makes transparent routing
       boot-persistent, deploys the pinned adapter to a stable path, and
       preserves private operator configuration across idempotent upgrades.
+- [x] Transparent routing waits for a configured loopback SOCKS listener before
+      any TUN, route, or DNS mutation, preventing service startup ordering from
+      creating a temporary network blackhole.
 - [x] Transparent relay shutdown handles `HUP`/`QUIT` and bounds tun2socks
       termination before route, DNS, and TUN rollback; a mock fault-injection
       smoke runs this path without requiring root or a real TUN device.

@@ -683,6 +683,10 @@ cannot be detected. Root, `iproute2`, `/dev/net/tun`, and tun2socks are required
 The script searches `PATH` and the Go `GOPATH/bin` installation location; set
 `WWR_TUN2SOCKS_BIN` when running under `sudo` or another environment with a
 different tool path.
+For a loopback proxy, the script waits up to 30 seconds for its TCP listener
+before making any network-state change, preventing a boot-order race from
+installing blackhole routes. Set `WWR_TUN_PROXY_WAIT_SECONDS` between `0` and
+`300` to adjust that preflight.
 
 When WSL has lost its default interface because of an HNS failure, the script
 automatically falls back to `lo` if `WWR_TUN_PROXY` points at a local loopback

@@ -10,6 +10,8 @@ active_file=$tmp_dir/tun2socks.active
 relay_log=$tmp_dir/relay.log
 resolv_target=$tmp_dir/resolv.target
 resolv_conf=$tmp_dir/resolv.conf
+proc_tcp=$tmp_dir/proc-tcp
+proc_tcp6=$tmp_dir/proc-tcp6
 relay_pid=
 cleanup() {
     trap - EXIT INT TERM HUP QUIT
@@ -46,6 +48,8 @@ printf '%s\n' \
 chmod +x "$fake_bin/id" "$fake_bin/ip" "$fake_bin/tun2socks"
 printf 'nameserver 192.0.2.53\n' >"$resolv_target"
 ln -s "$(basename "$resolv_target")" "$resolv_conf"
+printf '%s\n' '  sl  local_address rem_address   st' '   0: 0100007F:0438 00000000:0000 0A' >"$proc_tcp"
+: >"$proc_tcp6"
 
 export PATH="$fake_bin:$PATH"
 export WWR_TUN2SOCKS_BIN="$fake_bin/tun2socks"
@@ -54,6 +58,9 @@ export WWR_TUN_PROXY=socks5://127.0.0.1:1080
 export WWR_UPLINK_INTERFACE=lo
 export WWR_DNS=203.0.113.53
 export WWR_RESOLV_CONF=$resolv_conf
+export WWR_TUN_PROXY_WAIT_SECONDS=0
+export WWR_PROC_NET_TCP=$proc_tcp
+export WWR_PROC_NET_TCP6=$proc_tcp6
 export WWR_TEST_IP_LOG=$log_file
 export WWR_TEST_TUN_FILE=$tmp_dir/tun-created
 export WWR_TEST_TUN2SOCKS_ACTIVE=$active_file
@@ -108,4 +115,20 @@ if [ "$(readlink "$WWR_RESOLV_CONF")" != "$(basename "$resolv_target")" ]; then
     exit 1
 fi
 grep -qx 'nameserver 192.0.2.53' "$WWR_RESOLV_CONF"
+
+# A missing local SOCKS listener must fail before any route, DNS, or TUN
+# mutation. Point procfs reads at empty fixtures to keep this deterministic.
+: >"$tmp_dir/empty-tcp"
+: >"$tmp_dir/empty-tcp6"
+: >"$log_file"
+export WWR_PROC_NET_TCP="$tmp_dir/empty-tcp"
+export WWR_PROC_NET_TCP6="$tmp_dir/empty-tcp6"
+set +e
+"$repo_dir/scripts/transparent-relay.sh" >"$tmp_dir/proxy-wait.log" 2>&1
+proxy_wait_status=$?
+set -e
+[ "$proxy_wait_status" -ne 0 ] || { echo "missing local proxy unexpectedly passed preflight" >&2; exit 1; }
+grep -q 'local TUN proxy did not start' "$tmp_dir/proxy-wait.log"
+[ ! -s "$log_file" ] || { echo "network mutation occurred before local proxy preflight" >&2; cat "$log_file" >&2; exit 1; }
+unset WWR_PROC_NET_TCP WWR_PROC_NET_TCP6
 echo "transparent relay bounded shutdown and partial IPv6 rollback passed"

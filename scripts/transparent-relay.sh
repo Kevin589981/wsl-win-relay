@@ -29,6 +29,15 @@ proxy=${WWR_TUN_PROXY:-socks5://127.0.0.1:1080}
 uplink=${WWR_UPLINK_INTERFACE:-}
 dns=${WWR_DNS:-}
 resolv_conf=${WWR_RESOLV_CONF:-/etc/resolv.conf}
+proxy_wait_seconds=${WWR_TUN_PROXY_WAIT_SECONDS:-30}
+proc_net_tcp=${WWR_PROC_NET_TCP:-/proc/net/tcp}
+proc_net_tcp6=${WWR_PROC_NET_TCP6:-/proc/net/tcp6}
+case "$proxy_wait_seconds" in
+    ''|*[!0-9]*) echo "WWR_TUN_PROXY_WAIT_SECONDS must be an integer" >&2; exit 1 ;;
+esac
+if [ "$proxy_wait_seconds" -gt 300 ]; then
+    proxy_wait_seconds=300
+fi
 uplink_fallback=0
 route_added=0
 route6_first_added=0
@@ -116,15 +125,44 @@ if [ -z "$uplink" ]; then
 fi
 
 proxy_host=
+proxy_port=
 proxy_authority=${proxy#*://}
 proxy_authority=${proxy_authority%%/*}
 proxy_authority=${proxy_authority%%\?*}
 proxy_authority=${proxy_authority##*@}
 case "$proxy_authority" in
-    \[*\]:*) proxy_host=${proxy_authority#\[}; proxy_host=${proxy_host%%\]*} ;;
-    *:*) proxy_host=${proxy_authority%:*} ;;
+    \[*\]:*) proxy_host=${proxy_authority#\[}; proxy_host=${proxy_host%%\]*}; proxy_port=${proxy_authority##*:} ;;
+    *:*) proxy_host=${proxy_authority%:*}; proxy_port=${proxy_authority##*:} ;;
     *) proxy_host=$proxy_authority ;;
 esac
+
+wait_for_local_proxy() {
+    case "$proxy_host" in
+        localhost|127.*|0.0.0.0|::1|::) ;;
+        *) return 0 ;;
+    esac
+    case "$proxy_port" in
+        ''|*[!0-9]*) echo "local TUN proxy must include a numeric port: $proxy" >&2; return 1 ;;
+    esac
+    if [ "$proxy_port" -lt 1 ] || [ "$proxy_port" -gt 65535 ]; then
+        echo "local TUN proxy port is outside 1..65535: $proxy_port" >&2
+        return 1
+    fi
+    port_hex=$(printf '%04X' "$proxy_port")
+    attempts=$((proxy_wait_seconds * 10 + 1))
+    for _ in $(seq 1 "$attempts"); do
+        if { [ -r "$proc_net_tcp" ] && awk -v suffix=":$port_hex" '$4 == "0A" && substr($2, length($2) - length(suffix) + 1) == suffix { found=1 } END { exit !found }' "$proc_net_tcp"; } ||
+           { [ -r "$proc_net_tcp6" ] && awk -v suffix=":$port_hex" '$4 == "0A" && substr($2, length($2) - length(suffix) + 1) == suffix { found=1 } END { exit !found }' "$proc_net_tcp6"; }; then
+            return 0
+        fi
+        [ "$proxy_wait_seconds" -gt 0 ] || break
+        sleep 0.1
+    done
+    echo "local TUN proxy did not start within ${proxy_wait_seconds}s: $proxy" >&2
+    return 1
+}
+
+wait_for_local_proxy
 
 proxy_addresses=
 case "$proxy_host" in
