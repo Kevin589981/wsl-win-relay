@@ -111,6 +111,9 @@
 - [x] The static lifecycle smoke covers the explicit
       `POSIX_SPAWN_USEVFORK` attribute path, verifying the shared-address-space
       libc spawn variant through the same traced ownership and cleanup flow.
+- [x] The static lifecycle smoke covers `posix_spawn` signal-mask,
+      signal-default, and process-group attributes, extending non-direct libc
+      vfork coverage to common pre-exec process state setup.
 - [x] The static lifecycle smoke covers a `posix_spawn_file_actions_addopen()`
       action before the listener child execs, extending pre-exec file-action
       coverage beyond dup/close operations.
