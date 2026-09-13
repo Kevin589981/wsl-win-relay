@@ -106,6 +106,12 @@ printf '%s\n' \
     '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 2;' \
     '    close(fd); return 0;' \
     '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "shell-child") == 0) {' \
+    '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0};' \
+    '    address.sin_family = AF_INET; address.sin_port = htons(47153); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
+    '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 2;' \
+    '    close(fd); return 0;' \
+    '  }' \
     '  if (argc > 1 && strcmp(argv[1], "system") == 0) {' \
     '    char command[PATH_MAX]; if (snprintf(command, sizeof(command), "%s spawn-child", argv[0]) < 0) return 4;' \
     '    int status = system(command); return status == 0 ? 0 : 6;' \
@@ -589,5 +595,14 @@ WSL_WIN_RELAY_CONTROL="$tmp_dir/daemon.sock" "$repo_dir/scripts/wsl-win-relay-ru
 grep -q 'RESERVE .* tcp4 47152' "$tmp_dir/daemon.log"
 grep -q '^COMMIT ' "$tmp_dir/daemon.log"
 grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/daemon.log"
+stop_control
+
+start_control "$tmp_dir/shell.sock" "$tmp_dir/shell.log"
+shell_command=$(printf '%s shell-child' "$tmp_dir/static-target")
+WSL_WIN_RELAY_CONTROL="$tmp_dir/shell.sock" WSL_WIN_RELAY_SHELL=/bin/sh \
+    "$repo_dir/scripts/wsl-win-relay-shell" -c "$shell_command"
+grep -q 'RESERVE .* tcp4 47153' "$tmp_dir/shell.log"
+grep -q '^COMMIT ' "$tmp_dir/shell.log"
+grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/shell.log"
 stop_control
 echo "kernel supervisor coordinated static TCP/UDP, vfork exec paths, and propagated rejection"
