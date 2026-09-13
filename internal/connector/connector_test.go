@@ -67,14 +67,15 @@ func TestConnectCancellationClosesInProgressHandshake(t *testing.T) {
 			accepted <- conn
 		}
 	}()
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	_, err = Connect(ctx, Config{Endpoint: endpoint, Token: []byte("secret")})
-	if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("err=%v", err)
-	}
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		_, connectErr := Connect(ctx, Config{Endpoint: endpoint, Token: []byte("secret")})
+		result <- connectErr
+	}()
 	select {
 	case conn := <-accepted:
+		cancel()
 		defer conn.Close()
 		buffer := make([]byte, 512)
 		_ = conn.SetReadDeadline(time.Now().Add(time.Second))
@@ -83,8 +84,16 @@ func TestConnectCancellationClosesInProgressHandshake(t *testing.T) {
 				break
 			}
 		}
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("server did not observe connector connection")
+	}
+	select {
+	case err = <-result:
+	case <-time.After(5 * time.Second):
+		t.Fatal("connector did not return after cancellation")
+	}
+	if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err=%v", err)
 	}
 }
 
