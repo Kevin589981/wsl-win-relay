@@ -51,7 +51,8 @@ work follows the same model:
   before the parent event; the supervisor recovers that stop only when procfs
   confirms the tracked parent still has an unfinished create syscall, and
   rejects all unmatched stops. `system()` and `popen()` nested-vfork launches,
-  plus `posix_spawnp()` PATH lookup, are covered by the static smoke test.
+  plus `posix_spawnp()` PATH lookup and a direct `vfork()`/`execl()` child are
+  covered by the static smoke test.
 - Lease teardown will use owner-scoped `RELEASE pid lease`; a lease is closed
   by the control server only after its final owner disappears. `CLOSE` remains
   reserved for a lease with no child owner.

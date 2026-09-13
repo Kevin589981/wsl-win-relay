@@ -70,6 +70,12 @@ printf '%s\n' \
     '    }' \
     '    return waitpid(child, 0, 0) == child ? 0 : 6;' \
     '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "vfork-exec") == 0) {' \
+    '    pid_t child = vfork();' \
+    '    if (child < 0) return 7;' \
+    '    if (child == 0) { execl(argv[0], argv[0], "spawn-child", (char *)NULL); _exit(127); }' \
+    '    return waitpid(child, 0, 0) == child ? 0 : 6;' \
+    '  }' \
     '  if (argc > 1 && strcmp(argv[1], "spawn-child") == 0) {' \
     '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0};' \
     '    address.sin_family = AF_INET; address.sin_port = htons(47147); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
@@ -342,6 +348,13 @@ WSL_WIN_RELAY_CONTROL="$tmp_dir/vfork.sock" "$repo_dir/scripts/wsl-win-relay-run
 grep -q 'RESERVE .* tcp4 47133' "$tmp_dir/vfork.log"
 grep -q '^COMMIT ' "$tmp_dir/vfork.log"
 grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/vfork.log"
+stop_control
+
+start_control "$tmp_dir/vfork-exec.sock" "$tmp_dir/vfork-exec.log"
+WSL_WIN_RELAY_CONTROL="$tmp_dir/vfork-exec.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" vfork-exec
+grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/vfork-exec.log"
+grep -q '^COMMIT ' "$tmp_dir/vfork-exec.log"
+grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/vfork-exec.log"
 stop_control
 
 start_control "$tmp_dir/posix-spawn.sock" "$tmp_dir/posix-spawn.log"

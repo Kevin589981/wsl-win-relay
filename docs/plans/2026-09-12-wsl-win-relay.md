@@ -80,6 +80,9 @@
 - [x] The static lifecycle smoke covers `posix_spawnp()` PATH lookup in
       addition to direct `posix_spawn()` and file-action variants, including
       inherited listener lease adoption and cleanup.
+- [x] The static lifecycle smoke covers a direct `vfork()` followed by
+      `execl()` into a listener child, exercising parent resume and exec-time
+      lease cleanup independently of the `posix_spawn*()` wrappers.
 - [ ] Kernel-level coverage for non-direct vfork libc interactions remains
       open for implementations beyond the `system()`, `popen()`, `posix_spawn`,
       and `posix_spawnp`
