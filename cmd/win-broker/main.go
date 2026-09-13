@@ -34,6 +34,7 @@ func main() {
 		return
 	}
 	logger := log.New(os.Stderr, "win-broker: ", log.LstdFlags)
+	logger.Print(buildinfo.String("wsl-win-broker"))
 	opts, err := parseOptions(os.Args[1:])
 	if err != nil {
 		logger.Printf("configuration: %v", err)

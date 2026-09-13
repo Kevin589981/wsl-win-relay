@@ -30,6 +30,7 @@ func main() {
 		return
 	}
 	logger := log.New(os.Stderr, "win-connector: ", log.LstdFlags)
+	logger.Print(buildinfo.String("wsl-win-connector"))
 	opts, err := parseOptions(os.Args[1:])
 	if err != nil {
 		logger.Printf("configuration: %v", err)

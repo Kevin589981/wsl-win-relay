@@ -24,6 +24,7 @@ func main() {
 		return
 	}
 	logger := log.New(os.Stderr, "win-relay: ", log.LstdFlags)
+	logger.Print(buildinfo.String("wsl-win-relay"))
 	opts, err := parseOptions(os.Args[1:])
 	if err != nil {
 		logger.Printf("configuration: %v", err)

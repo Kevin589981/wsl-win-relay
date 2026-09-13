@@ -272,6 +272,9 @@ all Go executables and the native strict supervisor. Run any executable with
 `-version` or `--version` before comparing logs from different installations.
 `WSL_WIN_RELAY_BUILD_VERSION`, `WSL_WIN_RELAY_BUILD_COMMIT`, and
 `SOURCE_DATE_EPOCH` provide reproducible build overrides.
+The long-running Go processes emit the same metadata once at startup, making a
+mixed proxy/broker/connector deployment visible in service logs without
+logging credentials.
 The native strict supervisor is compiled for the running WSL architecture, so
 an arm64 cross-build of the Go binaries is not a substitute for native ptrace
 runtime validation. Native arm64 runtime validation is outside the current
