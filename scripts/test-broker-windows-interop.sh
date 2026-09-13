@@ -8,6 +8,7 @@ connector_exe=${WWR_CONNECTOR_EXE:-"$repo_dir/bin/wsl-win-connector.exe"}
 socks_listen=${WWR_BROKER_INTEROP_LISTEN:-}
 http_listen=${WWR_BROKER_INTEROP_HTTP_LISTEN:-}
 reverse_port=${WWR_BROKER_INTEROP_REVERSE_PORT:-}
+auto_port=${WWR_BROKER_INTEROP_AUTO_PORT:-}
 reverse_wsl_host=${WWR_BROKER_INTEROP_WSL_HOST:-127.0.0.2}
 endpoint=${WWR_BROKER_INTEROP_ENDPOINT:-"wsl-win-relay-interop-$$"}
 upstream_proxy=${WWR_WINDOWS_UPSTREAM_PROXY:-}
@@ -16,14 +17,17 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/wsl-win-relay-broker-interop.XXXXXX")
 broker_pid=
 proxy_pid=
 http_pid=
+auto_http_pid=
 
 cleanup() {
 	stop_windows_roles || true
 	[ -z "${proxy_pid:-}" ] || kill "$proxy_pid" 2>/dev/null || true
 	[ -z "${http_pid:-}" ] || kill "$http_pid" 2>/dev/null || true
+	[ -z "${auto_http_pid:-}" ] || kill "$auto_http_pid" 2>/dev/null || true
 	[ -z "${broker_pid:-}" ] || kill "$broker_pid" 2>/dev/null || true
 	[ -z "${proxy_pid:-}" ] || wait "$proxy_pid" 2>/dev/null || true
 	[ -z "${http_pid:-}" ] || wait "$http_pid" 2>/dev/null || true
+	[ -z "${auto_http_pid:-}" ] || wait "$auto_http_pid" 2>/dev/null || true
 	[ -z "${broker_pid:-}" ] || wait "$broker_pid" 2>/dev/null || true
 	rm -rf "$work"
 }
@@ -93,6 +97,9 @@ fi
 if [ -z "$reverse_port" ]; then
 	reverse_port=$(pick_shared_free_port)
 fi
+if [ -z "$auto_port" ]; then
+	auto_port=$(pick_shared_free_port)
+fi
 
 token=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
 start_broker() {
@@ -109,6 +116,10 @@ sleep 1
 printf '%s\n' "wsl-win-relay reverse interop $endpoint" >"$work/index.html"
 python3 -m http.server "$reverse_port" --bind "$reverse_wsl_host" --directory "$work" >"$work/http.log" 2>&1 &
 http_pid=$!
+mkdir "$work/auto"
+printf '%s\n' "wsl-win-relay automatic interop $endpoint" >"$work/auto/index.html"
+python3 -m http.server "$auto_port" --bind "$reverse_wsl_host" --directory "$work/auto" >"$work/auto-http.log" 2>&1 &
+auto_http_pid=$!
 sleep 0.5
 
 wslenv=${WSLENV:-}
@@ -123,7 +134,8 @@ WSL_WIN_RELAY_BROKER_ENDPOINT="$endpoint" \
 WSL_WIN_RELAY_ATTACH_TOKEN="$token" \
 	"$proxy_bin" -broker-mode -relay-exe "$connector_exe" -listen "$socks_listen" \
 		-http-listen "$http_listen" \
-		-reverse "127.0.0.1:$reverse_port=$reverse_wsl_host:$reverse_port" >"$work/proxy.log" 2>&1 &
+		-reverse "127.0.0.1:$reverse_port=$reverse_wsl_host:$reverse_port" \
+		-auto-forward -auto-forward-include "$auto_port" >"$work/proxy.log" 2>&1 &
 proxy_pid=$!
 
 for _ in $(seq 1 60); do
@@ -150,6 +162,25 @@ if ! curl --noproxy "" --proxy "http://$http_listen" --connect-timeout 5 --max-t
 	exit 1
 fi
 grep -qi "Example Domain" "$work/http-response.html"
+for _ in $(seq 1 60); do
+	if grep -q "auto-forward added 127.0.0.1:$auto_port" "$work/proxy.log"; then
+		break
+	fi
+	sleep 0.5
+done
+if ! grep -q "auto-forward added 127.0.0.1:$auto_port" "$work/proxy.log"; then
+	echo "Windows automatic mapping was not created" >&2
+	cat "$work/broker.log" "$work/proxy.log" "$work/auto-http.log" >&2 || true
+	exit 1
+fi
+if ! "$windows_shell" -NoProfile -NonInteractive -Command \
+	"\$response = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:$auto_port' -TimeoutSec 10; if (\$response.StatusCode -ne 200) { exit 1 }; [Console]::Out.Write(\$response.Content)" \
+	>"$work/auto-response.html" 2>"$work/auto-reverse.err"; then
+	echo "Windows automatic mapping request failed" >&2
+	cat "$work/broker.log" "$work/proxy.log" "$work/auto-http.log" "$work/auto-reverse.err" >&2 || true
+	exit 1
+fi
+grep -q "wsl-win-relay automatic interop $endpoint" "$work/auto-response.html"
 if ! "$windows_shell" -NoProfile -NonInteractive -Command \
 	"\$response = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:$reverse_port' -TimeoutSec 10; if (\$response.StatusCode -ne 200) { exit 1 }; [Console]::Out.Write(\$response.Content)" \
 	>"$work/reverse-response.html" 2>"$work/reverse.err"; then
@@ -159,7 +190,7 @@ if ! "$windows_shell" -NoProfile -NonInteractive -Command \
 fi
 grep -q "wsl-win-relay reverse interop $endpoint" "$work/reverse-response.html"
 if [ -n "$upstream_proxy" ]; then
-	echo "WSL SOCKS5 and HTTP proxies reached example.com through Windows broker and upstream $upstream_proxy; Windows reverse mapping reached WSL HTTP service"
+	echo "WSL SOCKS5 and HTTP proxies reached example.com through Windows broker and upstream $upstream_proxy; Windows reverse and automatic mappings reached WSL HTTP services"
 else
-	echo "WSL SOCKS5 and HTTP proxies attached to Windows broker over named pipe, reached example.com, and Windows reverse mapping reached WSL HTTP service"
+	echo "WSL SOCKS5 and HTTP proxies attached to Windows broker over named pipe, reached example.com, and Windows reverse and automatic mappings reached WSL HTTP services"
 fi
