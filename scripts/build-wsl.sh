@@ -39,6 +39,7 @@ case "$go_arch" in
 esac
 
 GOTOOLCHAIN=local GOOS=linux GOARCH="$go_arch" go build -ldflags "$go_ldflags" -o "$output_dir/bin/wsl-proxy-linux" "$repo_dir/cmd/wsl-proxy"
+GOTOOLCHAIN=local GOOS=linux GOARCH="$go_arch" go build -ldflags "$go_ldflags" -o "$output_dir/bin/wsl-win-relay-status" "$repo_dir/cmd/wsl-status"
 GOTOOLCHAIN=local GOOS=windows GOARCH="$go_arch" go build -ldflags "$go_ldflags" -o "$output_dir/bin/wsl-win-relay.exe" "$repo_dir/cmd/win-relay"
 GOTOOLCHAIN=local GOOS=windows GOARCH="$go_arch" go build -ldflags "$go_ldflags" -o "$output_dir/bin/wsl-win-broker.exe" "$repo_dir/cmd/win-broker"
 GOTOOLCHAIN=local GOOS=windows GOARCH="$go_arch" go build -ldflags "$go_ldflags" -o "$output_dir/bin/wsl-win-connector.exe" "$repo_dir/cmd/win-connector"

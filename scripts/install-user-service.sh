@@ -10,8 +10,13 @@ if [ ! -x "$repo_dir/bin/wsl-proxy-linux" ]; then
     echo "missing $repo_dir/bin/wsl-proxy-linux; run scripts/build-wsl.sh first" >&2
     exit 1
 fi
+if [ ! -x "$repo_dir/bin/wsl-win-relay-status" ]; then
+    echo "missing $repo_dir/bin/wsl-win-relay-status; run scripts/build-wsl.sh first" >&2
+    exit 1
+fi
 mkdir -p "$bin_dir"
 install -m 0755 "$repo_dir/bin/wsl-proxy-linux" "$bin_dir/wsl-proxy-linux"
+install -m 0755 "$repo_dir/bin/wsl-win-relay-status" "$bin_dir/wsl-win-relay-status"
 install -m 0755 "$repo_dir/scripts/wsl-win-relay-run" "$bin_dir/wsl-win-relay-run"
 install -m 0755 "$repo_dir/scripts/wsl-win-relay-shell" "$bin_dir/wsl-win-relay-shell"
 install -m 0755 "$repo_dir/scripts/run-user-service.sh" "$bin_dir/wsl-win-relay-service"

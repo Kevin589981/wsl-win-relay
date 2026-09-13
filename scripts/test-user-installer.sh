@@ -12,6 +12,10 @@ if [ ! -x "$repo_dir/bin/wsl-proxy-linux" ]; then
     echo "user installer test skipped: build-wsl.sh has not produced wsl-proxy-linux"
     exit 0
 fi
+if [ ! -x "$repo_dir/bin/wsl-win-relay-status" ]; then
+    echo "user installer test skipped: build-wsl.sh has not produced wsl-win-relay-status"
+    exit 0
+fi
 if [ ! -x "$repo_dir/bin/wsl-win-relay-strict" ]; then
     echo "user installer test skipped: build-wsl.sh has not produced wsl-win-relay-strict"
     exit 0
@@ -28,6 +32,7 @@ SYSTEMCTL_LOG="$tmp_dir/systemctl.log" \
     "$repo_dir/scripts/install-user-service.sh" >"$tmp_dir/install.log"
 
 [ -x "$tmp_dir/home/bin/wsl-proxy-linux" ]
+[ -x "$tmp_dir/home/bin/wsl-win-relay-status" ]
 [ -x "$tmp_dir/home/bin/wsl-win-relay-run" ]
 [ -x "$tmp_dir/home/bin/wsl-win-relay-shell" ]
 [ -x "$tmp_dir/home/bin/wsl-win-relay-strict" ]

@@ -3,6 +3,7 @@ set -eu
 
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 proxy_bin=${WWR_PROXY_BIN:-"$repo_dir/bin/wsl-proxy-linux"}
+status_bin=${WWR_STATUS_BIN:-"$repo_dir/bin/wsl-win-relay-status"}
 broker_exe=${WWR_BROKER_EXE:-"$repo_dir/bin/wsl-win-broker.exe"}
 connector_exe=${WWR_CONNECTOR_EXE:-"$repo_dir/bin/wsl-win-connector.exe"}
 socks_listen=${WWR_BROKER_INTEROP_LISTEN:-}
@@ -77,6 +78,10 @@ if [ ! -x "$proxy_bin" ]; then
 	echo "missing Linux proxy: $proxy_bin (run scripts/build-wsl.sh)" >&2
 	exit 1
 fi
+if [ ! -x "$status_bin" ]; then
+	echo "missing Linux status reader: $status_bin (run scripts/build-wsl.sh)" >&2
+	exit 1
+fi
 if [ ! -f "$broker_exe" ] || [ ! -f "$connector_exe" ]; then
 	echo "missing Windows broker/connector (run scripts/build-wsl.sh)" >&2
 	exit 1
@@ -100,7 +105,11 @@ pick_free_udp_port() {
 	python3 -c 'import socket, sys; s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.bind((sys.argv[1], 0)); print(s.getsockname()[1]); s.close()' "$reverse_wsl_host"
 }
 status_windows_port() {
-	python3 -c 'import json, sys; document=json.load(open(sys.argv[1], encoding="utf-8")); print(next((entry["windows_address"].rsplit(":", 1)[1] for entry in document["mappings"] if entry["network"] == sys.argv[2] and entry["wsl_address"] == sys.argv[3]), ""))' "$1" "$2" "$3" 2>/dev/null
+	status_address=$("$status_bin" -file "$1" -resolve-network "$2" -resolve-wsl "$3" 2>/dev/null) || return 1
+	case "$status_address" in
+		*:*) printf '%s\n' "${status_address##*:}" ;;
+		*) return 1 ;;
+	esac
 }
 pick_windows_free_port() {
 	"$windows_shell" -NoProfile -NonInteractive -Command \

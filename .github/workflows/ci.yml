@@ -77,6 +77,7 @@ jobs:
             GOOS="$goos" GOARCH=arm64 go build -o "$output/$name" "$package"
           done <<'EOF'
           linux ./cmd/wsl-proxy wsl-proxy-linux
+          linux ./cmd/wsl-status wsl-win-relay-status-linux
           windows ./cmd/win-relay wsl-win-relay.exe
           windows ./cmd/win-broker wsl-win-broker.exe
           windows ./cmd/win-connector wsl-win-connector.exe

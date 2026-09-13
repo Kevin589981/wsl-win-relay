@@ -276,6 +276,7 @@ Build the Linux proxy and Windows relay from the repository root. From Windows P
 
 ```powershell
 $env:GOOS='linux'; $env:GOARCH='amd64'; go build -o bin/wsl-proxy-linux ./cmd/wsl-proxy
+$env:GOOS='linux'; $env:GOARCH='amd64'; go build -o bin/wsl-win-relay-status ./cmd/wsl-status
 $env:GOOS='windows'; $env:GOARCH='amd64'; go build -o bin/wsl-win-relay.exe ./cmd/win-relay
 Remove-Item Env:GOOS,Env:GOARCH
 ```
@@ -498,6 +499,22 @@ before acting on it. The supported reader uses a two-minute freshness window.
 The status file is optional and does not alter the relay protocol; see
 [ADR-0032](docs/adr/0032-automatic-mapping-status-liveness.md) for its liveness
 contract.
+
+Use the supported status reader instead of consuming a Windows-allocated port
+from the JSON file directly:
+
+```bash
+./bin/wsl-win-relay-status -config ./wsl-win-relay.json
+./bin/wsl-win-relay-status -config ./wsl-win-relay.json -json
+./bin/wsl-win-relay-status -config ./wsl-win-relay.json \
+  -resolve-network tcp4 -resolve-wsl 127.0.0.1:8000
+```
+
+The resolver prints only the active Windows address, making it suitable for
+command substitution without `jq`. Every mode first validates the document,
+requires a heartbeat newer than `-max-age` (default `2m`), and verifies that
+the publishing WSL PID is alive. Rejected, missing, stale, malformed, or
+orphaned mappings return a non-zero status.
 
 For collision-free allocation instead of a fixed offset, enable
 `-auto-forward-port-auto` (or `auto_forward.windows_port_auto`). Windows binds
@@ -797,7 +814,8 @@ listener errors remain fatal. Automatic TCP/UDP mappings are also
 process-scoped: they are detached from a failed child and rebound through the
 reconnecting session dialer, so a transient relay restart does not leave a
 stale Windows listener behind. The
-installer copies the built Linux proxy to `~/bin/wsl-proxy-linux`, the
+installer copies the built Linux proxy to `~/bin/wsl-proxy-linux`, the mapping
+status reader to `~/bin/wsl-win-relay-status`, the
 service wrappers to `~/bin/wsl-win-relay-service` and
 `~/bin/wsl-win-relay-broker-service`, the strict-listen launcher to
 `~/bin/wsl-win-relay-run`, the strict shell wrapper to

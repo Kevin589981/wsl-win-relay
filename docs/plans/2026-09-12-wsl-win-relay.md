@@ -89,6 +89,9 @@
 - [x] Automatic mapping status has a low-frequency liveness heartbeat and a
       shared bounded schema reader, so consumers can reject stale crash residue
       using both publisher PID and timestamp without adding a network endpoint.
+- [x] The installed `wsl-win-relay-status` CLI validates schema, freshness, and
+      publisher liveness before listing/returning Windows-allocated ports; it
+      supports JSON output and exact active-mapping resolution without `jq`.
 - [x] Mapping status includes active/rejected state, last bind error, and retry
       time; rejected-only state and backoff are cleared when a listener
       disappears or changes identity.
