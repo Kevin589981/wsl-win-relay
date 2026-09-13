@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+shell=${WSL_WIN_RELAY_SHELL:-${SHELL:-/bin/sh}}
+case "$shell" in
+    */*) ;;
+    *) shell=$(command -v "$shell" 2>/dev/null || true) ;;
+esac
+if [ -z "$shell" ] || [ ! -x "$shell" ]; then
+    echo "strict shell executable is unavailable: ${WSL_WIN_RELAY_SHELL:-${SHELL:-/bin/sh}}" >&2
+    exit 1
+fi
+
+exec "$script_dir/wsl-win-relay-run" --kernel "$shell" "$@"

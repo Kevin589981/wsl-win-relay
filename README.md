@@ -403,6 +403,17 @@ for Linux amd64 targets, including process-style `fork()` children:
 ./scripts/wsl-win-relay-run --kernel ./static-service 8000
 ```
 
+To apply the kernel strict boundary to an entire shell session, use the
+installed convenience wrapper:
+
+```bash
+~/bin/wsl-win-relay-shell
+```
+
+Every command and child process launched from that shell remains inside the
+same traced process tree, including static binaries and daemonizing services.
+Set `WSL_WIN_RELAY_SHELL` to select a shell other than `$SHELL`.
+
 It coordinates direct TCP/UDP `bind()` and TCP `listen()` syscalls through the
 same control socket. Process-style `fork()`, `clone(SIGCHLD)`, non-thread
 `clone3()`, and ordinary `CLONE_THREAD` pthreads are attached with task/group
@@ -573,7 +584,8 @@ stale Windows listener behind. The
 installer copies the built Linux proxy to `~/bin/wsl-proxy-linux`, the
 service wrappers to `~/bin/wsl-win-relay-service` and
 `~/bin/wsl-win-relay-broker-service`, the strict-listen launcher to
-`~/bin/wsl-win-relay-run`, and the kernel supervisor to
+`~/bin/wsl-win-relay-run`, the strict shell wrapper to
+`~/bin/wsl-win-relay-shell`, and the kernel supervisor to
 `~/bin/wsl-win-relay-strict`; when the native library is present it also
 installs it under `~/lib`. It creates a private
 `${XDG_CONFIG_HOME:-~/.config}/wsl-win-relay/config.json` from the example only

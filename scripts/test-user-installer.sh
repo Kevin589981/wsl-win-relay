@@ -28,6 +28,7 @@ PATH="$tmp_dir/bin:/usr/bin:/bin" \
 
 [ -x "$tmp_dir/home/bin/wsl-proxy-linux" ]
 [ -x "$tmp_dir/home/bin/wsl-win-relay-run" ]
+[ -x "$tmp_dir/home/bin/wsl-win-relay-shell" ]
 [ -x "$tmp_dir/home/bin/wsl-win-relay-strict" ]
 [ -x "$tmp_dir/home/bin/wsl-win-relay-service" ]
 [ -x "$tmp_dir/home/bin/wsl-win-relay-broker-service" ]
@@ -55,5 +56,13 @@ preload_status=$?
 set -e
 [ "$preload_status" -ne 0 ]
 ! grep -q "listen interposer not found" "$tmp_dir/preload.out"
+
+HOME="$tmp_dir/home" \
+XDG_CONFIG_HOME="$tmp_dir/config" \
+PATH="$tmp_dir/home/bin:/usr/bin:/bin" \
+SHELL=/bin/sh \
+WSL_WIN_RELAY_SHELL=/bin/sh \
+WSL_WIN_RELAY_CONTROL="$tmp_dir/missing-control.sock" \
+    "$tmp_dir/home/bin/wsl-win-relay-shell" -c 'exit 0'
 
 echo "user installer includes runnable strict supervisor and protected configuration"
