@@ -71,7 +71,6 @@ func main() {
 		return
 	}
 	logger := log.New(os.Stderr, "wsl-proxy: ", log.LstdFlags)
-	logger.Print(buildinfo.String("wsl-proxy"))
 	opts, err := parseOptions(os.Args[1:])
 	if err != nil {
 		logger.Printf("configuration: %v", err)
@@ -81,6 +80,7 @@ func main() {
 		fmt.Fprintln(os.Stdout, "configuration valid")
 		return
 	}
+	logger.Print(buildinfo.String("wsl-proxy"))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := run(ctx, opts, logger); err != nil && !errors.Is(err, context.Canceled) {

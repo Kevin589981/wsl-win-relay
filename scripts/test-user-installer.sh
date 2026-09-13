@@ -38,8 +38,9 @@ SYSTEMCTL_LOG="$tmp_dir/systemctl.log" \
 [ "$(stat -c '%a' "$tmp_dir/config/wsl-win-relay/config.json")" = 600 ]
 "$tmp_dir/home/bin/wsl-proxy-linux" \
     -config "$tmp_dir/config/wsl-win-relay/config.json" \
-    -check-config >"$tmp_dir/check.log"
+    -check-config >"$tmp_dir/check.log" 2>"$tmp_dir/check.err"
 grep -q '^configuration valid$' "$tmp_dir/check.log"
+[ ! -s "$tmp_dir/check.err" ]
 
 : >"$tmp_dir/systemctl.log"
 printf '%s\n' '{"unknown_setting":true}' >"$tmp_dir/config/wsl-win-relay/config.json"
