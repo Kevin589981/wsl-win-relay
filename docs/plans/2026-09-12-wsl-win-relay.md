@@ -288,7 +288,8 @@
       terminal.
 - [x] Broker attach handshakes have a bounded per-connection deadline and clear
       it after authentication, so stalled local IPC clients cannot leak broker
-      goroutines or leave phantom registry generations.
+      goroutines or leave phantom registry generations; connectors apply the
+      same deadline while waiting for a broker response.
 - [x] Optional Windows Task Scheduler installation provides a host-level
       `-supervise` boundary that can keep the broker available across WSL VM or
       user-service shutdown; established streams after a socket-owner crash

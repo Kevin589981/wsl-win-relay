@@ -250,6 +250,9 @@ recovery window is required.
 The startup capability handshake has its own `relay_handshake_timeout`
 (default `5s`), configurable with `-relay-handshake-timeout` when launching the
 Windows child is slow after recovery.
+Broker attach authentication is separately bounded to 15 seconds on both the
+broker and connector sides; once the session is authenticated, that deadline
+is cleared so long-lived relay streams are not interrupted.
 
 Set `upstream_proxy` or `-upstream-proxy` when Windows itself should use an
 upstream proxy, for example `socks5h://matebookxpro.local:7890`. The default
