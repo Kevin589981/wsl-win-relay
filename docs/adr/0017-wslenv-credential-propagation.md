@@ -13,9 +13,10 @@ process. The connector therefore cannot reliably read
 names are listed in `WSLENV`.
 
 The proxy must also work when a user's existing `WSLENV` contains stale entries
-for either broker variable. In particular, the `/u` flag means that a value is
-unset on the translated side, which would make an otherwise valid connector
-fail authentication.
+for broker variables. In particular, the `/u` flag means that a value is unset
+on the translated side, which would make an otherwise valid connector fail
+authentication. The installed broker wrapper applies the same normalization to
+the optional Windows upstream proxy variable.
 
 ## Decision
 
@@ -23,8 +24,12 @@ When broker mode starts a Windows connector, the WSL proxy constructs the child
 environment from the current environment and normalizes `WSLENV` as follows:
 
 - preserve unrelated entries and their flags;
-- remove duplicate broker-variable entries, matching their names before `/`;
-- add exactly one flag-free entry for each broker variable.
+- remove duplicate reserved-variable entries, matching their names before `/`;
+- add exactly one flag-free entry for each reserved variable.
+
+The reserved set is `WSL_WIN_RELAY_BROKER_ENDPOINT`,
+`WSL_WIN_RELAY_ATTACH_TOKEN`, and (for the broker service wrapper only)
+`WSL_WIN_RELAY_UPSTREAM_PROXY`.
 
 The token remains an environment value and is never placed in connector
 arguments. The connector and broker continue to validate the token as a

@@ -23,12 +23,28 @@ set +a
 broker_endpoint=${WSL_WIN_RELAY_BROKER_ENDPOINT:-wsl-win-relay-broker}
 
 if [ -n "${WSL_WIN_RELAY_UPSTREAM_PROXY:-}" ]; then
-    wslenv=${WSLENV:-}
-    case ":$wslenv:" in
-        *":WSL_WIN_RELAY_UPSTREAM_PROXY:"*) ;;
-        *) wslenv=${wslenv:+$wslenv:}WSL_WIN_RELAY_UPSTREAM_PROXY ;;
-    esac
-    export WSLENV=$wslenv
+    wslenv_value=${WSLENV:-}
+    wslenv_result=
+    old_ifs=$IFS
+    IFS=:
+    set -f
+    for wslenv_entry in $wslenv_value; do
+        [ -n "$wslenv_entry" ] || continue
+        wslenv_name=${wslenv_entry%%/*}
+        [ "$wslenv_name" = WSL_WIN_RELAY_UPSTREAM_PROXY ] && continue
+        if [ -n "$wslenv_result" ]; then
+            wslenv_result=$wslenv_result:$wslenv_entry
+        else
+            wslenv_result=$wslenv_entry
+        fi
+    done
+    set +f
+    IFS=$old_ifs
+    if [ -n "$wslenv_result" ]; then
+        export WSLENV=$wslenv_result:WSL_WIN_RELAY_UPSTREAM_PROXY
+    else
+        export WSLENV=WSL_WIN_RELAY_UPSTREAM_PROXY
+    fi
 fi
 
 broker_token_path() {
