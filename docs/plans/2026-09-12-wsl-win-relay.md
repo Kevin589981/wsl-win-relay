@@ -117,6 +117,9 @@
 - [x] The static lifecycle smoke covers GNU `posix_spawn` `addchdir_np` and
       `addfchdir_np` file actions when the host glibc provides them, with an
       explicit skip on older libc versions.
+- [x] The static lifecycle smoke covers GNU `posix_spawn` `addclosefrom_np`,
+      verifying child-side bulk descriptor cleanup while the parent lease
+      remains live; older glibc versions skip this optional action explicitly.
 - [x] The static lifecycle smoke covers a `posix_spawn_file_actions_addopen()`
       action before the listener child execs, extending pre-exec file-action
       coverage beyond dup/close operations.

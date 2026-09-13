@@ -196,6 +196,21 @@ printf '%s\n' \
     '    return 77;' \
     '#endif' \
     '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "posix-spawn-closefrom") == 0) {' \
+    '#if defined(__GLIBC__) && defined(__GLIBC_PREREQ) && __GLIBC_PREREQ(2, 34)' \
+    '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0};' \
+    '    address.sin_family = AF_INET; address.sin_port = htons(47160); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
+    '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 2;' \
+    '    posix_spawn_file_actions_t actions; if (posix_spawn_file_actions_init(&actions) != 0) return 4;' \
+    '    if (posix_spawn_file_actions_addclosefrom_np(&actions, 3) != 0) { posix_spawn_file_actions_destroy(&actions); close(fd); return 77; }' \
+    '    pid_t child = -1; char *spawn_argv[] = { argv[0], (char *)"spawn-child", NULL };' \
+    '    int spawn_error = posix_spawn(&child, argv[0], &actions, NULL, spawn_argv, environ);' \
+    '    posix_spawn_file_actions_destroy(&actions); if (spawn_error != 0) { close(fd); return spawn_error; }' \
+    '    int result = waitpid(child, NULL, 0) == child ? 0 : 6; close(fd); return result;' \
+    '#else' \
+    '    return 77;' \
+    '#endif' \
+    '  }' \
     '  if (argc > 1 && strcmp(argv[1], "posix-spawnp") == 0) {' \
     '    char executable[PATH_MAX]; if (realpath(argv[0], executable) == NULL) return 4;' \
     '    char *slash = strrchr(executable, '\''/'\''); if (slash == NULL) return 4; *slash = '\''\0'\'';' \
@@ -604,6 +619,23 @@ if [ "$posix_spawn_chdir_status" -eq 0 ]; then
 fi
 stop_control
 
+start_control "$tmp_dir/posix-spawn-closefrom.sock" "$tmp_dir/posix-spawn-closefrom.log"
+set +e
+WSL_WIN_RELAY_CONTROL="$tmp_dir/posix-spawn-closefrom.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" posix-spawn-closefrom
+posix_spawn_closefrom_status=$?
+set -e
+if [ "$posix_spawn_closefrom_status" -ne 0 ] && [ "$posix_spawn_closefrom_status" -ne 77 ]; then
+    echo "posix_spawn closefrom target failed with status $posix_spawn_closefrom_status" >&2
+    exit 1
+fi
+if [ "$posix_spawn_closefrom_status" -eq 0 ]; then
+    grep -q 'RESERVE .* tcp4 47160' "$tmp_dir/posix-spawn-closefrom.log"
+    grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/posix-spawn-closefrom.log"
+    test "$(grep -Ec '^ADOPT ' "$tmp_dir/posix-spawn-closefrom.log")" -ge 1
+    test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/posix-spawn-closefrom.log")" -ge 2
+fi
+stop_control
+
 start_control "$tmp_dir/system.sock" "$tmp_dir/system.log"
 WSL_WIN_RELAY_CONTROL="$tmp_dir/system.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" system
 grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/system.log"
@@ -843,4 +875,4 @@ fi
 grep -q 'RESERVE .* tcp4 47154' "$tmp_dir/shell-reject.log"
 ! grep -q '^COMMIT ' "$tmp_dir/shell-reject.log"
 stop_control
-echo "kernel supervisor coordinated static TCP/UDP, forkpty/vfork exec paths, POSIX_SPAWN_USEVFORK/attributes/file-actions, and propagated rejection"
+echo "kernel supervisor coordinated static TCP/UDP, forkpty/vfork exec paths, POSIX_SPAWN_USEVFORK/attributes/file-actions/closefrom, and propagated rejection"
