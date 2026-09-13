@@ -27,6 +27,8 @@ type ReserveFunc func(context.Context, string, string) (Reservation, error)
 type ReserveDatagramFunc func(context.Context, string, string) (Reservation, error)
 type ProcessIdentityFunc func(int) (string, error)
 
+var controlRequestTimeout = 15 * time.Second
+
 type Server struct {
 	Path            string
 	WindowsHost     string
@@ -75,6 +77,8 @@ func (s *Server) Serve(ctx context.Context) error {
 	if s.ReapInterval <= 0 {
 		s.ReapInterval = time.Second
 	}
+	serveCtx, cancelServe := context.WithCancel(ctx)
+	defer cancelServe()
 	if err := prepareSocketPath(s.Path); err != nil {
 		return err
 	}
@@ -92,20 +96,56 @@ func (s *Server) Serve(ctx context.Context) error {
 		_ = listener.Close()
 		return fmt.Errorf("secure control socket: %w", err)
 	}
-	defer func() { _ = listener.Close(); cleanupSocketPath(s.Path); s.closeAll() }()
-	go func() { <-ctx.Done(); _ = listener.Close() }()
-	go s.reapLoop(ctx)
+	var handlers sync.WaitGroup
+	var connectionsMu sync.Mutex
+	connections := make(map[net.Conn]struct{})
+	closeConnections := func() {
+		connectionsMu.Lock()
+		current := make([]net.Conn, 0, len(connections))
+		for conn := range connections {
+			current = append(current, conn)
+		}
+		connectionsMu.Unlock()
+		for _, conn := range current {
+			_ = conn.Close()
+		}
+	}
+	defer func() {
+		_ = listener.Close()
+		closeConnections()
+		handlers.Wait()
+		cleanupSocketPath(s.Path)
+		s.closeAll()
+	}()
+	go func() {
+		<-serveCtx.Done()
+		_ = listener.Close()
+		closeConnections()
+	}()
+	go s.reapLoop(serveCtx)
 	for {
 		conn, acceptErr := listener.Accept()
 		if acceptErr != nil {
 			select {
-			case <-ctx.Done():
+			case <-serveCtx.Done():
 				return nil
 			default:
 				return acceptErr
 			}
 		}
-		go s.handle(ctx, conn)
+		connectionsMu.Lock()
+		connections[conn] = struct{}{}
+		handlers.Add(1)
+		connectionsMu.Unlock()
+		go func() {
+			defer func() {
+				connectionsMu.Lock()
+				delete(connections, conn)
+				connectionsMu.Unlock()
+				handlers.Done()
+			}()
+			s.handle(serveCtx, conn)
+		}()
 	}
 }
 
@@ -163,10 +203,14 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 		cancel()
 		_ = conn.Close()
 	}()
+	if controlRequestTimeout > 0 {
+		_ = conn.SetReadDeadline(time.Now().Add(controlRequestTimeout))
+	}
 	line, err := bufio.NewReader(io.LimitReader(conn, 4097)).ReadString('\n')
 	if err != nil {
 		return
 	}
+	_ = conn.SetReadDeadline(time.Time{})
 	parts := strings.Fields(line)
 	if len(parts) == 0 {
 		writeError(conn, 22, "empty request")

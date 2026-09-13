@@ -70,6 +70,62 @@ func TestReserveCommitAndClose(t *testing.T) {
 	}
 }
 
+func TestHandleTimesOutStalledRequest(t *testing.T) {
+	oldTimeout := controlRequestTimeout
+	controlRequestTimeout = 10 * time.Millisecond
+	defer func() { controlRequestTimeout = oldTimeout }()
+	serverSide, clientSide := net.Pipe()
+	defer clientSide.Close()
+	done := make(chan struct{})
+	go func() {
+		server := &Server{}
+		server.handle(context.Background(), serverSide)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("stalled control request did not time out")
+	}
+}
+
+func TestServeClosesStalledConnectionsOnShutdown(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("strict control sockets are a WSL-only feature")
+	}
+	path := filepath.Join(t.TempDir(), "control.sock")
+	server := &Server{
+		Path:            path,
+		ProcessIdentity: func(int) (string, error) { return "start", nil },
+		Reserve: func(context.Context, string, string) (Reservation, error) {
+			return &fakeReservation{}, nil
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(ctx) }()
+	waitForSocket(t, path)
+	conn, err := net.Dial("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("control server did not drain stalled connection")
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+	var probe [1]byte
+	if _, err := conn.Read(probe[:]); err == nil {
+		t.Fatal("stalled control connection remained open")
+	}
+	_ = conn.Close()
+}
+
 func TestReserveUDP(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "control.sock")
 	reservation := &fakeReservation{}
