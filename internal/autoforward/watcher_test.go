@@ -101,7 +101,7 @@ func TestWatcherAppliesWindowsPortOffset(t *testing.T) {
 
 func TestWatcherPublishesAndRemovesStatusFile(t *testing.T) {
 	statusPath := t.TempDir() + "/mappings.json"
-	scanner := &sequenceScanner{values: [][]Listener{{{Network: "tcp4", Host: "127.0.0.1", Port: 8000}}, {{Network: "tcp4", Host: "127.0.0.1", Port: 8000}}}}
+	scanner := fixedScanner{listeners: []Listener{{Network: "tcp4", Host: "127.0.0.1", Port: 8000}}}
 	opener := &recordingOpener{closed: make(chan string, 1)}
 	w := &Watcher{Scanner: scanner, Opener: opener, WindowsPortOffset: 10000, Status: NewStatusStore(statusPath), StatusOwner: "tcp", Interval: time.Millisecond}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -551,6 +551,12 @@ type sequenceScanner struct {
 	mu     sync.Mutex
 	values [][]Listener
 	at     int
+}
+
+type fixedScanner struct{ listeners []Listener }
+
+func (s fixedScanner) Scan() ([]Listener, error) {
+	return append([]Listener(nil), s.listeners...), nil
 }
 
 type sequenceDatagramScanner struct {
