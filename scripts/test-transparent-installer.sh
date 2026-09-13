@@ -46,5 +46,17 @@ symlink_status=$?
 set -e
 [ "$symlink_status" -ne 0 ]
 grep -q 'refusing symlinked installation target' "$tmp_dir/symlink.log"
+rm "$config"
+mv "$tmp_dir/transparent.env.saved" "$config"
+
+"$repo_dir/scripts/install-transparent-service.sh" --uninstall >"$tmp_dir/uninstall.log" 2>&1
+[ ! -e "$libexec/transparent-relay.sh" ]
+[ ! -e "$libexec/tun2socks" ]
+[ ! -e "$unit" ]
+[ -f "$config" ]
+grep -qx 'disable --now wsl-win-relay-transparent.service' "$WWR_TEST_SYSTEMCTL_LOG"
+grep -q 'preserved .*transparent.env' "$tmp_dir/uninstall.log"
+"$repo_dir/scripts/install-transparent-service.sh" --uninstall >"$tmp_dir/uninstall-again.log" 2>&1
+[ -f "$config" ]
 
 echo "transparent system service installer is idempotent and preserves private configuration"

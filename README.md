@@ -728,6 +728,9 @@ unit without overwriting DNS/uplink choices. The system service is deliberately
 separate from the unprivileged relay user service because route, resolver, and
 TUN changes require root. Review the environment file before enabling DNS
 replacement; disable the unit before making manual route changes.
+Run `sudo ./scripts/install-transparent-service.sh --uninstall` to stop and
+remove the system service and deployed executables. The private environment
+file is preserved deliberately, so reinstalling restores the previous policy.
 
 ## Long-running service
 
