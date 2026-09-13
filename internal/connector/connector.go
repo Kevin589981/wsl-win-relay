@@ -21,6 +21,8 @@ const (
 	defaultConnectRetryMaximum = 2 * time.Second
 )
 
+var connectorHandshakeTimeout = 15 * time.Second
+
 type Config struct {
 	Endpoint     string
 	Token        []byte
@@ -54,6 +56,8 @@ func Connect(ctx context.Context, config Config) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	clearDeadline := setHandshakeDeadline(conn, connectorHandshakeTimeout)
+	defer clearDeadline()
 	stopClose := make(chan struct{})
 	go func() {
 		select {
@@ -72,6 +76,16 @@ func Connect(ctx context.Context, config Config) (*Session, error) {
 		return nil, err
 	}
 	return &Session{Conn: conn, Epoch: epoch, InstanceID: instanceID, PeerCapabilities: peerCapabilities, Summary: summary}, nil
+}
+
+func setHandshakeDeadline(conn net.Conn, timeout time.Duration) func() {
+	if conn == nil || timeout <= 0 {
+		return func() {}
+	}
+	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+		return func() {}
+	}
+	return func() { _ = conn.SetDeadline(time.Time{}) }
 }
 
 // ConnectWithRetry tolerates the short endpoint/handshake outage that occurs

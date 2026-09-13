@@ -97,6 +97,39 @@ func TestConnectCancellationClosesInProgressHandshake(t *testing.T) {
 	}
 }
 
+func TestConnectTimesOutStalledHandshake(t *testing.T) {
+	endpoint := testEndpoint(t)
+	listener, err := localipc.Listen(endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr == nil {
+			accepted <- conn
+		}
+	}()
+	oldTimeout := connectorHandshakeTimeout
+	connectorHandshakeTimeout = 10 * time.Millisecond
+	defer func() { connectorHandshakeTimeout = oldTimeout }()
+	started := time.Now()
+	_, err = Connect(context.Background(), Config{Endpoint: endpoint, Token: []byte("secret")})
+	if err == nil {
+		t.Fatal("stalled handshake unexpectedly succeeded")
+	}
+	if elapsed := time.Since(started); elapsed < 5*time.Millisecond || elapsed > time.Second {
+		t.Fatalf("handshake timeout elapsed=%s err=%v", elapsed, err)
+	}
+	select {
+	case conn := <-accepted:
+		_ = conn.Close()
+	case <-time.After(time.Second):
+		t.Fatal("server did not observe connector connection")
+	}
+}
+
 func TestConnectWithRetryWaitsForBrokerEndpoint(t *testing.T) {
 	endpoint := testEndpoint(t)
 	registry, err := attach.NewWithToken([]byte("secret"))
