@@ -11,6 +11,7 @@ reverse_port=${WWR_BROKER_INTEROP_REVERSE_PORT:-}
 auto_port=${WWR_BROKER_INTEROP_AUTO_PORT:-}
 auto_forward_offset=${WWR_BROKER_INTEROP_AUTO_FORWARD_OFFSET:-0}
 windows_port_auto=${WWR_BROKER_INTEROP_WINDOWS_PORT_AUTO:-0}
+auto_udp=${WWR_BROKER_INTEROP_AUTO_UDP:-0}
 reverse_wsl_host=${WWR_BROKER_INTEROP_WSL_HOST:-127.0.0.2}
 endpoint=${WWR_BROKER_INTEROP_ENDPOINT:-"wsl-win-relay-interop-$$"}
 upstream_proxy=${WWR_WINDOWS_UPSTREAM_PROXY:-}
@@ -24,8 +25,16 @@ case "$windows_port_auto" in
 	0|1) ;;
 	*) echo "WWR_BROKER_INTEROP_WINDOWS_PORT_AUTO must be 0 or 1" >&2; exit 1 ;;
 esac
+case "$auto_udp" in
+	0|1) ;;
+	*) echo "WWR_BROKER_INTEROP_AUTO_UDP must be 0 or 1" >&2; exit 1 ;;
+esac
 if [ "$windows_port_auto" -eq 1 ] && [ "$auto_forward_offset" -ne 0 ]; then
 	echo "Windows automatic port allocation cannot be combined with an offset" >&2
+	exit 1
+fi
+if [ "$auto_udp" -eq 1 ] && [ "$windows_port_auto" -ne 1 ]; then
+	echo "the automatic UDP interop check requires Windows automatic port allocation" >&2
 	exit 1
 fi
 work=$(mktemp -d "${TMPDIR:-/tmp}/wsl-win-relay-broker-interop.XXXXXX")
@@ -34,6 +43,7 @@ proxy_pid=
 http_pid=
 auto_http_pid=
 connector_pid=
+auto_udp_pid=
 
 cleanup() {
 	stop_windows_roles || true
@@ -41,10 +51,12 @@ cleanup() {
 	[ -z "${connector_pid:-}" ] || kill "$connector_pid" 2>/dev/null || true
 	[ -z "${http_pid:-}" ] || kill "$http_pid" 2>/dev/null || true
 	[ -z "${auto_http_pid:-}" ] || kill "$auto_http_pid" 2>/dev/null || true
+	[ -z "${auto_udp_pid:-}" ] || kill "$auto_udp_pid" 2>/dev/null || true
 	[ -z "${broker_pid:-}" ] || kill "$broker_pid" 2>/dev/null || true
 	[ -z "${proxy_pid:-}" ] || wait "$proxy_pid" 2>/dev/null || true
 	[ -z "${http_pid:-}" ] || wait "$http_pid" 2>/dev/null || true
 	[ -z "${auto_http_pid:-}" ] || wait "$auto_http_pid" 2>/dev/null || true
+	[ -z "${auto_udp_pid:-}" ] || wait "$auto_udp_pid" 2>/dev/null || true
 	[ -z "${broker_pid:-}" ] || wait "$broker_pid" 2>/dev/null || true
 	rm -rf "$work"
 }
@@ -83,6 +95,12 @@ if [ ! -x "$windows_shell" ] && ! command -v "$windows_shell" >/dev/null 2>&1; t
 fi
 pick_free_port() {
 	python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()'
+}
+pick_free_udp_port() {
+	python3 -c 'import socket, sys; s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.bind((sys.argv[1], 0)); print(s.getsockname()[1]); s.close()' "$reverse_wsl_host"
+}
+status_windows_port() {
+	python3 -c 'import json, sys; document=json.load(open(sys.argv[1], encoding="utf-8")); print(next((entry["windows_address"].rsplit(":", 1)[1] for entry in document["mappings"] if entry["network"] == sys.argv[2] and entry["wsl_address"] == sys.argv[3]), ""))' "$1" "$2" "$3" 2>/dev/null
 }
 pick_windows_free_port() {
 	"$windows_shell" -NoProfile -NonInteractive -Command \
@@ -146,6 +164,11 @@ if [ -z "$auto_port" ]; then
 	auto_port=$(pick_auto_port)
 fi
 auto_windows_port=
+auto_udp_port=
+auto_udp_windows_port=
+if [ "$auto_udp" -eq 1 ]; then
+	auto_udp_port=$(pick_free_udp_port)
+fi
 if [ "$windows_port_auto" -eq 0 ]; then
 	auto_windows_port=$((auto_port + auto_forward_offset))
 	if [ "$auto_windows_port" -lt 1 ] || [ "$auto_windows_port" -gt 65535 ]; then
@@ -188,6 +211,10 @@ mkdir "$work/auto"
 printf '%s\n' "wsl-win-relay automatic interop $endpoint" >"$work/auto/index.html"
 python3 -m http.server "$auto_port" --bind "$reverse_wsl_host" --directory "$work/auto" >"$work/auto-http.log" 2>&1 &
 auto_http_pid=$!
+if [ "$auto_udp" -eq 1 ]; then
+	python3 -u -c 'import socket, sys; s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.bind((sys.argv[1], int(sys.argv[2]))); exec("while True:\n data, peer = s.recvfrom(65535)\n s.sendto(data, peer)")' "$reverse_wsl_host" "$auto_udp_port" >"$work/auto-udp.log" 2>&1 &
+	auto_udp_pid=$!
+fi
 sleep 0.5
 
 wslenv=${WSLENV:-}
@@ -200,7 +227,7 @@ done
 WSLENV="$wslenv" \
 WSL_WIN_RELAY_BROKER_ENDPOINT="$endpoint" \
 WSL_WIN_RELAY_ATTACH_TOKEN="$token" \
-	sh -c 'auto=$1; offset=$2; shift 2; if [ "$auto" -eq 1 ]; then exec "$@" -auto-forward-port-auto; fi; exec "$@" -auto-forward-port-offset "$offset"' sh "$windows_port_auto" "$auto_forward_offset" \
+	sh -c 'auto=$1; offset=$2; udp=$3; udp_port=$4; shift 4; if [ "$auto" -eq 1 ]; then set -- "$@" -auto-forward-port-auto; else set -- "$@" -auto-forward-port-offset "$offset"; fi; if [ "$udp" -eq 1 ]; then set -- "$@" -auto-forward-udp -auto-forward-udp-include "$udp_port"; fi; exec "$@"' sh "$windows_port_auto" "$auto_forward_offset" "$auto_udp" "$auto_udp_port" \
 	"$proxy_bin" -broker-mode -relay-exe "$connector_exe" -listen "$socks_listen" \
 		-http-listen "$http_listen" \
 		-reverse "127.0.0.1:$reverse_port=$reverse_wsl_host:$reverse_port" \
@@ -256,13 +283,48 @@ fi
 
 if [ "$windows_port_auto" -eq 1 ]; then
 	for _ in $(seq 1 60); do
-		auto_windows_port=$(sed -n 's/.*"windows_address": "127\.0\.0\.1:\([0-9][0-9]*\)".*/\1/p' "$work/auto-mappings.json" 2>/dev/null | head -n 1)
+		auto_windows_port=$(status_windows_port "$work/auto-mappings.json" tcp4 "$reverse_wsl_host:$auto_port" || true)
 		[ -z "$auto_windows_port" ] || break
 		sleep 0.5
 	done
 	if [ -z "$auto_windows_port" ]; then
 		echo "Windows did not report an automatically allocated port" >&2
 		cat "$work/auto-mappings.json" "$work/proxy.log" >&2 || true
+		exit 1
+	fi
+fi
+
+if [ "$auto_udp" -eq 1 ]; then
+	for _ in $(seq 1 60); do
+		auto_udp_windows_port=$(status_windows_port "$work/auto-mappings.json" udp4 "$reverse_wsl_host:$auto_udp_port" || true)
+		[ -z "$auto_udp_windows_port" ] || break
+		sleep 0.5
+	done
+	if [ -z "$auto_udp_windows_port" ]; then
+		echo "Windows did not report an automatically allocated UDP port" >&2
+		cat "$work/auto-mappings.json" "$work/proxy.log" "$work/auto-udp.log" >&2 || true
+		exit 1
+	fi
+	if ! "$windows_shell" -NoProfile -NonInteractive -Command \
+		"\$client = [Net.Sockets.UdpClient]::new(); \$client.Client.ReceiveTimeout = 10000; \$payload = [Text.Encoding]::UTF8.GetBytes('udp-$endpoint'); [void]\$client.Send(\$payload, \$payload.Length, '127.0.0.1', $auto_udp_windows_port); \$remote = [Net.IPEndPoint]::new([Net.IPAddress]::Any, 0); \$response = \$client.Receive([ref]\$remote); \$client.Dispose(); [Console]::Out.Write([Text.Encoding]::UTF8.GetString(\$response))" \
+		>"$work/auto-udp-response.txt" 2>"$work/auto-udp-reverse.err"; then
+		echo "Windows automatic UDP mapping request failed" >&2
+		cat "$work/proxy.log" "$work/auto-udp.log" "$work/auto-udp-reverse.err" >&2 || true
+		exit 1
+	fi
+	grep -qx "udp-$endpoint" "$work/auto-udp-response.txt"
+	kill "$auto_udp_pid" 2>/dev/null || true
+	wait "$auto_udp_pid" 2>/dev/null || true
+	auto_udp_pid=
+	for _ in $(seq 1 60); do
+		if grep -q "auto-forward UDP removed Windows port $auto_udp_windows_port (udp4)" "$work/proxy.log"; then
+			break
+		fi
+		sleep 0.5
+	done
+	if ! grep -q "auto-forward UDP removed Windows port $auto_udp_windows_port (udp4)" "$work/proxy.log"; then
+		echo "Windows automatic UDP mapping was not removed" >&2
+		cat "$work/proxy.log" "$work/auto-udp.log" >&2 || true
 		exit 1
 	fi
 fi
@@ -308,7 +370,7 @@ if ! grep -q "auto-forward removed Windows port $auto_windows_port (tcp4)" "$wor
 	exit 1
 fi
 if "$windows_shell" -NoProfile -NonInteractive -Command \
-	"try { Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:$auto_port' -TimeoutSec 3 | Out-Null; exit 1 } catch { exit 0 }"; then
+	"try { Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:$auto_windows_port' -TimeoutSec 3 | Out-Null; exit 1 } catch { exit 0 }"; then
 	:
 else
 	echo "Windows automatic mapping removal probe failed" >&2
@@ -323,7 +385,9 @@ if ! "$windows_shell" -NoProfile -NonInteractive -Command \
 	exit 1
 fi
 grep -q "wsl-win-relay reverse interop $endpoint" "$work/reverse-response.html"
-if [ -n "$upstream_proxy" ]; then
+if [ "$auto_udp" -eq 1 ]; then
+	echo "WSL proxies and Windows-allocated TCP/UDP mappings passed broker interop, connector recovery, and mapping cleanup"
+elif [ -n "$upstream_proxy" ]; then
 	echo "WSL SOCKS5 and HTTP proxies reached example.com through Windows broker and upstream $upstream_proxy; Windows reverse and automatic mappings reached WSL HTTP services"
 else
 	echo "WSL SOCKS5 and HTTP proxies attached to Windows broker over named pipe, reached example.com, and Windows reverse and automatic mappings reached WSL HTTP services"

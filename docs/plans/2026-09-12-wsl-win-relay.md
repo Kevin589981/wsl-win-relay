@@ -109,9 +109,11 @@
       intentional same-address bind conflict, and verifies that the automatic
       Windows listener is removed when its WSL service exits. It also kills the
       connector once and verifies reattach plus continued explicit and
-      automatic mapping reachability. An optional service-wrapper mode covers
-      the installed `broker.env`/`-supervise` startup path and upstream proxy
-      propagation.
+      automatic mapping reachability. Optional Windows-allocated TCP and
+      allowlisted UDP paths read the merged status document, exercise both
+      protocols from PowerShell after connector recovery, and verify mapping
+      removal. A service-wrapper mode covers the installed
+      `broker.env`/`-supervise` startup path and upstream proxy propagation.
 - [x] Frame-aware replaceable Link and `relay.Server.ServeAttached` keep the
       broker server lifecycle alive across connector transport replacement.
 - [x] Relay client `RunAttached`/`Rehandshake` reuse the same stream registry,
