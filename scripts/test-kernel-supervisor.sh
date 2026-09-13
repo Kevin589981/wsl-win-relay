@@ -145,6 +145,18 @@ printf '%s\n' \
     '    if (spawn_error != 0) return spawn_error;' \
     '    return waitpid(child, NULL, 0) == child ? 0 : 6;' \
     '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "posix-spawn-vfork") == 0) {' \
+    '    posix_spawnattr_t attributes; if (posix_spawnattr_init(&attributes) != 0) return 4;' \
+    '#ifdef POSIX_SPAWN_USEVFORK' \
+    '    if (posix_spawnattr_setflags(&attributes, POSIX_SPAWN_USEVFORK) != 0) { posix_spawnattr_destroy(&attributes); return 4; }' \
+    '#else' \
+    '    posix_spawnattr_destroy(&attributes); return 77;' \
+    '#endif' \
+    '    pid_t child = -1; char *spawn_argv[] = { argv[0], (char *)"spawn-child", NULL };' \
+    '    int spawn_error = posix_spawn(&child, argv[0], NULL, &attributes, spawn_argv, environ);' \
+    '    posix_spawnattr_destroy(&attributes); if (spawn_error != 0) return spawn_error;' \
+    '    return waitpid(child, NULL, 0) == child ? 0 : 6;' \
+    '  }' \
     '  if (argc > 1 && strcmp(argv[1], "posix-spawnp") == 0) {' \
     '    char executable[PATH_MAX]; if (realpath(argv[0], executable) == NULL) return 4;' \
     '    char *slash = strrchr(executable, '\''/'\''); if (slash == NULL) return 4; *slash = '\''\0'\'';' \
@@ -459,6 +471,22 @@ grep -q '^COMMIT ' "$tmp_dir/posix-spawn.log"
 grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/posix-spawn.log"
 stop_control
 
+start_control "$tmp_dir/posix-spawn-vfork.sock" "$tmp_dir/posix-spawn-vfork.log"
+set +e
+WSL_WIN_RELAY_CONTROL="$tmp_dir/posix-spawn-vfork.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" posix-spawn-vfork
+posix_spawn_vfork_status=$?
+set -e
+if [ "$posix_spawn_vfork_status" -ne 0 ] && [ "$posix_spawn_vfork_status" -ne 77 ]; then
+    echo "posix_spawn(POSIX_SPAWN_USEVFORK) target failed with status $posix_spawn_vfork_status" >&2
+    exit 1
+fi
+if [ "$posix_spawn_vfork_status" -eq 0 ]; then
+    grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/posix-spawn-vfork.log"
+    grep -q '^COMMIT ' "$tmp_dir/posix-spawn-vfork.log"
+    grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/posix-spawn-vfork.log"
+fi
+stop_control
+
 start_control "$tmp_dir/posix-spawnp.sock" "$tmp_dir/posix-spawnp.log"
 WSL_WIN_RELAY_CONTROL="$tmp_dir/posix-spawnp.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" posix-spawnp
 grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/posix-spawnp.log"
@@ -723,4 +751,4 @@ fi
 grep -q 'RESERVE .* tcp4 47154' "$tmp_dir/shell-reject.log"
 ! grep -q '^COMMIT ' "$tmp_dir/shell-reject.log"
 stop_control
-echo "kernel supervisor coordinated static TCP/UDP, vfork exec paths, and propagated rejection"
+echo "kernel supervisor coordinated static TCP/UDP, vfork exec paths, POSIX_SPAWN_USEVFORK, and propagated rejection"
