@@ -58,6 +58,24 @@ func TestLoadRejectsInvalidMaximumProxyConnections(t *testing.T) {
 	}
 }
 
+func TestLoadValidatesStrictControlLimits(t *testing.T) {
+	defaults := Default()
+	if defaults.StrictMaxConnections != 64 || defaults.StrictMaxLeases != 512 || defaults.StrictMaxOwners != 256 {
+		t.Fatalf("strict defaults: %#v", defaults)
+	}
+	for _, field := range []string{"strict_max_connections", "strict_max_leases", "strict_max_owners_per_lease"} {
+		for _, value := range []string{"0", "-1", "65536"} {
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(path, []byte(`{"`+field+`":`+value+`}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Load(path); err == nil {
+				t.Fatalf("accepted %s=%s", field, value)
+			}
+		}
+	}
+}
+
 func TestLoadNormalizesHTTPProxyListenName(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	for _, content := range []string{

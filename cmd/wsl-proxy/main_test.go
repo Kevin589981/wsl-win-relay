@@ -165,11 +165,11 @@ func TestParsePortSet(t *testing.T) {
 }
 
 func TestParseOptionsSupportsRepeatedMappings(t *testing.T) {
-	opts, err := parseOptions([]string{"-relay-exe", "/mnt/c/relay.exe", "-upstream-proxy", "socks5h://127.0.0.1:7890", "-proxy-handshake-timeout", "2s", "-max-proxy-connections", "123", "-reverse", "127.0.0.1:80=127.0.0.1:8080", "-reverse", "127.0.0.1:90=127.0.0.1:9090", "-strict-listen-host", "0.0.0.0", "-strict-listen-host6", "::"})
+	opts, err := parseOptions([]string{"-relay-exe", "/mnt/c/relay.exe", "-upstream-proxy", "socks5h://127.0.0.1:7890", "-proxy-handshake-timeout", "2s", "-max-proxy-connections", "123", "-reverse", "127.0.0.1:80=127.0.0.1:8080", "-reverse", "127.0.0.1:90=127.0.0.1:9090", "-strict-listen-host", "0.0.0.0", "-strict-listen-host6", "::", "-strict-max-connections", "12", "-strict-max-leases", "34", "-strict-max-owners-per-lease", "56"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(opts.reverse) != 2 || opts.strictListenHost != "0.0.0.0" || opts.strictListenHost6 != "::" || opts.upstreamProxy != "socks5h://127.0.0.1:7890" || opts.proxyHandshakeTimeout != 2*time.Second || opts.maxProxyConnections != 123 {
+	if len(opts.reverse) != 2 || opts.strictListenHost != "0.0.0.0" || opts.strictListenHost6 != "::" || opts.strictMaxConnections != 12 || opts.strictMaxLeases != 34 || opts.strictMaxOwners != 56 || opts.upstreamProxy != "socks5h://127.0.0.1:7890" || opts.proxyHandshakeTimeout != 2*time.Second || opts.maxProxyConnections != 123 {
 		t.Fatalf("options: %#v", opts)
 	}
 }
@@ -251,6 +251,9 @@ func TestParseOptionsRejectsNonPositiveDurationOverrides(t *testing.T) {
 		"-proxy-handshake-timeout=0",
 		"-max-proxy-connections=0",
 		"-max-proxy-connections=65536",
+		"-strict-max-connections=0",
+		"-strict-max-leases=65536",
+		"-strict-max-owners-per-lease=0",
 		"-auto-forward-port-offset=65535",
 	} {
 		if _, err := parseOptions([]string{argument}); err == nil {

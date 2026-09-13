@@ -89,6 +89,60 @@ func TestHandleTimesOutStalledRequest(t *testing.T) {
 	}
 }
 
+func TestLeaseCapacityCountsPendingAndActiveReservations(t *testing.T) {
+	server := &Server{MaxLeases: 1}
+	if !server.acquireLeaseSlot() {
+		t.Fatal("first pending lease was rejected")
+	}
+	if server.acquireLeaseSlot() {
+		t.Fatal("second pending lease exceeded capacity")
+	}
+	server.releaseLeaseSlot()
+	server.leases = map[uint64]*lease{1: {}}
+	if server.acquireLeaseSlot() {
+		t.Fatal("pending lease exceeded active capacity")
+	}
+}
+
+func TestReserveAtLeaseLimitDoesNotCallBackend(t *testing.T) {
+	var calls atomic.Int32
+	server := &Server{
+		MaxLeases:       1,
+		ProcessIdentity: func(int) (string, error) { return "start", nil },
+		Reserve: func(context.Context, string, string) (Reservation, error) {
+			calls.Add(1)
+			return &fakeReservation{}, nil
+		},
+		leases: map[uint64]*lease{1: {}},
+	}
+	response := invokeControlHandler(t, func(conn net.Conn) {
+		server.handleReserve(context.Background(), conn, []string{"RESERVE", "123", "tcp4", "8000"})
+	})
+	if !strings.HasPrefix(response, "ERR 28 ") {
+		t.Fatalf("response=%q", response)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("backend calls=%d", calls.Load())
+	}
+}
+
+func TestAdoptAtOwnerLimitDoesNotGrowLease(t *testing.T) {
+	owners := make(map[int]string, DefaultMaxOwnersPerLease)
+	for pid := 1; pid <= DefaultMaxOwnersPerLease; pid++ {
+		owners[pid] = "start"
+	}
+	server := &Server{MaxOwners: DefaultMaxOwnersPerLease, ProcessIdentity: func(int) (string, error) { return "start", nil }, leases: map[uint64]*lease{1: {owners: owners}}}
+	response := invokeControlHandler(t, func(conn net.Conn) {
+		server.handleAdopt(conn, []string{"ADOPT", "999", "1"})
+	})
+	if !strings.HasPrefix(response, "ERR 28 ") {
+		t.Fatalf("response=%q", response)
+	}
+	if len(owners) != DefaultMaxOwnersPerLease {
+		t.Fatalf("owner count=%d", len(owners))
+	}
+}
+
 func TestServeClosesStalledConnectionsOnShutdown(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("strict control sockets are a WSL-only feature")
@@ -752,6 +806,28 @@ func request(t *testing.T, path, value string) string {
 	response, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
 		t.Fatal(err)
+	}
+	return response
+}
+
+func invokeControlHandler(t *testing.T, handler func(net.Conn)) string {
+	t.Helper()
+	serverSide, clientSide := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		defer serverSide.Close()
+		handler(serverSide)
+		close(done)
+	}()
+	response, err := bufio.NewReader(clientSide).ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = clientSide.Close()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("control handler did not return")
 	}
 	return response
 }

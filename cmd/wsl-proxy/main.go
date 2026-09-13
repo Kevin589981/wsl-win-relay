@@ -54,6 +54,9 @@ type options struct {
 	controlSocket         string
 	strictListenHost      string
 	strictListenHost6     string
+	strictMaxConnections  int
+	strictMaxLeases       int
+	strictMaxOwners       int
 	udpAssociateIdle      time.Duration
 	relayHandshakeTimeout time.Duration
 	relayDialTimeout      time.Duration
@@ -185,6 +188,7 @@ func parseOptions(args []string) (options, error) {
 		autoForwardStatus:     fileConfig.AutoForward.StatusFile,
 		autoRetryMin:          autoRetryMin, autoRetryMax: autoRetryMax,
 		controlSocket: fileConfig.ControlSocket, strictListenHost: fileConfig.StrictListenHost, strictListenHost6: fileConfig.StrictListenHost6,
+		strictMaxConnections: fileConfig.StrictMaxConnections, strictMaxLeases: fileConfig.StrictMaxLeases, strictMaxOwners: fileConfig.StrictMaxOwners,
 		udpAssociateIdle:      udpAssociateIdle,
 		relayHandshakeTimeout: relayHandshakeTimeout,
 		relayDialTimeout:      relayDialTimeout,
@@ -230,6 +234,9 @@ func parseOptions(args []string) (options, error) {
 	set.StringVar(&opts.controlSocket, "control-socket", opts.controlSocket, "Unix socket for strict listener coordination; empty disables")
 	set.StringVar(&opts.strictListenHost, "strict-listen-host", opts.strictListenHost, "Windows bind host for strict listener coordination")
 	set.StringVar(&opts.strictListenHost6, "strict-listen-host6", opts.strictListenHost6, "Windows IPv6 bind host for strict listener coordination")
+	set.IntVar(&opts.strictMaxConnections, "strict-max-connections", opts.strictMaxConnections, "maximum concurrent strict control requests")
+	set.IntVar(&opts.strictMaxLeases, "strict-max-leases", opts.strictMaxLeases, "maximum active and pending strict listener leases")
+	set.IntVar(&opts.strictMaxOwners, "strict-max-owners-per-lease", opts.strictMaxOwners, "maximum process owners for one strict listener lease")
 	set.DurationVar(&opts.udpAssociateIdle, "udp-associate-idle-timeout", opts.udpAssociateIdle, "idle timeout for SOCKS5 UDP associations")
 	set.DurationVar(&opts.relayHandshakeTimeout, "relay-handshake-timeout", opts.relayHandshakeTimeout, "maximum time to wait for the Windows relay handshake")
 	set.DurationVar(&opts.relayDialTimeout, "relay-dial-timeout", opts.relayDialTimeout, "maximum time to wait for a relay session to open a connection")
@@ -270,6 +277,15 @@ func parseOptions(args []string) (options, error) {
 	}
 	if opts.maxProxyConnections <= 0 || opts.maxProxyConnections > 65535 {
 		return options{}, errors.New("max-proxy-connections must be between 1 and 65535")
+	}
+	for name, value := range map[string]int{
+		"strict-max-connections":      opts.strictMaxConnections,
+		"strict-max-leases":           opts.strictMaxLeases,
+		"strict-max-owners-per-lease": opts.strictMaxOwners,
+	} {
+		if value <= 0 || value > 65535 {
+			return options{}, fmt.Errorf("%s must be between 1 and 65535", name)
+		}
 	}
 	if set.NArg() != 0 {
 		return options{}, fmt.Errorf("unexpected arguments: %s", strings.Join(set.Args(), " "))
@@ -370,6 +386,7 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 	if opts.controlSocket != "" {
 		control = &listencontrol.Server{
 			Path: opts.controlSocket, WindowsHost: opts.strictListenHost, WindowsHost6: opts.strictListenHost6,
+			MaxConnections: opts.strictMaxConnections, MaxLeases: opts.strictMaxLeases, MaxOwners: opts.strictMaxOwners,
 			Reserve: func(reserveCtx context.Context, windows, wsl string) (listencontrol.Reservation, error) {
 				return dialer.reserveReverseForward(reserveCtx, windows, wsl)
 			},

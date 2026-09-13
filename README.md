@@ -567,6 +567,11 @@ Keep `wsl-proxy-linux` running, then launch an application through the wrapper:
 
 The wrapper waits up to two seconds for the strict-listen control socket and
 fails early with a diagnostic if the relay service is not running.
+The control plane defaults to 64 concurrent requests, 512 active-or-pending
+leases, and 256 process owners per lease. Adjust these with
+`strict_max_connections`, `strict_max_leases`, and
+`strict_max_owners_per_lease` (or the corresponding hyphenated CLI flags) for
+larger traced process trees. Saturation rejects only new work with `ENOSPC`.
 
 It also rejects directly executed static ELF and setuid/setgid targets before
 launch. Those targets cannot load `LD_PRELOAD`, so allowing them through would

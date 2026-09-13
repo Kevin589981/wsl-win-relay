@@ -130,6 +130,9 @@
 - [x] Strict control requests have a bounded initial read, and service shutdown
       closes accepted connections, drains handlers, and preserves a replaced
       Unix socket path.
+- [x] Strict control handlers, active-plus-pending leases, and owners per lease
+      have independently configurable caps; saturation fails new work with
+      `ENOSPC` without disturbing established Windows reservations.
 - [x] Automatic TCP and allowlisted UDP mappings are process-scoped and
       rebound through the session-aware dialer after relay child replacement.
 - [x] Generation-safe attach registry with per-instance token authentication

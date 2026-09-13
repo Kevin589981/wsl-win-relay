@@ -20,6 +20,9 @@ type File struct {
 	ControlSocket         string            `json:"control_socket"`
 	StrictListenHost      string            `json:"strict_listen_host"`
 	StrictListenHost6     string            `json:"strict_listen_host6"`
+	StrictMaxConnections  int               `json:"strict_max_connections"`
+	StrictMaxLeases       int               `json:"strict_max_leases"`
+	StrictMaxOwners       int               `json:"strict_max_owners_per_lease"`
 	RelayHandshakeTimeout string            `json:"relay_handshake_timeout"`
 	RelayDialTimeout      string            `json:"relay_dial_timeout"`
 	UDPAssociateIdle      string            `json:"udp_associate_idle_timeout"`
@@ -53,6 +56,9 @@ func Default() File {
 		ControlSocket:         "/tmp/wsl-win-relay-control.sock",
 		StrictListenHost:      "127.0.0.1",
 		StrictListenHost6:     "::1",
+		StrictMaxConnections:  64,
+		StrictMaxLeases:       512,
+		StrictMaxOwners:       256,
 		RelayHandshakeTimeout: "5s",
 		RelayDialTimeout:      "30s",
 		UDPAssociateIdle:      "5m",
@@ -100,6 +106,15 @@ func Load(path string) (File, error) {
 	}
 	if result.MaxProxyConnections <= 0 || result.MaxProxyConnections > 65535 {
 		return File{}, errors.New("max_proxy_connections must be between 1 and 65535")
+	}
+	for name, value := range map[string]int{
+		"strict_max_connections":      result.StrictMaxConnections,
+		"strict_max_leases":           result.StrictMaxLeases,
+		"strict_max_owners_per_lease": result.StrictMaxOwners,
+	} {
+		if value <= 0 || value > 65535 {
+			return File{}, fmt.Errorf("%s must be between 1 and 65535", name)
+		}
 	}
 	if _, err := result.RelayDialDuration(); err != nil {
 		return File{}, err

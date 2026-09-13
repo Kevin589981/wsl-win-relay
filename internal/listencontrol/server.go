@@ -29,6 +29,12 @@ type ProcessIdentityFunc func(int) (string, error)
 
 var controlRequestTimeout = 15 * time.Second
 
+const (
+	DefaultMaxConnections    = 64
+	DefaultMaxLeases         = 512
+	DefaultMaxOwnersPerLease = 256
+)
+
 type Server struct {
 	Path            string
 	WindowsHost     string
@@ -37,9 +43,13 @@ type Server struct {
 	ReserveDatagram ReserveDatagramFunc
 	ProcessIdentity ProcessIdentityFunc
 	ReapInterval    time.Duration
+	MaxConnections  int
+	MaxLeases       int
+	MaxOwners       int
 	mu              sync.Mutex
 	rebindMu        sync.Mutex
 	leases          map[uint64]*lease
+	pendingLeases   int
 	next            atomic.Uint64
 }
 
@@ -76,6 +86,15 @@ func (s *Server) Serve(ctx context.Context) error {
 	}
 	if s.ReapInterval <= 0 {
 		s.ReapInterval = time.Second
+	}
+	if s.MaxConnections <= 0 {
+		s.MaxConnections = DefaultMaxConnections
+	}
+	if s.MaxLeases <= 0 {
+		s.MaxLeases = DefaultMaxLeases
+	}
+	if s.MaxOwners <= 0 {
+		s.MaxOwners = DefaultMaxOwnersPerLease
 	}
 	serveCtx, cancelServe := context.WithCancel(ctx)
 	defer cancelServe()
@@ -134,6 +153,11 @@ func (s *Server) Serve(ctx context.Context) error {
 			}
 		}
 		connectionsMu.Lock()
+		if len(connections) >= s.MaxConnections {
+			connectionsMu.Unlock()
+			_ = conn.Close()
+			continue
+		}
 		connections[conn] = struct{}{}
 		handlers.Add(1)
 		connectionsMu.Unlock()
@@ -302,6 +326,16 @@ func (s *Server) handleReserve(ctx context.Context, conn net.Conn, parts []strin
 			return s.Reserve(reserveCtx, windows, wsl)
 		}
 	}
+	if !s.acquireLeaseSlot() {
+		writeError(conn, 28, "strict listener lease limit reached")
+		return
+	}
+	slotPending := true
+	defer func() {
+		if slotPending {
+			s.releaseLeaseSlot()
+		}
+	}()
 	reservation, err := reserve(ctx, windowsAddr, wslTarget)
 	if err != nil {
 		writeError(conn, errnoFor(err), err.Error())
@@ -314,17 +348,42 @@ func (s *Server) handleReserve(ctx context.Context, conn net.Conn, parts []strin
 	id := s.next.Add(1)
 	s.mu.Lock()
 	s.ensureLeases()
+	s.pendingLeases--
 	ownerTarget := ""
 	if len(parts) == 6 {
 		ownerTarget = parts[5]
 	}
 	s.leases[id] = &lease{reservation: reservation, windows: windowsAddr, wsl: wslTarget, datagram: parts[2] == "udp4" || parts[2] == "udp6", owners: map[int]string{pid: identity}, ownerTargets: map[int]string{pid: ownerTarget}}
+	slotPending = false
 	s.mu.Unlock()
 	if _, err := fmt.Fprintf(conn, "OK %d\n", id); err != nil {
 		// The requester may disappear after Windows has bound the port but before
 		// it receives the lease id. Do not retain an unmanageable owner lease.
 		s.remove(id)
 	}
+}
+
+func (s *Server) acquireLeaseSlot() bool {
+	maximum := s.MaxLeases
+	if maximum <= 0 {
+		maximum = DefaultMaxLeases
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureLeases()
+	if len(s.leases)+s.pendingLeases >= maximum {
+		return false
+	}
+	s.pendingLeases++
+	return true
+}
+
+func (s *Server) releaseLeaseSlot() {
+	s.mu.Lock()
+	if s.pendingLeases > 0 {
+		s.pendingLeases--
+	}
+	s.mu.Unlock()
 }
 
 func (s *Server) handleAdopt(conn net.Conn, parts []string) {
@@ -350,6 +409,15 @@ func (s *Server) handleAdopt(conn net.Conn, parts []string) {
 	}
 	if l.ownerTargets == nil {
 		l.ownerTargets = make(map[int]string)
+	}
+	maximumOwners := s.MaxOwners
+	if maximumOwners <= 0 {
+		maximumOwners = DefaultMaxOwnersPerLease
+	}
+	if _, exists := l.owners[pid]; !exists && len(l.owners) >= maximumOwners {
+		s.mu.Unlock()
+		writeError(conn, 28, "strict listener owner limit reached")
+		return
 	}
 	l.owners[pid] = identity
 	l.ownerTargets[pid] = target
