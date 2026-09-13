@@ -101,7 +101,9 @@
       long-running service daemonization boundary.
 - [x] The static lifecycle smoke launches a listener from the strict-shell
       wrapper and verifies that a shell descendant reserves, commits, and
-      releases its Windows lease through the same traced process tree.
+      releases its Windows lease through the same traced process tree; a forced
+      Windows bind rejection is propagated back through the shell command
+      without committing the lease.
 - [ ] Kernel-level coverage for non-direct vfork libc interactions remains
       open for implementations beyond the `system()`, `popen()`, `posix_spawn`,
       and `posix_spawnp`

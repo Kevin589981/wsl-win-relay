@@ -605,4 +605,19 @@ grep -q 'RESERVE .* tcp4 47153' "$tmp_dir/shell.log"
 grep -q '^COMMIT ' "$tmp_dir/shell.log"
 grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/shell.log"
 stop_control
+
+start_control "$tmp_dir/shell-reject.sock" "$tmp_dir/shell-reject.log" 47154
+set +e
+shell_command=$(printf '%s tcp 47154' "$tmp_dir/static-target")
+WSL_WIN_RELAY_CONTROL="$tmp_dir/shell-reject.sock" WSL_WIN_RELAY_SHELL=/bin/sh \
+    "$repo_dir/scripts/wsl-win-relay-shell" -c "$shell_command"
+shell_reject_status=$?
+set -e
+if [ "$shell_reject_status" -eq 0 ]; then
+    echo "shell child unexpectedly listened after Windows rejection" >&2
+    exit 1
+fi
+grep -q 'RESERVE .* tcp4 47154' "$tmp_dir/shell-reject.log"
+! grep -q '^COMMIT ' "$tmp_dir/shell-reject.log"
+stop_control
 echo "kernel supervisor coordinated static TCP/UDP, vfork exec paths, and propagated rejection"
