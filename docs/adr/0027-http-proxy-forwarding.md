@@ -22,7 +22,8 @@ plain HTTP:
 - Non-CONNECT requests must use an absolute `http://` URL. The frontend derives
   the origin target from its hostname and optional port (default `80`), then
   sends the request in origin form through the relay dialer.
-- Proxy-only `Proxy-Connection` and `Proxy-Authorization` headers are removed.
+- Proxy-only headers and all hop-by-hop headers named by `Connection` (plus the
+  standard `Keep-Alive`, `TE`, `Trailer`, and `Upgrade` headers) are removed.
   The request is marked `Connection: close`, so one client connection carries
   one origin request and response. This bounds lifecycle state without adding a
   second HTTP session multiplexer.

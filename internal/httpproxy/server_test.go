@@ -114,7 +114,7 @@ func TestForwardsAbsoluteHTTPURL(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- (&Server{Dialer: dialer}).ServeConn(context.Background(), server) }()
 	_ = client.SetDeadline(time.Now().Add(2 * time.Second))
-	request := "POST http://example.com:8080/path?q=1 HTTP/1.1\r\nHost: example.com:8080\r\nContent-Length: 3\r\nProxy-Connection: keep-alive\r\n\r\nabc"
+	request := "POST http://example.com:8080/path?q=1 HTTP/1.1\r\nHost: example.com:8080\r\nContent-Length: 3\r\nConnection: keep-alive, X-Trace-Hop\r\nX-Trace-Hop: remove-me\r\nKeep-Alive: timeout=5\r\nProxy-Connection: keep-alive\r\nTE: trailers\r\nUpgrade: h2c\r\n\r\nabc"
 	if _, err := io.WriteString(client, request); err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestForwardsAbsoluteHTTPURL(t *testing.T) {
 	if forwarded.Method != http.MethodPost || forwarded.URL.Path != "/path" || forwarded.URL.RawQuery != "q=1" {
 		t.Fatalf("forwarded request %#v", forwarded)
 	}
-	if forwarded.RequestURI != "/path?q=1" || forwarded.URL.Scheme != "" || forwarded.URL.Host != "" || forwarded.Header.Get("Proxy-Connection") != "" || forwarded.Header.Get("Proxy-Authorization") != "" || forwarded.Header.Get("Connection") != "close" {
+	if forwarded.RequestURI != "/path?q=1" || forwarded.URL.Scheme != "" || forwarded.URL.Host != "" || forwarded.Header.Get("Proxy-Connection") != "" || forwarded.Header.Get("Proxy-Authorization") != "" || forwarded.Header.Get("Keep-Alive") != "" || forwarded.Header.Get("TE") != "" || forwarded.Header.Get("Upgrade") != "" || forwarded.Header.Get("X-Trace-Hop") != "" || forwarded.Header.Get("Connection") != "close" {
 		t.Fatalf("proxy headers were not normalized: %#v", forwarded.Header)
 	}
 	body, err := io.ReadAll(forwarded.Body)

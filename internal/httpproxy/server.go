@@ -123,9 +123,7 @@ func (s *Server) forwardHTTP(ctx context.Context, client net.Conn, request *http
 	request.RequestURI = ""
 	request.URL.Scheme = ""
 	request.URL.Host = ""
-	request.Header.Del("Proxy-Connection")
-	request.Header.Del("Proxy-Authorization")
-	request.Header.Del("Connection")
+	stripHopByHopHeaders(request.Header)
 	request.Header.Set("Connection", "close")
 	request.Close = true
 	if err := request.Write(remote); err != nil {
@@ -136,6 +134,28 @@ func (s *Server) forwardHTTP(ctx context.Context, client net.Conn, request *http
 	}
 	_, err = io.Copy(client, remote)
 	return err
+}
+
+func stripHopByHopHeaders(header http.Header) {
+	for _, value := range header.Values("Connection") {
+		for _, token := range strings.Split(value, ",") {
+			if name := strings.TrimSpace(token); name != "" {
+				header.Del(name)
+			}
+		}
+	}
+	for _, name := range []string{
+		"Connection",
+		"Keep-Alive",
+		"Proxy-Authenticate",
+		"Proxy-Authorization",
+		"Proxy-Connection",
+		"TE",
+		"Trailer",
+		"Upgrade",
+	} {
+		header.Del(name)
+	}
 }
 
 type handshakeReader struct {
