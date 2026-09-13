@@ -33,6 +33,7 @@ SYSTEMCTL_LOG="$tmp_dir/systemctl.log" \
 [ -x "$tmp_dir/home/bin/wsl-win-relay-strict" ]
 [ -x "$tmp_dir/home/bin/wsl-win-relay-service" ]
 [ -x "$tmp_dir/home/bin/wsl-win-relay-broker-service" ]
+[ -x "$tmp_dir/home/bin/wsl-win-relay-doctor" ]
 [ -f "$tmp_dir/config/wsl-win-relay/config.json" ]
 [ "$(stat -c '%a' "$tmp_dir/config/wsl-win-relay/config.json")" = 600 ]
 "$tmp_dir/home/bin/wsl-proxy-linux" \

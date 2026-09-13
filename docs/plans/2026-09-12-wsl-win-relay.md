@@ -69,6 +69,10 @@
 - [x] `wsl-proxy -check-config` runs the production option parser without
       starting a relay or binding ports; the user-service installer uses it to
       reject invalid upgrades before touching running services.
+- [x] An installed read-only doctor checks configuration permissions and
+      parsing, broker credentials, token consistency, Windows interop/build
+      compatibility, user-service state, and an optional end-to-end SOCKS
+      probe without exposing private token or upstream-proxy values.
 - [x] The user-service installer deploys the kernel strict supervisor alongside
       its launcher, so installed static-target coordination does not depend on
       paths inside the source checkout; an isolated installer smoke verifies

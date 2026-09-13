@@ -16,6 +16,7 @@ install -m 0755 "$repo_dir/scripts/wsl-win-relay-run" "$bin_dir/wsl-win-relay-ru
 install -m 0755 "$repo_dir/scripts/wsl-win-relay-shell" "$bin_dir/wsl-win-relay-shell"
 install -m 0755 "$repo_dir/scripts/run-user-service.sh" "$bin_dir/wsl-win-relay-service"
 install -m 0755 "$repo_dir/scripts/run-broker-user-service.sh" "$bin_dir/wsl-win-relay-broker-service"
+install -m 0755 "$repo_dir/scripts/wsl-win-relay-doctor" "$bin_dir/wsl-win-relay-doctor"
 if [ -x "$repo_dir/bin/wsl-win-relay-strict" ]; then
     install -m 0755 "$repo_dir/bin/wsl-win-relay-strict" "$bin_dir/wsl-win-relay-strict"
 fi

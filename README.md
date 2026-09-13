@@ -808,6 +808,23 @@ The installed launcher resolves its sibling supervisor in `~/bin` and the
 shared library in `~/lib` automatically; no path overrides are required for
 the standard layout.
 
+Run the installed read-only diagnostic after installation or whenever the
+relay stops recovering:
+
+```bash
+~/bin/wsl-win-relay-doctor
+~/bin/wsl-win-relay-doctor --probe-url https://example.com
+```
+
+The default run validates private configuration permissions, invokes the same
+production configuration parser used at startup, checks broker token-file
+consistency without printing credentials, executes the Windows broker and
+connector `-version` paths through WSL interop, compares their build metadata,
+and checks installed user-unit state. The optional probe performs a real fetch
+through `socks5h://127.0.0.1:1080`; use `--socks-proxy` when the configured
+SOCKS listener differs. Failures produce a non-zero exit status, while missing
+optional broker/systemd components are warnings.
+
 The startup handshake timeout defaults to five seconds and can be adjusted with
 `relay_handshake_timeout` or `-relay-handshake-timeout` when the Windows relay
 needs longer to start after a system/network recovery. This timeout only covers

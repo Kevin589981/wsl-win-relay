@@ -1,0 +1,214 @@
+#!/bin/sh
+set -u
+
+config_root=${XDG_CONFIG_HOME:-"$HOME/.config"}
+config=${WSL_WIN_RELAY_CONFIG:-"$config_root/wsl-win-relay/config.json"}
+broker_env=${WSL_WIN_RELAY_BROKER_ENV_FILE:-"$config_root/wsl-win-relay/broker.env"}
+proxy_binary=${WSL_WIN_RELAY_PROXY_EXE:-"$HOME/bin/wsl-proxy-linux"}
+probe_url=
+socks_proxy=socks5h://127.0.0.1:1080
+check_services=1
+failures=0
+warnings=0
+
+usage() {
+    cat <<'EOF'
+Usage: wsl-win-relay-doctor [options]
+  --config PATH          relay JSON configuration
+  --broker-env PATH      private broker environment file
+  --proxy-binary PATH    installed WSL proxy executable
+  --probe-url URL        optional URL fetched through the SOCKS proxy
+  --socks-proxy URL      SOCKS proxy for --probe-url (default: socks5h://127.0.0.1:1080)
+  --skip-services        do not inspect systemd user units
+EOF
+}
+
+pass() { printf '[PASS] %s\n' "$*"; }
+warn() { warnings=$((warnings + 1)); printf '[WARN] %s\n' "$*"; }
+fail() { failures=$((failures + 1)); printf '[FAIL] %s\n' "$*"; }
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --config|--broker-env|--proxy-binary|--probe-url|--socks-proxy)
+            [ "$#" -ge 2 ] || { printf 'missing value for %s\n' "$1" >&2; exit 2; }
+            option=$1
+            value=$2
+            shift 2
+            case "$option" in
+                --config) config=$value ;;
+                --broker-env) broker_env=$value ;;
+                --proxy-binary) proxy_binary=$value ;;
+                --probe-url) probe_url=$value ;;
+                --socks-proxy) socks_proxy=$value ;;
+            esac
+            ;;
+        --skip-services) check_services=0; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) printf 'unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
+    esac
+done
+
+file_mode() {
+    stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null
+}
+
+private_regular_file() {
+    path=$1
+    label=$2
+    if [ -L "$path" ] || [ ! -f "$path" ]; then
+        fail "$label is missing, symlinked, or non-regular: $path"
+        return 1
+    fi
+    mode=$(file_mode "$path") || {
+        fail "cannot inspect $label permissions: $path"
+        return 1
+    }
+    case "$mode" in
+        600|0600) pass "$label is a private regular file"; return 0 ;;
+        *) fail "$label must have mode 0600 (found $mode): $path"; return 1 ;;
+    esac
+}
+
+resolve_executable() {
+    candidate=$1
+    if [ -f "$candidate" ] && [ -x "$candidate" ]; then
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+    command -v "$candidate" 2>/dev/null
+}
+
+case "$(uname -r 2>/dev/null || true)" in
+    *[Mm]icrosoft*) pass 'running inside WSL' ;;
+    *) warn 'kernel release does not identify this environment as WSL' ;;
+esac
+
+if private_regular_file "$config" 'relay configuration'; then
+    resolved_proxy=$(resolve_executable "$proxy_binary" || true)
+    if [ -z "$resolved_proxy" ]; then
+        fail "WSL proxy executable is unavailable: $proxy_binary"
+    elif "$resolved_proxy" -config "$config" -check-config >/dev/null 2>&1; then
+        pass 'production configuration parser accepts the configuration'
+    else
+        fail "production configuration parser rejected: $config"
+    fi
+fi
+
+broker_configured=0
+broker_env_ok=0
+if [ -e "$broker_env" ] || [ -L "$broker_env" ]; then
+    broker_configured=1
+    if private_regular_file "$broker_env" 'broker environment'; then
+        set -a
+        # This is the same private shell environment consumed by the service wrapper.
+        if . "$broker_env"; then
+            broker_env_ok=1
+            pass 'broker environment syntax is loadable'
+        else
+            fail "broker environment cannot be loaded: $broker_env"
+        fi
+        set +a
+    fi
+else
+    warn 'broker environment is absent; deployment is using stdio mode or is not installed'
+fi
+
+if [ "$broker_env_ok" -eq 1 ]; then
+    token=${WSL_WIN_RELAY_ATTACH_TOKEN:-}
+    case "$token" in
+        ''|*[!0-9A-Fa-f]*) fail 'broker attach token is empty or non-hexadecimal' ;;
+        *)
+            if [ $(( ${#token} % 2 )) -ne 0 ]; then
+                fail 'broker attach token has odd hexadecimal length'
+            else
+                pass 'broker attach token is non-empty hexadecimal data'
+            fi
+            ;;
+    esac
+
+    token_file=${WSL_WIN_RELAY_ATTACH_TOKEN_FILE:-}
+    if [ -n "$token_file" ]; then
+        if private_regular_file "$token_file" 'broker token file'; then
+            file_token=$(tr -d ' \t\r\n' <"$token_file")
+            normalized_file_token=$(printf '%s' "$file_token" | tr 'A-F' 'a-f')
+            normalized_env_token=$(printf '%s' "$token" | tr 'A-F' 'a-f')
+            if [ "$normalized_file_token" = "$normalized_env_token" ]; then
+                pass 'broker token file matches the private environment'
+            else
+                fail 'broker token file does not match the private environment'
+            fi
+        fi
+    else
+        warn 'broker token file is not configured; legacy environment-token fallback is active'
+    fi
+
+    broker_path=$(resolve_executable "${WSL_WIN_RELAY_BROKER_EXE:-}" || true)
+    connector_path=$(resolve_executable "${WSL_WIN_RELAY_CONNECTOR_EXE:-}" || true)
+    broker_version=
+    connector_version=
+    if [ -z "$broker_path" ]; then
+        fail "Windows broker executable is unavailable: ${WSL_WIN_RELAY_BROKER_EXE:-<unset>}"
+    else
+        broker_version=$("$broker_path" -version 2>/dev/null | tr -d '\r' | sed -n '1p')
+        case "$broker_version" in
+            'wsl-win-broker '*) pass 'Windows broker executable ran through interop' ;;
+            *) fail 'Windows broker executable did not return valid version metadata' ;;
+        esac
+    fi
+    if [ -z "$connector_path" ]; then
+        fail "Windows connector executable is unavailable: ${WSL_WIN_RELAY_CONNECTOR_EXE:-<unset>}"
+    else
+        connector_version=$("$connector_path" -version 2>/dev/null | tr -d '\r' | sed -n '1p')
+        case "$connector_version" in
+            'wsl-win-connector '*) pass 'Windows connector executable ran through interop' ;;
+            *) fail 'Windows connector executable did not return valid version metadata' ;;
+        esac
+    fi
+    if [ -n "$broker_version" ] && [ -n "$connector_version" ]; then
+        broker_build=${broker_version#wsl-win-broker }
+        connector_build=${connector_version#wsl-win-connector }
+        if [ "$broker_build" = "$connector_build" ]; then
+            pass 'Windows broker and connector build metadata match'
+        else
+            fail 'Windows broker and connector build metadata do not match'
+        fi
+    fi
+fi
+
+if [ "$check_services" -eq 1 ]; then
+    if ! command -v systemctl >/dev/null 2>&1 || ! systemctl --user show-environment >/dev/null 2>&1; then
+        warn 'systemd user manager is unavailable; service state was not checked'
+    else
+        if systemctl --user cat wsl-win-relay.service >/dev/null 2>&1; then
+            if systemctl --user is-active --quiet wsl-win-relay.service; then
+                pass 'wsl-win-relay.service is active'
+            else
+                fail 'wsl-win-relay.service is installed but inactive'
+            fi
+        else
+            warn 'wsl-win-relay.service is not installed'
+        fi
+        if [ "$broker_configured" -eq 1 ] && systemctl --user cat wsl-win-relay-broker.service >/dev/null 2>&1; then
+            if systemctl --user is-active --quiet wsl-win-relay-broker.service; then
+                pass 'wsl-win-relay-broker.service is active'
+            else
+                fail 'wsl-win-relay-broker.service is installed but inactive'
+            fi
+        elif [ "$broker_configured" -eq 1 ]; then
+            warn 'broker environment exists but wsl-win-relay-broker.service is not installed'
+        fi
+    fi
+fi
+
+if [ -n "$probe_url" ]; then
+    if ! command -v curl >/dev/null 2>&1; then
+        fail 'curl is required for the requested end-to-end proxy probe'
+    elif curl --fail --silent --show-error --max-time 15 --proxy "$socks_proxy" --output /dev/null "$probe_url"; then
+        pass "end-to-end SOCKS probe reached $probe_url"
+    else
+        fail "end-to-end SOCKS probe failed through $socks_proxy"
+    fi
+fi
+
+printf 'Summary: %d failure(s), %d warning(s)\n' "$failures" "$warnings"
+[ "$failures" -eq 0 ]
