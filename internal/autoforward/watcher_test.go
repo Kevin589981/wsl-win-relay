@@ -109,8 +109,10 @@ func TestWatcherPublishesAndRemovesStatusFile(t *testing.T) {
 	go func() { done <- w.Run(ctx) }()
 	var data []byte
 	var document struct {
-		Version  int             `json:"version"`
-		Mappings []MappingStatus `json:"mappings"`
+		Version   int             `json:"version"`
+		ProcessID int             `json:"process_id"`
+		UpdatedAt string          `json:"updated_at"`
+		Mappings  []MappingStatus `json:"mappings"`
 	}
 	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
 		data, _ = os.ReadFile(statusPath)
@@ -129,7 +131,7 @@ func TestWatcherPublishesAndRemovesStatusFile(t *testing.T) {
 		<-done
 		t.Fatal(err)
 	}
-	if document.Version != 1 || len(document.Mappings) != 1 || document.Mappings[0].WindowsAddress != "127.0.0.1:18000" || document.Mappings[0].WSLAddress != "127.0.0.1:8000" {
+	if document.Version != 1 || document.ProcessID <= 0 || document.UpdatedAt == "" || len(document.Mappings) != 1 || document.Mappings[0].WindowsAddress != "127.0.0.1:18000" || document.Mappings[0].WSLAddress != "127.0.0.1:8000" {
 		cancel()
 		<-done
 		t.Fatalf("status document: %#v", document)

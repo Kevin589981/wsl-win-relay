@@ -36,20 +36,23 @@ type MappingStatus struct {
 }
 
 type mappingStatusDocument struct {
-	Version  int             `json:"version"`
-	Mappings []MappingStatus `json:"mappings"`
+	Version   int             `json:"version"`
+	ProcessID int             `json:"process_id"`
+	UpdatedAt string          `json:"updated_at"`
+	Mappings  []MappingStatus `json:"mappings"`
 }
 
 // StatusStore merges mapping snapshots from the TCP and UDP watchers before
 // publishing one atomic status document.
 type StatusStore struct {
-	path   string
-	mu     sync.Mutex
-	owners map[string][]MappingStatus
+	path      string
+	processID int
+	mu        sync.Mutex
+	owners    map[string][]MappingStatus
 }
 
 func NewStatusStore(path string) *StatusStore {
-	return &StatusStore{path: path, owners: make(map[string][]MappingStatus)}
+	return &StatusStore{path: path, processID: os.Getpid(), owners: make(map[string][]MappingStatus)}
 }
 
 func (s *StatusStore) Publish(owner string, mappings []MappingStatus) error {
@@ -92,7 +95,7 @@ func (s *StatusStore) writeLocked() error {
 		}
 		return mappings[i].WindowsAddress < mappings[j].WindowsAddress
 	})
-	data, err := json.MarshalIndent(mappingStatusDocument{Version: 1, Mappings: mappings}, "", "  ")
+	data, err := json.MarshalIndent(mappingStatusDocument{Version: 1, ProcessID: s.processID, UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano), Mappings: mappings}, "", "  ")
 	if err != nil {
 		return err
 	}

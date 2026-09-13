@@ -446,10 +446,11 @@ fall outside `1..65535`.
 Set `-auto-forward-status` (or `auto_forward.status_file` in JSON) when an
 operator or another local tool needs to discover the actual Windows-facing
 ports. The file is updated atomically with mode `0600`, has version `1`, and
-contains the active network family plus `windows_address` and `wsl_address`
-for each mapping. It is removed when the watcher exits, so a missing file does
-not imply a stale mapping. The status file is optional and does not alter the
-relay protocol.
+contains `process_id`, an RFC3339 `updated_at`, and the active network family
+plus `windows_address` and `wsl_address` for each mapping. It is removed when
+the last watcher exits normally. A file left after a crash is advisory only;
+consumers should verify `process_id` and `updated_at` before acting on it. The
+status file is optional and does not alter the relay protocol.
 
 To run the real WSL/Windows recovery check after building both binaries, use
 `./scripts/test-auto-rebind.sh`. It requires WSL Windows interop and verifies
