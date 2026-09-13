@@ -5,8 +5,11 @@ repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 output_dir=${WSL_WIN_RELAY_OUTPUT_DIR:-$repo_dir}
 mkdir -p "$output_dir/bin" "$output_dir/lib"
 
-version=${WSL_WIN_RELAY_BUILD_VERSION:-$(git -C "$repo_dir" describe --tags --always --dirty 2>/dev/null || printf dev)}
-commit=${WSL_WIN_RELAY_BUILD_COMMIT:-$(git -C "$repo_dir" rev-parse --short=12 HEAD 2>/dev/null || printf unknown)}
+# A checkout shared through DrvFS may contain Windows CRLF files even when the
+# index stores LF. Normalize those platform-only differences without hiding
+# real content changes from the embedded dirty marker.
+version=${WSL_WIN_RELAY_BUILD_VERSION:-$(git -c core.autocrlf=true -C "$repo_dir" describe --tags --always --dirty 2>/dev/null || printf dev)}
+commit=${WSL_WIN_RELAY_BUILD_COMMIT:-$(git -c core.autocrlf=true -C "$repo_dir" rev-parse --short=12 HEAD 2>/dev/null || printf unknown)}
 if [ -n "${SOURCE_DATE_EPOCH:-}" ]; then
     built_at=$(date -u -d "@$SOURCE_DATE_EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) || {
         echo "invalid SOURCE_DATE_EPOCH: $SOURCE_DATE_EPOCH" >&2

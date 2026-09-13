@@ -307,6 +307,9 @@ all Go executables and the native strict supervisor. Run any executable with
 `-version` or `--version` before comparing logs from different installations.
 `WSL_WIN_RELAY_BUILD_VERSION`, `WSL_WIN_RELAY_BUILD_COMMIT`, and
 `SOURCE_DATE_EPOCH` provide reproducible build overrides.
+When the same checkout is used from Windows and WSL, build metadata normalizes
+Git's CRLF/LF view before deciding whether to append `-dirty`; real content
+changes still retain the marker.
 The long-running Go processes emit the same metadata once at startup, making a
 mixed proxy/broker/connector deployment visible in service logs without
 logging credentials.

@@ -18,6 +18,13 @@ commit=$(printf '%s\n' "$proxy_version" | sed -n 's/.*(commit \([^,]*\), built .
 built_at=$(printf '%s\n' "$proxy_version" | sed -n 's/.*built \([^)]*\)).*/\1/p')
 
 [ -n "$version" ] && [ -n "$commit" ] && [ -n "$built_at" ]
+if command -v git >/dev/null 2>&1 && git -C "$repo_dir" rev-parse --git-dir >/dev/null 2>&1; then
+    expected_version=$(git -c core.autocrlf=true -C "$repo_dir" describe --tags --always --dirty)
+    [ "$version" = "$expected_version" ] || {
+        echo "embedded version $version does not match normalized worktree version $expected_version" >&2
+        exit 1
+    }
+fi
 printf '%s\n' "$strict_version" | grep -F "wsl-win-relay-strict $version (commit $commit, built $built_at)" >/dev/null
 printf '%s\n' "$status_version" | grep -F "wsl-win-relay-status $version (commit $commit, built $built_at)" >/dev/null
 for executable in wsl-win-relay.exe wsl-win-broker.exe wsl-win-connector.exe; do
