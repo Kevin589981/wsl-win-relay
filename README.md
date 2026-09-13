@@ -2,12 +2,12 @@
 
 An emergency WSL-to-Windows network relay for cases where WSL networking is broken but Windows still has connectivity.
 
-The first release exposes a loopback SOCKS5 proxy inside WSL. A Windows helper process performs outbound TCP and UDP connections, and the two processes exchange multiplexed frames over stdin/stdout. The design keeps protocol, transport, relay, and user-facing adapters independent so the optional transparent adapter does not become a protocol dependency.
+The current release exposes loopback SOCKS5 and HTTP proxies inside WSL, plus optional transparent routing and inbound port mapping. Windows processes perform outbound TCP/UDP and own inbound listeners while the WSL side exchanges multiplexed frames over stdio or the persistent broker transport. Protocol, transport, relay, and user-facing adapters remain independent.
 
 ## Status
 
-The repository is under active implementation. The current TCP/UDP relay
-milestone is usable and tested:
+The repository remains under active maintenance. The current TCP/UDP relay is
+usable and tested:
 
 - Versioned, bounded multiplexed protocol with explicit stream lifecycle.
 - Stdio transport for WSL-to-Windows process interop.
@@ -37,8 +37,8 @@ Explicit reverse port forwarding and strict synchronization with dynamically lin
 
 Automatic discovery is available as an opt-in polling mode. It mirrors detected TCP listeners after they begin listening. This provides zero-configuration reachability but cannot retroactively make the application's already-successful `listen(2)` fail when Windows rejects the corresponding port; use the strict launcher when rejection propagation is required.
 
-The persistent-broker foundation is now staged in `internal/transport/attach`:
-it provides a per-instance token, generation-safe ownership, a bounded versioned
+The persistent broker uses `internal/transport/attach` for per-instance tokens,
+generation-safe ownership, a bounded versioned
 attach handshake, and deterministic registry-summary/resume-ack messages. The
 transport-independent broker core in `internal/broker` now accepts those
 sessions and tracks stable entry IDs. The Windows broker/connector that owns
@@ -47,7 +47,7 @@ installer; manually launched proxies remain stdio by default. A broken stdio
 session still ends in-flight connections while new requests and mappings
 recover normally.
 
-An opt-in broker transport is available for integration testing. Build with
+The broker transport is the recommended long-running deployment mode. Build with
 `scripts/build-wsl.sh`, start `wsl-win-broker.exe` on Windows with a private
 `WSL_WIN_RELAY_ATTACH_TOKEN` and endpoint, then set the same token and
 `WSL_WIN_RELAY_BROKER_ENDPOINT` in WSL and configure `relay_exe` as
@@ -235,7 +235,7 @@ SOCKS5 / HTTP / TUN transparent adapter
               |
        multiplexed relay
               |
-   stdio / future transports
+   stdio / brokered named pipe
               |
       Windows WinSock
 ```
@@ -516,8 +516,8 @@ fails early with a diagnostic if the relay service is not running.
 It also rejects directly executed static ELF and setuid/setgid targets before
 launch. Those targets cannot load `LD_PRELOAD`, so allowing them through would
 silently disable the Windows-before-WSL bind contract. Scripts and other
-non-ELF entrypoints remain allowed; remaining static-binary coverage is
-provided by a broader kernel-aware lifecycle adapter. An opt-in ptrace adapter is now available
+non-ELF entrypoints remain allowed; static-binary coverage is provided by the
+kernel-aware lifecycle adapter. The opt-in ptrace adapter is available
 for Linux amd64 targets, including process-style `fork()` children:
 
 ```bash
@@ -761,7 +761,10 @@ needs longer to start after a system/network recovery. This timeout only covers
 capability negotiation; connection establishment has its separate
 `relay_dial_timeout` setting.
 
-Relay-session recovery intentionally starts a fresh child and loses existing
-connections; it does not try to reuse protocol state from a broken stdio
-transport. See [ADR-0010](docs/adr/0010-relay-failure-supervision.md) for the
-failure contract and the requirements for a future in-process hot reconnect.
+Stdio relay-session recovery intentionally starts a fresh child and loses
+existing connections. Broker mode instead keeps stream and mapping ownership
+in its durable socket-owner process across connector and outer bridge
+replacement; only a socket-owner crash loses established sockets. See
+[ADR-0010](docs/adr/0010-relay-failure-supervision.md),
+[ADR-0015](docs/adr/0015-persistent-windows-ownership-and-attach.md), and
+[ADR-0016](docs/adr/0016-process-isolated-socket-owner.md).

@@ -1,7 +1,7 @@
 # ADR-0010: Supervise Relay Sessions at the Process Boundary
 
 ## Status
-Accepted
+Accepted for stdio mode; broker hot reconnect added by ADR-0015 and ADR-0016
 
 ## Context
 
@@ -64,9 +64,9 @@ closing or disrupting healthy mappings.
   while keeping recovery automatic.
 - A stable session resets the backoff so a later isolated failure recovers
   promptly.
-- True in-process hot reconnect would require a session-independent dialer,
-  replayable mapping registry, and explicit handling for in-flight requests;
-  it remains a future enhancement.
+- Broker mode supplies the session-independent dialer, replayable mapping
+  registry, and durable socket owner needed for hot reconnect. This stdio-mode
+  limitation remains when the broker is not selected.
 - A child terminated by an external signal is still considered a transient
   transport failure; only a normal non-zero exit is classified as fatal.
 

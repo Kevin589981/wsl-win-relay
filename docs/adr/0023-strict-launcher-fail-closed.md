@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded for static targets by ADR-0024 and ADR-0025; setuid/setgid rejection retained
 
 ## Context
 
@@ -20,9 +20,10 @@ target is an ELF file, it rejects targets without a `PT_INTERP` program header
 bits. Non-ELF commands and environments without `readelf` retain the existing
 launcher behavior; the interposer remains responsible for runtime checks.
 
-The preflight is diagnostic only and does not claim kernel-level coverage for
-static binaries or arbitrary process launchers. Such applications must use the
-polling adapter, a source-level wrapper, or a future kernel-aware adapter.
+The preload preflight is diagnostic only. Static binaries use the opt-in
+kernel supervisor added by ADR-0024 and extended by ADR-0025; setuid/setgid
+targets remain rejected because ptrace cannot preserve their privilege
+semantics.
 
 ## Consequences
 
@@ -30,4 +31,5 @@ polling adapter, a source-level wrapper, or a future kernel-aware adapter.
   directly-executed static/setuid target cases.
 - Scripts and interpreters remain usable because non-ELF entrypoints are not
   classified as static applications.
-- Full static-binary coverage remains an explicit future kernel-boundary task.
+- Supported static process trees use the kernel supervisor; arbitrary vfork
+  child-side work and setuid/setgid execution remain outside its contract.
