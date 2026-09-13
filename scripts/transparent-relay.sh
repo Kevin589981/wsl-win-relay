@@ -28,6 +28,7 @@ tun_address=${WWR_TUN_ADDRESS:-198.18.0.1/15}
 proxy=${WWR_TUN_PROXY:-socks5://127.0.0.1:1080}
 uplink=${WWR_UPLINK_INTERFACE:-}
 dns=${WWR_DNS:-}
+resolv_conf=${WWR_RESOLV_CONF:-/etc/resolv.conf}
 uplink_fallback=0
 route_added=0
 route6_added=0
@@ -75,12 +76,12 @@ cleanup() {
     fi
     if [ -n "$dns_backup" ]; then
         if [ "$dns_symlink" -eq 1 ]; then
-            rm -f /etc/resolv.conf
-            ln -s "$dns_link_target" /etc/resolv.conf
+            rm -f "$resolv_conf"
+            ln -s "$dns_link_target" "$resolv_conf"
         elif [ "$dns_was_present" -eq 1 ]; then
-            cat "$dns_backup" > /etc/resolv.conf
+            cat "$dns_backup" > "$resolv_conf"
         else
-            rm -f /etc/resolv.conf
+            rm -f "$resolv_conf"
         fi
         rm -f "$dns_backup"
     fi
@@ -195,16 +196,16 @@ ip link set dev "$device" up
 
 if [ -n "$dns" ]; then
     dns_backup=$(mktemp /tmp/wsl-win-relay-resolv.XXXXXX)
-    if [ -L /etc/resolv.conf ]; then
+    if [ -L "$resolv_conf" ]; then
         dns_symlink=1
-        dns_link_target=$(readlink /etc/resolv.conf)
-        if [ -e /etc/resolv.conf ]; then cat /etc/resolv.conf > "$dns_backup"; dns_was_present=1; fi
-        rm -f /etc/resolv.conf
-    elif [ -e /etc/resolv.conf ]; then
-        cat /etc/resolv.conf > "$dns_backup"
+        dns_link_target=$(readlink "$resolv_conf")
+        if [ -e "$resolv_conf" ]; then cat "$resolv_conf" > "$dns_backup"; dns_was_present=1; fi
+        rm -f "$resolv_conf"
+    elif [ -e "$resolv_conf" ]; then
+        cat "$resolv_conf" > "$dns_backup"
         dns_was_present=1
     fi
-    printf 'nameserver %s\n' "$dns" > /etc/resolv.conf
+    printf 'nameserver %s\n' "$dns" > "$resolv_conf"
 fi
 
 ip route add 0.0.0.0/1 dev "$device" metric 1

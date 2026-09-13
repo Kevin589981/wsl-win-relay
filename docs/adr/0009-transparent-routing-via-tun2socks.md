@@ -11,6 +11,11 @@ SOCKS5 and HTTP CONNECT require application proxy support. The requested end sta
 
 Integrate the released `xjasonlyu/tun2socks` v2.7.0 binary as the transparent adapter. `scripts/transparent-relay.sh` creates an isolated TUN device, routes IPv4 (and IPv6 when available) through it, preserves more-specific routes to a configured non-loopback proxy endpoint on the original uplink, starts tun2socks against the SOCKS5 endpoint, optionally replaces DNS with a chosen resolver, and restores every route/DNS/device change on exit. Shutdown traps bound adapter termination and fall back to `SIGKILL` before rollback so a stuck tun2socks process cannot block cleanup.
 
+The DNS file defaults to `/etc/resolv.conf` and can be overridden with
+`WWR_RESOLV_CONF` for containers and isolated test namespaces. When the file is
+a symlink, both its target and contents are restored after the temporary
+resolver is removed.
+
 The relay transport itself remains independent of TUN. The Windows process still performs TCP and UDP egress, including DNS resolution for SOCKS domain requests.
 
 ## Consequences

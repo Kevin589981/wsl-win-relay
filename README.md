@@ -504,6 +504,8 @@ The TUN setup and rollback path has been smoke-tested under WSL as root,
 including IPv4 split routes, optional IPv6 routes, process shutdown, and device
 cleanup. DNS restoration also preserves the original `/etc/resolv.conf` shape,
 including a dangling symlink when that is what WSL provided.
+Set `WWR_RESOLV_CONF` to override the DNS file path in a container or test
+namespace; it defaults to `/etc/resolv.conf`.
 
 A real transparent TCP/UDP smoke test has passed with the pinned `tun2socks`
 v2.7.0 binary: in a WSL instance with no `eth0` or default route, setting
