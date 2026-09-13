@@ -8,6 +8,7 @@ config_dir=${XDG_CONFIG_HOME:-"$HOME/.config"}/wsl-win-relay
 env_file=$config_dir/broker.env
 token_file=$config_dir/attach.token
 requested_upstream_proxy=${WSL_WIN_RELAY_UPSTREAM_PROXY:-}
+requested_connector_exe=${WSL_WIN_RELAY_CONNECTOR_EXE:-}
 
 quote_env_value() {
     value=$1
@@ -21,6 +22,17 @@ if [ -z "${WSL_WIN_RELAY_BROKER_EXE:-}" ]; then
 fi
 if [ ! -f "$WSL_WIN_RELAY_BROKER_EXE" ] && ! command -v "$WSL_WIN_RELAY_BROKER_EXE" >/dev/null 2>&1; then
     echo "Windows broker executable is unavailable: $WSL_WIN_RELAY_BROKER_EXE" >&2
+    exit 1
+fi
+broker_exe_path=$WSL_WIN_RELAY_BROKER_EXE
+if [ ! -f "$broker_exe_path" ]; then
+    broker_exe_path=$(command -v "$broker_exe_path")
+fi
+if [ -z "$requested_connector_exe" ]; then
+    requested_connector_exe=$(dirname "$broker_exe_path")/wsl-win-connector.exe
+fi
+if [ ! -f "$requested_connector_exe" ] && ! command -v "$requested_connector_exe" >/dev/null 2>&1; then
+    echo "Windows connector executable is unavailable: $requested_connector_exe (set WSL_WIN_RELAY_CONNECTOR_EXE)" >&2
     exit 1
 fi
 if [ -L "$env_file" ] || { [ -e "$env_file" ] && [ ! -f "$env_file" ]; }; then
@@ -79,6 +91,7 @@ if [ ! -e "$env_file" ]; then
     {
         printf '%s\n' '# Private broker settings; keep mode 0600.'
         printf 'WSL_WIN_RELAY_BROKER_EXE=%s\n' "$(quote_env_value "$WSL_WIN_RELAY_BROKER_EXE")"
+        printf 'WSL_WIN_RELAY_CONNECTOR_EXE=%s\n' "$(quote_env_value "$requested_connector_exe")"
         printf 'WSL_WIN_RELAY_BROKER_ENDPOINT=%s\n' "$(quote_env_value "$endpoint")"
         printf 'WSL_WIN_RELAY_ATTACH_TOKEN=%s\n' "$(quote_env_value "$token")"
         printf 'WSL_WIN_RELAY_ATTACH_TOKEN_FILE=%s\n' "$(quote_env_value "$token_file")"
@@ -87,6 +100,14 @@ if [ ! -e "$env_file" ]; then
             printf 'WSL_WIN_RELAY_UPSTREAM_PROXY=%s\n' "$(quote_env_value "$WSL_WIN_RELAY_UPSTREAM_PROXY")"
         fi
     } >"$env_file"
+fi
+configured_connector_exe=$(sed -n "s/^WSL_WIN_RELAY_CONNECTOR_EXE='\(.*\)'$/\1/p" "$env_file" | head -n 1)
+if [ -n "$configured_connector_exe" ] && [ "$configured_connector_exe" != "$requested_connector_exe" ]; then
+    echo "broker environment connector executable does not match the requested value" >&2
+    exit 1
+fi
+if [ -z "$configured_connector_exe" ]; then
+    printf 'WSL_WIN_RELAY_CONNECTOR_EXE=%s\n' "$(quote_env_value "$requested_connector_exe")" >>"$env_file"
 fi
 if ! grep -q '^WSL_WIN_RELAY_BROKER_MODE=' "$env_file"; then
     printf '%s\n' 'WSL_WIN_RELAY_BROKER_MODE=1' >>"$env_file"

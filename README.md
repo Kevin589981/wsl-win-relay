@@ -96,6 +96,11 @@ restart, the running proxy reconnects through the same socket owner and
 reconstructs explicit and automatic mappings when needed. The bridge and owner
 roles have separate token-bound health probes, so stale role processes are
 drained before endpoint reuse.
+The installer also records `WSL_WIN_RELAY_CONNECTOR_EXE` in `broker.env`; it
+defaults to `wsl-win-connector.exe` beside the broker executable and can be
+overridden with an absolute mounted path. The proxy service wrapper passes this
+path as `-relay-exe` in broker mode, so the JSON configuration does not need to
+be rewritten and cannot accidentally launch the stdio relay.
 
 New broker installations also create `attach.token` with mode `0600` and pass
 that path to the Windows broker (the wrapper converts a WSL path with

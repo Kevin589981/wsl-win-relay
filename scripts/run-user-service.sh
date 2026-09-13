@@ -30,6 +30,14 @@ if [ -f "$broker_env" ] && [ ! -L "$broker_env" ]; then
 fi
 
 if [ "$broker_mode" -eq 1 ]; then
-    exec "$binary" -config "$config" -broker-mode
+    if [ -z "${WSL_WIN_RELAY_CONNECTOR_EXE:-}" ]; then
+        echo "broker mode requires WSL_WIN_RELAY_CONNECTOR_EXE in $broker_env" >&2
+        exit 1
+    fi
+    if [ ! -f "$WSL_WIN_RELAY_CONNECTOR_EXE" ] && ! command -v "$WSL_WIN_RELAY_CONNECTOR_EXE" >/dev/null 2>&1; then
+        echo "broker connector executable is unavailable: $WSL_WIN_RELAY_CONNECTOR_EXE" >&2
+        exit 1
+    fi
+    exec "$binary" -config "$config" -broker-mode -relay-exe "$WSL_WIN_RELAY_CONNECTOR_EXE"
 fi
 exec "$binary" -config "$config"
