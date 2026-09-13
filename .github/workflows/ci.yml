@@ -57,6 +57,31 @@ jobs:
           cache: false
       - run: go test -race ./...
 
+  arm64-build:
+    name: Go arm64 cross-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: false
+      - name: Build Linux and Windows Go binaries for arm64
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/wsl-win-relay-arm64"
+          mkdir -p "$output"
+          while read -r goos package name; do
+            GOOS="$goos" GOARCH=arm64 go build -o "$output/$name" "$package"
+          done <<'EOF'
+          linux ./cmd/wsl-proxy wsl-proxy-linux
+          windows ./cmd/win-relay wsl-win-relay.exe
+          windows ./cmd/win-broker wsl-win-broker.exe
+          windows ./cmd/win-connector wsl-win-connector.exe
+          EOF
+
   native:
     name: Linux native interposer
     runs-on: ubuntu-latest

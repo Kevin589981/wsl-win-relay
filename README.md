@@ -153,6 +153,14 @@ address and port would test the host's address collision rather than the relay.
 Override `WWR_BROKER_INTEROP_WSL_HOST` only when the environment has separate
 loopback namespaces and the default alias is unavailable.
 
+On mirrored WSL networking, Windows and WSL can share the host's TCP port
+namespace. A WSL listener may therefore make the same Windows port unavailable
+even when no separate Windows process owns it; this is an operating-system
+bind conflict, not a relay transport failure. The strict path propagates that
+refusal to the WSL `listen()`/`bind()` call, while polling mode logs and retries
+it. Use the interop alias above for relay verification, or choose a distinct
+Windows port/address policy when the host's networking mode requires it.
+
 The Windows broker also accepts `-token-file` for host-service deployments.
 The file must be a private regular file containing the hexadecimal token; on
 Unix it must not be group/world accessible. The supervisor and its internal

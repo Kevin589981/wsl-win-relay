@@ -253,6 +253,9 @@
 - [x] The strict launcher now fails closed for directly executed static ELF
       and setuid/setgid targets instead of silently implying interposition;
       true kernel-level coverage remains a separate adapter boundary.
+- [x] CI cross-builds the Linux proxy and Windows Go binaries for arm64;
+      native arm64 ptrace/interposer runtime validation remains intentionally
+      outside the acceptance target.
 - [x] Opt-in broker-mode hot reconnect preserves existing TCP streams across
       connector/stdio replacement; a real delayed HTTP stream test covers the
       connector process boundary.
