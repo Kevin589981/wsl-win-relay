@@ -7,6 +7,7 @@ service_dir=${XDG_CONFIG_HOME:-"$HOME/.config"}/systemd/user
 config_dir=${XDG_CONFIG_HOME:-"$HOME/.config"}/wsl-win-relay
 env_file=$config_dir/broker.env
 token_file=$config_dir/attach.token
+requested_upstream_proxy=${WSL_WIN_RELAY_UPSTREAM_PROXY:-}
 
 quote_env_value() {
     value=$1
@@ -89,6 +90,16 @@ if [ ! -e "$env_file" ]; then
 fi
 if ! grep -q '^WSL_WIN_RELAY_BROKER_MODE=' "$env_file"; then
     printf '%s\n' 'WSL_WIN_RELAY_BROKER_MODE=1' >>"$env_file"
+fi
+if [ -n "$requested_upstream_proxy" ]; then
+    configured_upstream_proxy=$(sed -n "s/^WSL_WIN_RELAY_UPSTREAM_PROXY='\(.*\)'$/\1/p" "$env_file" | head -n 1)
+    if [ -n "$configured_upstream_proxy" ] && [ "$configured_upstream_proxy" != "$requested_upstream_proxy" ]; then
+        echo "broker environment upstream proxy does not match the requested value" >&2
+        exit 1
+    fi
+    if [ -z "$configured_upstream_proxy" ]; then
+        printf 'WSL_WIN_RELAY_UPSTREAM_PROXY=%s\n' "$(quote_env_value "$requested_upstream_proxy")" >>"$env_file"
+    fi
 fi
 chmod 600 "$env_file"
 if [ -f "$token_file" ]; then

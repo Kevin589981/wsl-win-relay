@@ -114,6 +114,9 @@ before launching the Windows executable, so the URL is propagated without
 placing it in the broker command line.
 For a new installation, setting the same environment variable when running
 `install-broker-user-service.sh` writes it into `broker.env` automatically.
+Re-running the installer with the same value is idempotent; a conflicting
+requested value is rejected instead of silently replacing the active broker
+configuration.
 
 If the broker must outlive the WSL VM or user service, install the optional
 Windows Task Scheduler boundary from PowerShell 7:
