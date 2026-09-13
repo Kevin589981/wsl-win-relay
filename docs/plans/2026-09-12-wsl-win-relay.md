@@ -169,7 +169,9 @@
       `close_range()` is tracked with the same lease ownership rules;
       descriptor-table unsharing remains explicitly rejected in strict mode.
 - [x] Leader-exit ownership migration excludes already-exiting thread tasks,
-      avoiding duplicate owner transfers during `PTRACE_EVENT_EXIT` ordering.
+      re-evaluates stale owners during task removal, and avoids duplicate owner
+      transfers during `PTRACE_EVENT_EXIT` ordering; the static smoke also
+      covers synchronized multi-thread `SYS_exit` teardown.
 - [x] Early ptrace stops for very short libc `vfork()` children are recovered
       when procfs confirms a tracked parent still has an unfinished create
       syscall and the stop is an unclassified initial `SIGSTOP`; unmatched or
