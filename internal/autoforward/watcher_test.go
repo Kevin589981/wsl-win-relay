@@ -176,6 +176,16 @@ func TestWatcherLogsRejectionOnceAndRestoration(t *testing.T) {
 	}
 }
 
+func TestFormatMappingRejectionExplainsSharedPortConflicts(t *testing.T) {
+	got := formatMappingRejection(errors.New("listen tcp 127.0.0.1:8000: Only one usage of each socket address is normally permitted"))
+	if !strings.Contains(got, "mirrored WSL networking") {
+		t.Fatalf("diagnostic %q does not explain mirrored port conflicts", got)
+	}
+	if plain := formatMappingRejection(errors.New("connection reset")); plain != "connection reset" {
+		t.Fatalf("non-bind error was rewritten: %q", plain)
+	}
+}
+
 func TestWatcherBacksOffRejectedMapping(t *testing.T) {
 	scanner := &sequenceScanner{values: [][]Listener{{{Network: "tcp4", Port: 8000}}, {{Network: "tcp4", Port: 8000}}, {{Network: "tcp4", Port: 8000}}}}
 	opener := &recordingOpener{failures: 1, err: errors.New("address in use"), closed: make(chan string, 1)}

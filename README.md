@@ -408,6 +408,10 @@ the WSL listener clears that backoff. The retry bounds are configurable with
 the two flags above or the `auto_forward.retry_min` and
 `auto_forward.retry_max` JSON fields; the maximum must be greater than or equal
 to the minimum.
+Bind-conflict diagnostics include a mirrored-networking hint when Windows
+reports `EADDRINUSE` or its localized equivalent, because WSL and Windows can
+share one port namespace even when no separate Windows process appears to own
+the port.
 
 To run the real WSL/Windows recovery check after building both binaries, use
 `./scripts/test-auto-rebind.sh`. It requires WSL Windows interop and verifies

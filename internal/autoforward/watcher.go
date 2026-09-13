@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -337,7 +338,7 @@ func (w *Watcher) openOne(ctx context.Context, key listenerKey, listener Listene
 		w.retryAfter[key] = time.Now().Add(w.retryDelay(failureCount))
 		w.mu.Unlock()
 		if firstRejection {
-			w.Logger.Printf("%s rejected %s -> %s: %v", w.Label, windowsAddr, wslTarget, openErr)
+			w.Logger.Printf("%s rejected %s -> %s: %s", w.Label, windowsAddr, wslTarget, formatMappingRejection(openErr))
 		}
 		return
 	}
@@ -351,7 +352,7 @@ func (w *Watcher) openOne(ctx context.Context, key listenerKey, listener Listene
 		w.retryAfter[key] = time.Now().Add(w.retryDelay(failureCount))
 		w.mu.Unlock()
 		if firstRejection {
-			w.Logger.Printf("%s rejected %s -> %s: %v", w.Label, windowsAddr, wslTarget, openErr)
+			w.Logger.Printf("%s rejected %s -> %s: %s", w.Label, windowsAddr, wslTarget, formatMappingRejection(openErr))
 		}
 		return
 	}
@@ -378,6 +379,18 @@ func (w *Watcher) openOne(ctx context.Context, key listenerKey, listener Listene
 		return
 	}
 	w.Logger.Printf("%s added %s -> %s", w.Label, windowsAddr, wslTarget)
+}
+
+func formatMappingRejection(err error) string {
+	if err == nil {
+		return "unknown Windows mapping error"
+	}
+	message := err.Error()
+	lower := strings.ToLower(message)
+	if strings.Contains(lower, "eaddrinuse") || strings.Contains(lower, "address already in use") || strings.Contains(lower, "only one usage") {
+		return message + " (Windows refused the port; mirrored WSL networking may share the port namespace)"
+	}
+	return message
 }
 
 func (w *Watcher) retryDelay(failures int) time.Duration {
