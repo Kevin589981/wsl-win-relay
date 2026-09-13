@@ -131,8 +131,11 @@ interop and working Windows egress, run:
 ```
 
 The smoke builds the Linux proxy and Windows broker/connector, starts the
-broker on a per-user named pipe, and performs a SOCKS5 request to
-`https://example.com`. WSL does not automatically export arbitrary environment
+broker on a per-user named pipe, performs a SOCKS5 request to
+`https://example.com`, and has a Windows PowerShell process reach a temporary
+WSL HTTP service through an explicit reverse mapping. Set `WWR_WINDOWS_SHELL`
+to an absolute mounted path when `powershell.exe`/`pwsh.exe` is not in the WSL
+`PATH`. WSL does not automatically export arbitrary environment
 variables to Windows processes, so broker mode adds
 `WSL_WIN_RELAY_BROKER_ENDPOINT` and `WSL_WIN_RELAY_ATTACH_TOKEN` to `WSLENV`
 for connector children. The token remains out of command-line arguments. See

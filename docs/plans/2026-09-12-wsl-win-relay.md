@@ -70,7 +70,8 @@
       is covered by `scripts/test-broker-connector.sh`.
 - [x] Real WSL-to-Windows broker interop smoke builds the Windows binaries,
       exports broker credentials through `WSLENV`, attaches over named pipes,
-      and reaches an external HTTPS endpoint.
+      reaches an external HTTPS endpoint, and verifies a Windows PowerShell
+      request through a reverse mapping into a temporary WSL HTTP service.
 - [x] Frame-aware replaceable Link and `relay.Server.ServeAttached` keep the
       broker server lifecycle alive across connector transport replacement.
 - [x] Relay client `RunAttached`/`Rehandshake` reuse the same stream registry,

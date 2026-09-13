@@ -6,18 +6,22 @@ proxy_bin=${WWR_PROXY_BIN:-"$repo_dir/bin/wsl-proxy-linux"}
 broker_exe=${WWR_BROKER_EXE:-"$repo_dir/bin/wsl-win-broker.exe"}
 connector_exe=${WWR_CONNECTOR_EXE:-"$repo_dir/bin/wsl-win-connector.exe"}
 socks_listen=${WWR_BROKER_INTEROP_LISTEN:-127.0.0.1:11087}
+reverse_port=${WWR_BROKER_INTEROP_REVERSE_PORT:-$((18080 + ($$ % 1000)))}
 endpoint=${WWR_BROKER_INTEROP_ENDPOINT:-"wsl-win-relay-interop-$$"}
 upstream_proxy=${WWR_WINDOWS_UPSTREAM_PROXY:-}
 windows_shell=${WWR_WINDOWS_SHELL:-powershell.exe}
 work=$(mktemp -d "${TMPDIR:-/tmp}/wsl-win-relay-broker-interop.XXXXXX")
 broker_pid=
 proxy_pid=
+http_pid=
 
 cleanup() {
 	stop_windows_roles || true
 	[ -z "${proxy_pid:-}" ] || kill "$proxy_pid" 2>/dev/null || true
+	[ -z "${http_pid:-}" ] || kill "$http_pid" 2>/dev/null || true
 	[ -z "${broker_pid:-}" ] || kill "$broker_pid" 2>/dev/null || true
 	[ -z "${proxy_pid:-}" ] || wait "$proxy_pid" 2>/dev/null || true
+	[ -z "${http_pid:-}" ] || wait "$http_pid" 2>/dev/null || true
 	[ -z "${broker_pid:-}" ] || wait "$broker_pid" 2>/dev/null || true
 	rm -rf "$work"
 }
@@ -46,6 +50,10 @@ if ! command -v curl >/dev/null 2>&1; then
 	echo "curl is required for the Windows broker interop smoke" >&2
 	exit 1
 fi
+if ! command -v python3 >/dev/null 2>&1; then
+	echo "python3 is required for the reverse forwarding interop smoke" >&2
+	exit 1
+fi
 if [ ! -x "$windows_shell" ] && ! command -v "$windows_shell" >/dev/null 2>&1; then
 	echo "Windows PowerShell is required for broker cleanup: $windows_shell (set WWR_WINDOWS_SHELL)" >&2
 	exit 1
@@ -63,6 +71,11 @@ start_broker >"$work/broker.log" 2>&1 &
 broker_pid=$!
 sleep 1
 
+printf '%s\n' "wsl-win-relay reverse interop $endpoint" >"$work/index.html"
+python3 -m http.server "$reverse_port" --bind 127.0.0.1 --directory "$work" >"$work/http.log" 2>&1 &
+http_pid=$!
+sleep 0.5
+
 wslenv=${WSLENV:-}
 for required in WSL_WIN_RELAY_BROKER_ENDPOINT WSL_WIN_RELAY_ATTACH_TOKEN; do
 	case ":$wslenv:" in
@@ -73,7 +86,8 @@ done
 WSLENV="$wslenv" \
 WSL_WIN_RELAY_BROKER_ENDPOINT="$endpoint" \
 WSL_WIN_RELAY_ATTACH_TOKEN="$token" \
-	"$proxy_bin" -broker-mode -relay-exe "$connector_exe" -listen "$socks_listen" >"$work/proxy.log" 2>&1 &
+	"$proxy_bin" -broker-mode -relay-exe "$connector_exe" -listen "$socks_listen" \
+		-reverse "127.0.0.1:$reverse_port=127.0.0.1:$reverse_port" >"$work/proxy.log" 2>&1 &
 proxy_pid=$!
 
 for _ in $(seq 1 60); do
@@ -94,8 +108,16 @@ if ! curl --noproxy "" --proxy "socks5h://$socks_listen" --connect-timeout 5 --m
 	exit 1
 fi
 grep -qi "Example Domain" "$work/response.html"
+if ! "$windows_shell" -NoProfile -NonInteractive -Command \
+	"\$response = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:$reverse_port' -TimeoutSec 10; if (\$response.StatusCode -ne 200) { exit 1 }; [Console]::Out.Write(\$response.Content)" \
+	>"$work/reverse-response.html" 2>"$work/reverse.err"; then
+	echo "Windows reverse mapping request failed" >&2
+	cat "$work/broker.log" "$work/proxy.log" "$work/http.log" "$work/reverse.err" >&2 || true
+	exit 1
+fi
+grep -q "wsl-win-relay reverse interop $endpoint" "$work/reverse-response.html"
 if [ -n "$upstream_proxy" ]; then
-	echo "WSL proxy reached example.com through Windows broker and upstream $upstream_proxy"
+	echo "WSL proxy reached example.com through Windows broker and upstream $upstream_proxy; Windows reverse mapping reached WSL HTTP service"
 else
-	echo "WSL proxy attached to Windows broker over named pipe and reached example.com"
+	echo "WSL proxy attached to Windows broker over named pipe, reached example.com, and Windows reverse mapping reached WSL HTTP service"
 fi
