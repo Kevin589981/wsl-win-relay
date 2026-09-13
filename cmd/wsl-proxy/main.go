@@ -382,16 +382,18 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 		}
 		for _, mapping := range opts.reverse {
 			addAddressPort(excluded, mapping.Windows)
+			addAutomaticMappedPort(excluded, mapping.Windows, opts.autoForwardPortOffset)
 			addAddressPort(excluded, mapping.WSL)
 		}
 		for _, mapping := range opts.reverseUDP {
 			addAddressPort(excluded, mapping.Windows)
+			addAutomaticMappedPort(excluded, mapping.Windows, opts.autoForwardPortOffset)
 			addAddressPort(excluded, mapping.WSL)
 		}
 		watcher := &autoforward.Watcher{Scanner: autoforward.DefaultProcScanner(), Opener: dialer, WindowsHost: opts.autoForwardHost, WindowsHost6: opts.autoForwardHost6, WindowsPortOffset: opts.autoForwardPortOffset, Interval: opts.autoForwardInterval, OpenTimeout: opts.relayDialTimeout, RetryMin: opts.autoRetryMin, RetryMax: opts.autoRetryMax, Included: opts.autoInclude, Excluded: excluded, Logger: logger}
 		autoDone = make(chan error, 1)
 		go func() { autoDone <- watcher.Run(ctx) }()
-		logger.Printf("automatic forwarding enabled on Windows hosts %s (IPv4), %s (IPv6)", opts.autoForwardHost, opts.autoForwardHost6)
+		logger.Printf("automatic forwarding enabled on Windows hosts %s (IPv4), %s (IPv6), port offset %d", opts.autoForwardHost, opts.autoForwardHost6, opts.autoForwardPortOffset)
 		var udpWatcher *autoforward.DatagramWatcher
 		if opts.autoForwardUDP {
 			udpWatcher = &autoforward.DatagramWatcher{Scanner: autoforward.DefaultProcScanner(), Opener: dialer, WindowsHost: opts.autoForwardHost, WindowsHost6: opts.autoForwardHost6, WindowsPortOffset: opts.autoForwardPortOffset, Interval: opts.autoForwardInterval, OpenTimeout: opts.relayDialTimeout, RetryMin: opts.autoRetryMin, RetryMax: opts.autoRetryMax, Included: opts.autoUDPInclude, Excluded: excluded, Logger: logger}
@@ -732,5 +734,23 @@ func addAddressPort(set map[uint16]bool, address string) {
 	port, err := strconv.ParseUint(rawPort, 10, 16)
 	if err == nil && port != 0 {
 		set[uint16(port)] = true
+	}
+}
+
+func addAutomaticMappedPort(set map[uint16]bool, windowsAddress string, offset int) {
+	if offset == 0 {
+		return
+	}
+	_, rawPort, err := net.SplitHostPort(windowsAddress)
+	if err != nil {
+		return
+	}
+	port, err := strconv.Atoi(rawPort)
+	if err != nil {
+		return
+	}
+	sourcePort := port - offset
+	if sourcePort >= 1 && sourcePort <= 65535 {
+		set[uint16(sourcePort)] = true
 	}
 }

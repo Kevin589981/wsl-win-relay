@@ -329,3 +329,15 @@ func TestAddAddressPortTracksExplicitMappingPorts(t *testing.T) {
 		t.Fatalf("ports=%v", ports)
 	}
 }
+
+func TestAddAutomaticMappedPortTracksOffsetTargetConflicts(t *testing.T) {
+	ports := make(map[uint16]bool)
+	addAutomaticMappedPort(ports, "127.0.0.1:18000", 10000)
+	addAutomaticMappedPort(ports, "127.0.0.1:8000", 10000)
+	if !ports[8000] {
+		t.Fatalf("offset target source was not excluded: %v", ports)
+	}
+	if len(ports) != 1 {
+		t.Fatalf("invalid source port was added: %v", ports)
+	}
+}
