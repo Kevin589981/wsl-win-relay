@@ -41,6 +41,9 @@
       after parser read-ahead.
 - [x] Windows-side HTTP CONNECT and SOCKS5/SOCKS5H upstream support.
 - [x] Explicit TCP and UDP reverse forwarding with bind-error propagation.
+- [x] Reverse-listener readiness is single-shot, unknown inbound streams are
+      reset, and reverse UDP endpoint work uses a bounded loss-oriented queue,
+      preventing duplicate/malformed peer traffic from blocking frame dispatch.
 - [x] Reverse UDP source flows use connected WSL sockets, preventing an
       unrelated local UDP sender from entering a Windows client's response
       path.

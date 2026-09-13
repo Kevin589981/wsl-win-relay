@@ -3,6 +3,7 @@ package relay
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -911,6 +912,7 @@ func TestReverseUDPForwardReportsWindowsAllocatedAddress(t *testing.T) {
 
 func TestReverseUDPForwardBoundsSourceFlows(t *testing.T) {
 	listener := newClientReverseDatagram(NewClient(&discardReadWriter{}), 1, "127.0.0.1:5353", mustUDPAddr(t, "127.0.0.1:9"), context.Background())
+	defer close(listener.done)
 	for index := 0; index < MaxReverseDatagramFlows; index++ {
 		listener.flows[fmt.Sprintf("source-%d", index)] = nil
 	}
@@ -931,9 +933,16 @@ func TestReverseUDPFlowRejectsPacketsFromUnexpectedLocalSource(t *testing.T) {
 	defer listener.Close()
 	remote := "127.0.0.1:49001"
 	listener.handle(protocol.Frame{Type: protocol.TypeListenDatagramData, StreamID: 1, Payload: mustDatagramPayload(t, remote, []byte("request"))})
-	listener.mu.Lock()
-	flow := listener.flows[remote]
-	listener.mu.Unlock()
+	var flow *reverseDatagramFlow
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
+		listener.mu.Lock()
+		flow = listener.flows[remote]
+		listener.mu.Unlock()
+		if flow != nil {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
 	if flow == nil {
 		t.Fatal("reverse UDP flow was not created")
 	}
@@ -1064,6 +1073,77 @@ func TestReverseDatagramCloseCancelsEndpointResolution(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("datagram handler did not return")
+	}
+}
+
+func TestReverseDatagramQueueDoesNotBlockFrameDispatch(t *testing.T) {
+	client := NewClient(&discardReadWriter{})
+	started := make(chan struct{})
+	client.resolveUDP = func(ctx context.Context, _, _ string) (*net.UDPAddr, error) {
+		close(started)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	listener := newClientReverseDatagram(client, 1, "127.0.0.1:5353", mustUDPAddr(t, "127.0.0.1:9"), ctx)
+	listener.cancel = cancel
+	defer listener.Close()
+	payload := mustDatagramPayload(t, "blocked.invalid:49001", []byte("request"))
+	listener.handle(protocol.Frame{Type: protocol.TypeListenDatagramData, StreamID: 1, Payload: payload})
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("endpoint resolution did not start")
+	}
+	done := make(chan struct{})
+	go func() {
+		for index := 0; index < datagramQueueDepth*2; index++ {
+			listener.handle(protocol.Frame{Type: protocol.TypeListenDatagramData, StreamID: 1, Payload: payload})
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("full reverse datagram queue blocked dispatch")
+	}
+}
+
+func TestDuplicateListenerReadinessDoesNotBlockDispatch(t *testing.T) {
+	client := NewClient(&discardReadWriter{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	listener := &clientListener{id: 1, client: client, requestedAddress: "127.0.0.1:8000", ctx: ctx, cancel: cancel, ready: make(chan listenerReady, 1)}
+	client.listeners[1] = listener
+	done := make(chan struct{})
+	go func() {
+		for index := 0; index < 3; index++ {
+			client.dispatch(protocol.Frame{Type: protocol.TypeListenOK, StreamID: 1})
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("duplicate listener readiness blocked dispatch")
+	}
+	if len(listener.ready) != 1 {
+		t.Fatalf("readiness notifications=%d", len(listener.ready))
+	}
+}
+
+func TestUnknownInboundListenerIsReset(t *testing.T) {
+	capture := &lockedBuffer{}
+	client := NewClient(capture)
+	payload := make([]byte, 4)
+	binary.BigEndian.PutUint32(payload, 999)
+	client.dispatch(protocol.Frame{Type: protocol.TypeInboundOpen, StreamID: 2, Payload: payload})
+	frame, err := protocol.Read(bytes.NewReader(capture.Snapshot()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if frame.Type != protocol.TypeReset || !strings.Contains(string(frame.Payload), "unknown reverse listener") {
+		t.Fatalf("frame=%#v", frame)
 	}
 }
 

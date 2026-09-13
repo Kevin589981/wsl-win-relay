@@ -27,6 +27,8 @@ usable and tested:
 - Per-stream 256 KiB credit windows that isolate slow TCP consumers.
 - Global relay registry, UDP queue/source-flow, and concurrent-open caps that
   reject excess work without disturbing established streams or mappings.
+- Non-blocking reverse-UDP frame dispatch and single-shot listener readiness,
+  preventing slow DNS or duplicate peer responses from stalling other flows.
 - Startup capability negotiation before any proxy or mapped port is advertised.
 - Idempotent systemd user-service installation with private configuration permissions and restart-on-relay-failure.
 - Broker installation validates the protected token file and rejects missing,

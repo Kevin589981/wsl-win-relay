@@ -538,9 +538,9 @@ func (c *Client) dispatch(frame protocol.Frame) {
 				if address == "" {
 					address = l.requestedAddress
 				}
-				l.ready <- listenerReady{address: address}
+				l.readyOnce.Do(func() { l.ready <- listenerReady{address: address} })
 			} else {
-				l.ready <- listenerReady{err: errors.New(string(frame.Payload))}
+				l.readyOnce.Do(func() { l.ready <- listenerReady{err: errors.New(string(frame.Payload))} })
 			}
 		}
 		return
@@ -553,24 +553,26 @@ func (c *Client) dispatch(frame protocol.Frame) {
 		c.mu.Lock()
 		l := c.listeners[listenerID]
 		c.mu.Unlock()
-		if l != nil {
-			s := newClientStream(c, frame.StreamID, l.target)
-			s.openOnce.Do(func() { s.openDone <- nil })
-			c.mu.Lock()
-			if _, exists := c.streams[frame.StreamID]; exists {
-				c.mu.Unlock()
-				_ = c.write(protocol.Frame{Type: protocol.TypeReset, StreamID: frame.StreamID, Payload: []byte("duplicate inbound stream id")})
-				return
-			}
-			if len(c.streams) >= MaxConcurrentStreams {
-				c.mu.Unlock()
-				_ = c.write(protocol.Frame{Type: protocol.TypeReset, StreamID: frame.StreamID, Payload: protocol.ErrorPayload(resourceLimitError("TCP streams", MaxConcurrentStreams))})
-				return
-			}
-			c.streams[frame.StreamID] = s
-			c.mu.Unlock()
-			go c.acceptInbound(l, s)
+		if l == nil {
+			_ = c.write(protocol.Frame{Type: protocol.TypeReset, StreamID: frame.StreamID, Payload: []byte("unknown reverse listener")})
+			return
 		}
+		s := newClientStream(c, frame.StreamID, l.target)
+		s.openOnce.Do(func() { s.openDone <- nil })
+		c.mu.Lock()
+		if _, exists := c.streams[frame.StreamID]; exists {
+			c.mu.Unlock()
+			_ = c.write(protocol.Frame{Type: protocol.TypeReset, StreamID: frame.StreamID, Payload: []byte("duplicate inbound stream id")})
+			return
+		}
+		if len(c.streams) >= MaxConcurrentStreams {
+			c.mu.Unlock()
+			_ = c.write(protocol.Frame{Type: protocol.TypeReset, StreamID: frame.StreamID, Payload: protocol.ErrorPayload(resourceLimitError("TCP streams", MaxConcurrentStreams))})
+			return
+		}
+		c.streams[frame.StreamID] = s
+		c.mu.Unlock()
+		go c.acceptInbound(l, s)
 		return
 	}
 	c.mu.Lock()
@@ -847,11 +849,8 @@ func (c *Client) acceptInbound(l *clientListener, s *clientStream) {
 	c.removeStream(s.id)
 }
 
-const (
-	reverseDatagramIdleTimeout = 5 * time.Minute
-	// Bound per-mapping local sockets when a Windows listener is exposed to
-	// untrusted sources. Expired flows are reclaimed by the idle deadline.
-)
+// Expired per-source sockets are reclaimed by the idle deadline.
+const reverseDatagramIdleTimeout = 5 * time.Minute
 
 type clientReverseDatagram struct {
 	client           *Client
@@ -863,6 +862,7 @@ type clientReverseDatagram struct {
 	cancel           context.CancelFunc
 	ready            chan listenerReady
 	readyOnce        sync.Once
+	incoming         chan []byte
 	done             chan struct{}
 	closeOnce        sync.Once
 	mu               sync.Mutex
@@ -878,7 +878,9 @@ type reverseDatagramFlow struct {
 }
 
 func newClientReverseDatagram(client *Client, id uint32, requestedAddress string, target *net.UDPAddr, ctx context.Context) *clientReverseDatagram {
-	return &clientReverseDatagram{client: client, id: id, requestedAddress: requestedAddress, target: target, ctx: ctx, ready: make(chan listenerReady, 1), done: make(chan struct{}), flows: make(map[string]*reverseDatagramFlow)}
+	listener := &clientReverseDatagram{client: client, id: id, requestedAddress: requestedAddress, target: target, ctx: ctx, ready: make(chan listenerReady, 1), incoming: make(chan []byte, datagramQueueDepth), done: make(chan struct{}), flows: make(map[string]*reverseDatagramFlow)}
+	go listener.writeDatagrams()
+	return listener
 }
 
 func (l *clientReverseDatagram) handle(frame protocol.Frame) {
@@ -896,45 +898,74 @@ func (l *clientReverseDatagram) handle(frame protocol.Frame) {
 	case protocol.TypeListenDatagramClose:
 		l.fail(io.EOF)
 	case protocol.TypeListenDatagramData:
-		endpoint, data, err := protocol.DecodeDatagram(frame.Payload)
-		if err != nil {
-			l.fail(err)
-			return
-		}
-		remote, err := l.client.resolveUDP(l.ctx, "udp", endpoint)
-		if err != nil {
-			l.fail(err)
-			return
-		}
-		key := remote.String()
-		l.mu.Lock()
 		select {
+		case l.incoming <- append([]byte(nil), frame.Payload...):
 		case <-l.done:
-			l.mu.Unlock()
-			return
+		case <-l.ctx.Done():
 		default:
 		}
-		flow := l.flows[key]
-		if flow == nil {
-			if len(l.flows) >= MaxReverseDatagramFlows {
-				l.mu.Unlock()
+	}
+}
+
+func (l *clientReverseDatagram) writeDatagrams() {
+	for {
+		select {
+		case payload := <-l.incoming:
+			select {
+			case <-l.done:
 				return
-			}
-			conn, dialErr := net.DialUDP("udp", nil, l.target)
-			if dialErr != nil {
-				l.mu.Unlock()
-				l.fail(dialErr)
+			case <-l.ctx.Done():
 				return
+			default:
 			}
-			flow = &reverseDatagramFlow{listener: l, key: key, remote: endpoint, conn: conn}
-			l.flows[key] = flow
-			go flow.readLoop()
+			l.writeDatagram(payload)
+		case <-l.done:
+			return
+		case <-l.ctx.Done():
+			return
 		}
+	}
+}
+
+func (l *clientReverseDatagram) writeDatagram(payload []byte) {
+	endpoint, data, err := protocol.DecodeDatagram(payload)
+	if err != nil {
+		l.fail(err)
+		return
+	}
+	remote, err := l.client.resolveUDP(l.ctx, "udp", endpoint)
+	if err != nil {
+		l.fail(err)
+		return
+	}
+	key := remote.String()
+	l.mu.Lock()
+	select {
+	case <-l.done:
 		l.mu.Unlock()
-		_ = flow.conn.SetReadDeadline(time.Now().Add(reverseDatagramIdleTimeout))
-		if _, err := flow.conn.Write(data); err != nil {
-			l.removeFlow(flow)
+		return
+	default:
+	}
+	flow := l.flows[key]
+	if flow == nil {
+		if len(l.flows) >= MaxReverseDatagramFlows {
+			l.mu.Unlock()
+			return
 		}
+		conn, dialErr := net.DialUDP("udp", nil, l.target)
+		if dialErr != nil {
+			l.mu.Unlock()
+			l.fail(dialErr)
+			return
+		}
+		flow = &reverseDatagramFlow{listener: l, key: key, remote: endpoint, conn: conn}
+		l.flows[key] = flow
+		go flow.readLoop()
+	}
+	l.mu.Unlock()
+	_ = flow.conn.SetReadDeadline(time.Now().Add(reverseDatagramIdleTimeout))
+	if _, err := flow.conn.Write(data); err != nil {
+		l.removeFlow(flow)
 	}
 }
 
@@ -1025,6 +1056,7 @@ type clientListener struct {
 	ctx              context.Context
 	cancel           context.CancelFunc
 	ready            chan listenerReady
+	readyOnce        sync.Once
 	once             sync.Once
 }
 
