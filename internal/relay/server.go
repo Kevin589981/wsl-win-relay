@@ -32,6 +32,7 @@ type Server struct {
 	datagrams        map[uint32]*serverDatagram
 	reverseDatagrams map[uint32]*serverReverseDatagram
 	nextStream       atomic.Uint32
+	peerCapabilities atomic.Uint64
 	peerInstanceID   atomic.Uint64
 	ctx              context.Context
 	cancel           context.CancelFunc
@@ -182,6 +183,7 @@ func (s *Server) ServeAttached(ctx context.Context) error {
 func (s *Server) handle(frame protocol.Frame) {
 	switch frame.Type {
 	case protocol.TypeHello:
+		s.peerCapabilities.Store(protocol.DecodeCapabilities(frame.Payload))
 		_ = s.send(protocol.Frame{Type: protocol.TypeHelloOK, Payload: protocol.EncodeHelloOK(protocol.AllCapabilities, s.peerInstanceID.Load())})
 	case protocol.TypeOpen:
 		go s.open(frame.StreamID, string(frame.Payload))
@@ -380,7 +382,7 @@ func (s *Server) openReverseDatagram(id uint32, addr string) {
 	datagram := &serverReverseDatagram{conn: conn, incoming: make(chan []byte, 64), done: make(chan struct{})}
 	s.reverseDatagrams[id] = datagram
 	s.mu.Unlock()
-	if err := s.send(protocol.Frame{Type: protocol.TypeListenDatagramOK, StreamID: id}); err != nil {
+	if err := s.send(protocol.Frame{Type: protocol.TypeListenDatagramOK, StreamID: id, Payload: s.boundAddressPayload(conn.LocalAddr())}); err != nil {
 		s.removeReverseDatagram(id)
 		return
 	}
@@ -497,7 +499,7 @@ func (s *Server) openListener(id uint32, addr string) {
 	}
 	listener.listener = ln
 	s.mu.Unlock()
-	if err := s.send(protocol.Frame{Type: protocol.TypeListenOK, StreamID: id}); err != nil {
+	if err := s.send(protocol.Frame{Type: protocol.TypeListenOK, StreamID: id, Payload: s.boundAddressPayload(ln.Addr())}); err != nil {
 		s.removeListener(id)
 		return
 	}
@@ -531,6 +533,13 @@ func (s *Server) openListener(id uint32, addr string) {
 		}
 		go s.copyToClient(streamID, conn)
 	}
+}
+
+func (s *Server) boundAddressPayload(address net.Addr) []byte {
+	if address == nil || s.peerCapabilities.Load()&protocol.CapabilityListenBoundAddress == 0 {
+		return nil
+	}
+	return []byte(address.String())
 }
 
 func (s *Server) commitListener(id uint32) {

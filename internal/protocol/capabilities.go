@@ -12,9 +12,11 @@ const (
 	CapabilityReserveCommit
 	CapabilityUDP
 	CapabilityFlowControl
+	CapabilityListenBoundAddress
 )
 
-const AllCapabilities = CapabilityTCP | CapabilityReverse | CapabilityReverseUDP | CapabilityReserveCommit | CapabilityUDP | CapabilityFlowControl
+const CoreCapabilities = CapabilityTCP | CapabilityReverse | CapabilityReverseUDP | CapabilityReserveCommit | CapabilityUDP | CapabilityFlowControl
+const AllCapabilities = CoreCapabilities | CapabilityListenBoundAddress
 
 func EncodeCapabilities(capabilities uint64) []byte {
 	payload := make([]byte, 8)

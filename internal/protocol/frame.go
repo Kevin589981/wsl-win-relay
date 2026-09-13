@@ -68,8 +68,11 @@ func (f Frame) Validate() error {
 	if len(f.Payload) > MaxPayloadSize {
 		return fmt.Errorf("payload exceeds %d bytes", MaxPayloadSize)
 	}
-	if (f.Type == TypeOpenOK || f.Type == TypeHalfClose || f.Type == TypeClose || f.Type == TypeListenOK || f.Type == TypeListenClose || f.Type == TypeListenCommit || f.Type == TypeDatagramOpen || f.Type == TypeDatagramOK || f.Type == TypeDatagramClose || f.Type == TypeListenDatagramOK || f.Type == TypeListenDatagramClose) && len(f.Payload) != 0 {
+	if (f.Type == TypeOpenOK || f.Type == TypeHalfClose || f.Type == TypeClose || f.Type == TypeListenClose || f.Type == TypeListenCommit || f.Type == TypeDatagramOpen || f.Type == TypeDatagramOK || f.Type == TypeDatagramClose || f.Type == TypeListenDatagramClose) && len(f.Payload) != 0 {
 		return fmt.Errorf("frame type %d must have an empty payload", f.Type)
+	}
+	if (f.Type == TypeListenOK || f.Type == TypeListenDatagramOK) && len(f.Payload) > MaxTargetSize {
+		return fmt.Errorf("bound listen address exceeds %d bytes", MaxTargetSize)
 	}
 	if f.Type == TypeOpen && (len(f.Payload) == 0 || len(f.Payload) > MaxTargetSize) {
 		return fmt.Errorf("open target must be between 1 and %d bytes", MaxTargetSize)

@@ -515,7 +515,7 @@ func runSession(parent context.Context, opts options, logger *log.Logger, dialer
 	relayDone := make(chan error, 1)
 	go func() { relayDone <- client.Run(ctx) }()
 	handshakeCtx, handshakeCancel := context.WithTimeout(ctx, opts.relayHandshakeTimeout)
-	capabilities, err := client.Handshake(handshakeCtx, protocol.AllCapabilities)
+	capabilities, err := client.Handshake(handshakeCtx, requiredRelayCapabilities(opts))
 	handshakeCancel()
 	if err != nil {
 		if waitProcess(100 * time.Millisecond) {
@@ -564,6 +564,11 @@ func runSession(parent context.Context, opts options, logger *log.Logger, dialer
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func requiredRelayCapabilities(opts options) uint64 {
+	capabilities := protocol.CoreCapabilities
+	return capabilities
 }
 
 func rebindControl(ctx context.Context, timeout time.Duration, logger *log.Logger, client *relay.Client, control *listencontrol.Server) {

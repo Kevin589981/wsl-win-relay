@@ -35,6 +35,23 @@ func TestReverseDatagramFrameRoundTrip(t *testing.T) {
 	}
 }
 
+func TestListenOKCarriesOptionalBoundAddress(t *testing.T) {
+	for _, kind := range []Type{TypeListenOK, TypeListenDatagramOK} {
+		frame := Frame{Type: kind, StreamID: 7, Payload: []byte("127.0.0.1:49152")}
+		var buffer bytes.Buffer
+		if err := Write(&buffer, frame); err != nil {
+			t.Fatal(err)
+		}
+		decoded, err := Read(&buffer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(decoded.Payload, frame.Payload) {
+			t.Fatalf("type %d payload=%q", kind, decoded.Payload)
+		}
+	}
+}
+
 func TestHelloOKCarriesOptionalInstanceID(t *testing.T) {
 	legacy := EncodeHelloOK(AllCapabilities, 0)
 	capabilities, instanceID, err := DecodeHelloOK(legacy)
@@ -77,6 +94,7 @@ func TestValidateRejectsInvalidFrames(t *testing.T) {
 		{Type: TypeHalfClose, StreamID: 1, Payload: []byte("x")},
 		{Type: TypeListenDatagramOpen, StreamID: 1},
 		{Type: TypeListenDatagramData, StreamID: 1, Payload: []byte{0, 0}},
+		{Type: TypeListenOK, StreamID: 1, Payload: make([]byte, MaxTargetSize+1)},
 	}
 	for _, tc := range cases {
 		if err := tc.Validate(); err == nil {

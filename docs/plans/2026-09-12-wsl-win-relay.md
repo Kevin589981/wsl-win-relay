@@ -62,6 +62,9 @@
       WSL listener port while avoiding mirrored shared-namespace collisions.
 - [x] Optional atomic JSON status publication for automatic mappings, including
       the actual Windows-facing address when a port offset is configured.
+- [x] Capability-negotiated TCP and UDP listener acknowledgements can return
+      the address actually allocated by Windows while retaining empty-payload
+      compatibility with older peers.
 - [x] Session-independent local SOCKS5/HTTP listeners with a reconnecting
       dialer for new requests during relay restarts.
 - [x] Strict control socket and live listener leases survive relay child

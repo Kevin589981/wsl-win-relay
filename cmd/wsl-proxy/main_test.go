@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Kevin589981/wsl-win-relay/internal/protocol"
 	"github.com/Kevin589981/wsl-win-relay/internal/relay"
 )
 
@@ -256,6 +257,12 @@ func TestParseOptionsSupportsAutomaticForwardPortOffset(t *testing.T) {
 	}
 	if opts.autoForwardPortOffset != 10000 {
 		t.Fatalf("options: %#v", opts)
+	}
+}
+
+func TestRequiredRelayCapabilitiesRemainCompatibleByDefault(t *testing.T) {
+	if got := requiredRelayCapabilities(options{}); got != protocol.CoreCapabilities {
+		t.Fatalf("capabilities=0x%x, want core 0x%x", got, protocol.CoreCapabilities)
 	}
 }
 

@@ -311,7 +311,7 @@ func (c *Client) ReverseDatagramForward(ctx context.Context, windowsAddr, target
 		return nil, fmt.Errorf("resolve reverse datagram target: %w", err)
 	}
 	id := c.nextID.Add(2)
-	l := newClientReverseDatagram(c, id, targetAddr, ctx)
+	l := newClientReverseDatagram(c, id, windowsAddr, targetAddr, ctx)
 	c.mu.Lock()
 	c.reverseDatagrams[id] = l
 	c.mu.Unlock()
@@ -320,11 +320,12 @@ func (c *Client) ReverseDatagramForward(ctx context.Context, windowsAddr, target
 		return nil, err
 	}
 	select {
-	case err := <-l.ready:
-		if err != nil {
+	case result := <-l.ready:
+		if result.err != nil {
 			c.removeReverseDatagram(id)
-			return nil, err
+			return nil, result.err
 		}
+		l.boundAddress = result.address
 		return l, nil
 	case <-ctx.Done():
 		_ = l.Close()
@@ -342,7 +343,7 @@ func (c *Client) ReserveReverseForward(ctx context.Context, windowsAddr, target 
 	}
 	id := c.nextID.Add(2)
 	listenerCtx, listenerCancel := context.WithCancel(context.Background())
-	l := &clientListener{id: id, client: c, target: target, ctx: listenerCtx, cancel: listenerCancel, ready: make(chan error, 1)}
+	l := &clientListener{id: id, client: c, requestedAddress: windowsAddr, target: target, ctx: listenerCtx, cancel: listenerCancel, ready: make(chan listenerReady, 1)}
 	c.mu.Lock()
 	c.listeners[id] = l
 	c.mu.Unlock()
@@ -352,12 +353,13 @@ func (c *Client) ReserveReverseForward(ctx context.Context, windowsAddr, target 
 		return nil, err
 	}
 	select {
-	case err := <-l.ready:
-		if err != nil {
+	case result := <-l.ready:
+		if result.err != nil {
 			listenerCancel()
 			c.removeListener(id)
-			return nil, err
+			return nil, result.err
 		}
+		l.boundAddress = result.address
 		return &ReverseReservation{listener: l}, nil
 	case <-ctx.Done():
 		_ = l.Close()
@@ -382,6 +384,10 @@ func (r *ReverseReservation) Commit() error {
 }
 
 func (r *ReverseReservation) Close() error { return r.listener.Close() }
+
+// BoundAddress returns the address selected by Windows. It differs from the
+// requested address when port zero asks Windows to allocate an ephemeral port.
+func (r *ReverseReservation) BoundAddress() string { return r.listener.boundAddress }
 
 func (c *Client) Close() error {
 	c.fail(ErrClientClosed)
@@ -484,9 +490,13 @@ func (c *Client) dispatch(frame protocol.Frame) {
 		c.mu.Unlock()
 		if l != nil {
 			if frame.Type == protocol.TypeListenOK {
-				l.ready <- nil
+				address := string(frame.Payload)
+				if address == "" {
+					address = l.requestedAddress
+				}
+				l.ready <- listenerReady{address: address}
 			} else {
-				l.ready <- errors.New(string(frame.Payload))
+				l.ready <- listenerReady{err: errors.New(string(frame.Payload))}
 			}
 		}
 		return
@@ -796,16 +806,18 @@ const (
 )
 
 type clientReverseDatagram struct {
-	client    *Client
-	id        uint32
-	target    *net.UDPAddr
-	ctx       context.Context
-	ready     chan error
-	readyOnce sync.Once
-	done      chan struct{}
-	closeOnce sync.Once
-	mu        sync.Mutex
-	flows     map[string]*reverseDatagramFlow
+	client           *Client
+	id               uint32
+	requestedAddress string
+	boundAddress     string
+	target           *net.UDPAddr
+	ctx              context.Context
+	ready            chan listenerReady
+	readyOnce        sync.Once
+	done             chan struct{}
+	closeOnce        sync.Once
+	mu               sync.Mutex
+	flows            map[string]*reverseDatagramFlow
 }
 
 type reverseDatagramFlow struct {
@@ -816,17 +828,21 @@ type reverseDatagramFlow struct {
 	closeOnce sync.Once
 }
 
-func newClientReverseDatagram(client *Client, id uint32, target *net.UDPAddr, ctx context.Context) *clientReverseDatagram {
-	return &clientReverseDatagram{client: client, id: id, target: target, ctx: ctx, ready: make(chan error, 1), done: make(chan struct{}), flows: make(map[string]*reverseDatagramFlow)}
+func newClientReverseDatagram(client *Client, id uint32, requestedAddress string, target *net.UDPAddr, ctx context.Context) *clientReverseDatagram {
+	return &clientReverseDatagram{client: client, id: id, requestedAddress: requestedAddress, target: target, ctx: ctx, ready: make(chan listenerReady, 1), done: make(chan struct{}), flows: make(map[string]*reverseDatagramFlow)}
 }
 
 func (l *clientReverseDatagram) handle(frame protocol.Frame) {
 	switch frame.Type {
 	case protocol.TypeListenDatagramOK:
-		l.readyOnce.Do(func() { l.ready <- nil })
+		address := string(frame.Payload)
+		if address == "" {
+			address = l.requestedAddress
+		}
+		l.readyOnce.Do(func() { l.ready <- listenerReady{address: address} })
 	case protocol.TypeListenDatagramError:
 		err := errors.New(string(frame.Payload))
-		l.readyOnce.Do(func() { l.ready <- err })
+		l.readyOnce.Do(func() { l.ready <- listenerReady{err: err} })
 		l.fail(err)
 	case protocol.TypeListenDatagramClose:
 		l.fail(io.EOF)
@@ -874,7 +890,7 @@ func (l *clientReverseDatagram) handle(frame protocol.Frame) {
 }
 
 func (l *clientReverseDatagram) fail(err error) {
-	l.readyOnce.Do(func() { l.ready <- err })
+	l.readyOnce.Do(func() { l.ready <- listenerReady{err: err} })
 	l.closeOnce.Do(func() {
 		close(l.done)
 		l.client.removeReverseDatagram(l.id)
@@ -890,6 +906,8 @@ func (l *clientReverseDatagram) fail(err error) {
 		}
 	})
 }
+
+func (l *clientReverseDatagram) BoundAddress() string { return l.boundAddress }
 
 func (l *clientReverseDatagram) removeFlow(flow *reverseDatagramFlow) {
 	l.mu.Lock()
@@ -944,13 +962,20 @@ func (f *reverseDatagramFlow) close() {
 }
 
 type clientListener struct {
-	id     uint32
-	client *Client
-	target string
-	ctx    context.Context
-	cancel context.CancelFunc
-	ready  chan error
-	once   sync.Once
+	id               uint32
+	client           *Client
+	requestedAddress string
+	boundAddress     string
+	target           string
+	ctx              context.Context
+	cancel           context.CancelFunc
+	ready            chan listenerReady
+	once             sync.Once
+}
+
+type listenerReady struct {
+	address string
+	err     error
 }
 
 func (l *clientListener) invalidate() {

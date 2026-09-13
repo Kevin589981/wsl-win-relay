@@ -10,7 +10,6 @@ import (
 
 	"github.com/Kevin589981/wsl-win-relay/internal/forward"
 	"github.com/Kevin589981/wsl-win-relay/internal/listencontrol"
-	"github.com/Kevin589981/wsl-win-relay/internal/protocol"
 	"github.com/Kevin589981/wsl-win-relay/internal/relay"
 	"github.com/Kevin589981/wsl-win-relay/internal/transport/framed"
 	"github.com/Kevin589981/wsl-win-relay/internal/transport/stdio"
@@ -109,9 +108,9 @@ func runPersistentConnector(parent, mappingCtx context.Context, opts options, lo
 	handshakeCtx, handshakeCancel := context.WithTimeout(ctx, opts.relayHandshakeTimeout)
 	var capabilities uint64
 	if *initialized {
-		capabilities, err = client.Rehandshake(handshakeCtx, protocol.AllCapabilities)
+		capabilities, err = client.Rehandshake(handshakeCtx, requiredRelayCapabilities(opts))
 	} else {
-		capabilities, err = client.Handshake(handshakeCtx, protocol.AllCapabilities)
+		capabilities, err = client.Handshake(handshakeCtx, requiredRelayCapabilities(opts))
 	}
 	handshakeCancel()
 	if err != nil {

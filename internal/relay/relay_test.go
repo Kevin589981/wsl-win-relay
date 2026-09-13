@@ -147,10 +147,10 @@ func TestAttachedClientAndServerPreserveStreamAcrossReplacement(t *testing.T) {
 func TestAttachedObjectCloseDoesNotWaitForReplacement(t *testing.T) {
 	client := NewClientWithLink(framed.New())
 	listenerCtx, listenerCancel := context.WithCancel(context.Background())
-	listener := &clientListener{id: 1, client: client, ctx: listenerCtx, cancel: listenerCancel, ready: make(chan error, 1)}
+	listener := &clientListener{id: 1, client: client, ctx: listenerCtx, cancel: listenerCancel, ready: make(chan listenerReady, 1)}
 	stream := newClientStream(client, 3, "detached.example:443")
 	packet := &clientPacketConn{client: client, id: 5, ready: make(chan error, 1), incoming: make(chan packetEvent, 1), done: make(chan struct{}), deadlineChanged: make(chan struct{})}
-	reverseDatagram := newClientReverseDatagram(client, 7, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 5353}, context.Background())
+	reverseDatagram := newClientReverseDatagram(client, 7, "127.0.0.1:5353", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 5353}, context.Background())
 	blockedWriteDone := make(chan struct{})
 	go func() {
 		_ = client.write(protocol.Frame{Type: protocol.TypeData, StreamID: 99, Payload: []byte("blocked")})
@@ -433,6 +433,10 @@ func TestReverseForward(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer forward.Close()
+	bound, ok := forward.(interface{ BoundAddress() string })
+	if !ok || bound.BoundAddress() != windowsAddr {
+		t.Fatalf("legacy bound address=%v, want %s", bound, windowsAddr)
+	}
 	conn, err := net.Dial("tcp", windowsAddr)
 	if err != nil {
 		t.Fatal(err)
@@ -452,6 +456,57 @@ func TestReverseForward(t *testing.T) {
 	_ = client.Close()
 	_ = serverSide.Close()
 	_ = clientSide.Close()
+}
+
+func TestReverseForwardReportsWindowsAllocatedAddress(t *testing.T) {
+	clientSide, serverSide := net.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := NewServer(serverSide, nil)
+	go func() { _ = server.Serve(ctx) }()
+	client := NewClient(clientSide)
+	go func() { _ = client.Run(ctx) }()
+	if _, err := client.Handshake(ctx, protocol.CapabilityListenBoundAddress); err != nil {
+		t.Fatal(err)
+	}
+	local, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer local.Close()
+	go func() {
+		conn, acceptErr := local.Accept()
+		if acceptErr == nil {
+			_, _ = io.Copy(conn, conn)
+			_ = conn.Close()
+		}
+	}()
+	reservation, err := client.ReserveReverseForward(ctx, "127.0.0.1:0", local.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reservation.Close()
+	bound := reservation.BoundAddress()
+	_, port, err := net.SplitHostPort(bound)
+	if err != nil || port == "0" {
+		t.Fatalf("bound address %q, err=%v", bound, err)
+	}
+	if err := reservation.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.Dial("tcp", bound)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err := conn.Write([]byte("allocated")); err != nil {
+		t.Fatal(err)
+	}
+	buffer := make([]byte, len("allocated"))
+	if _, err := io.ReadFull(conn, buffer); err != nil || string(buffer) != "allocated" {
+		t.Fatalf("echo=%q err=%v", buffer, err)
+	}
 }
 
 func TestReverseForwardIPv6(t *testing.T) {
@@ -801,8 +856,39 @@ func TestReverseUDPForward(t *testing.T) {
 	_ = clientSide.Close()
 }
 
+func TestReverseUDPForwardReportsWindowsAllocatedAddress(t *testing.T) {
+	clientSide, serverSide := net.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := NewServer(serverSide, nil)
+	go func() { _ = server.Serve(ctx) }()
+	client := NewClient(clientSide)
+	go func() { _ = client.Run(ctx) }()
+	if _, err := client.Handshake(ctx, protocol.CapabilityListenBoundAddress); err != nil {
+		t.Fatal(err)
+	}
+	target, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	forward, err := client.ReverseDatagramForward(ctx, "127.0.0.1:0", target.LocalAddr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer forward.Close()
+	bound, ok := forward.(interface{ BoundAddress() string })
+	if !ok {
+		t.Fatal("reverse UDP handle does not expose its bound address")
+	}
+	_, port, err := net.SplitHostPort(bound.BoundAddress())
+	if err != nil || port == "0" {
+		t.Fatalf("bound address %q, err=%v", bound.BoundAddress(), err)
+	}
+}
+
 func TestReverseUDPForwardBoundsSourceFlows(t *testing.T) {
-	listener := newClientReverseDatagram(NewClient(&discardReadWriter{}), 1, mustUDPAddr(t, "127.0.0.1:9"), context.Background())
+	listener := newClientReverseDatagram(NewClient(&discardReadWriter{}), 1, "127.0.0.1:5353", mustUDPAddr(t, "127.0.0.1:9"), context.Background())
 	for index := 0; index < maxReverseDatagramFlows; index++ {
 		listener.flows[fmt.Sprintf("source-%d", index)] = nil
 	}
@@ -819,7 +905,7 @@ func TestReverseUDPFlowRejectsPacketsFromUnexpectedLocalSource(t *testing.T) {
 	}
 	defer target.Close()
 	capture := &lockedBuffer{}
-	listener := newClientReverseDatagram(NewClient(capture), 1, target.LocalAddr().(*net.UDPAddr), context.Background())
+	listener := newClientReverseDatagram(NewClient(capture), 1, "127.0.0.1:5353", target.LocalAddr().(*net.UDPAddr), context.Background())
 	defer listener.Close()
 	remote := "127.0.0.1:49001"
 	listener.handle(protocol.Frame{Type: protocol.TypeListenDatagramData, StreamID: 1, Payload: mustDatagramPayload(t, remote, []byte("request"))})
