@@ -98,6 +98,18 @@ printf '%s\n' \
     '    if (child == 0) { execl(argv[0], argv[0], "spawn-child", (char *)NULL); _exit(127); }' \
     '    return waitpid(child, 0, 0) == child ? 0 : 6;' \
     '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "vfork-execve") == 0) {' \
+    '    pid_t child = vfork();' \
+    '    if (child < 0) return 7;' \
+    '    if (child == 0) { char *child_argv[] = { argv[0], (char *)"spawn-child", NULL }; execve(argv[0], child_argv, environ); _exit(127); }' \
+    '    return waitpid(child, 0, 0) == child ? 0 : 6;' \
+    '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "vfork-execle") == 0) {' \
+    '    pid_t child = vfork();' \
+    '    if (child < 0) return 7;' \
+    '    if (child == 0) { char *child_env[] = { (char *)"WWR_VFORK_EXECLE=ok", NULL }; execle(argv[0], argv[0], "spawn-child", (char *)NULL, child_env); _exit(127); }' \
+    '    return waitpid(child, 0, 0) == child ? 0 : 6;' \
+    '  }' \
     '  if (argc > 1 && strcmp(argv[1], "vfork-execvp") == 0) {' \
     '    char executable[PATH_MAX]; if (realpath(argv[0], executable) == NULL) return 4;' \
     '    char *slash = strrchr(executable, '\''/'\''); if (slash == NULL) return 4; *slash = '\''\0'\'';' \
@@ -521,6 +533,20 @@ grep -q '^COMMIT ' "$tmp_dir/vfork-exec.log"
 grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/vfork-exec.log"
 stop_control
 
+start_control "$tmp_dir/vfork-execve.sock" "$tmp_dir/vfork-execve.log"
+WSL_WIN_RELAY_CONTROL="$tmp_dir/vfork-execve.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" vfork-execve
+grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/vfork-execve.log"
+grep -q '^COMMIT ' "$tmp_dir/vfork-execve.log"
+grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/vfork-execve.log"
+stop_control
+
+start_control "$tmp_dir/vfork-execle.sock" "$tmp_dir/vfork-execle.log"
+WSL_WIN_RELAY_CONTROL="$tmp_dir/vfork-execle.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" vfork-execle
+grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/vfork-execle.log"
+grep -q '^COMMIT ' "$tmp_dir/vfork-execle.log"
+grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/vfork-execle.log"
+stop_control
+
 start_control "$tmp_dir/vfork-execvp.sock" "$tmp_dir/vfork-execvp.log"
 WSL_WIN_RELAY_CONTROL="$tmp_dir/vfork-execvp.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" vfork-execvp
 grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/vfork-execvp.log"
@@ -875,4 +901,4 @@ fi
 grep -q 'RESERVE .* tcp4 47154' "$tmp_dir/shell-reject.log"
 ! grep -q '^COMMIT ' "$tmp_dir/shell-reject.log"
 stop_control
-echo "kernel supervisor coordinated static TCP/UDP, forkpty/vfork exec paths, POSIX_SPAWN_USEVFORK/attributes/file-actions/closefrom, and propagated rejection"
+echo "kernel supervisor coordinated static TCP/UDP, forkpty/vfork exec variants, POSIX_SPAWN_USEVFORK/attributes/file-actions/closefrom, and propagated rejection"
