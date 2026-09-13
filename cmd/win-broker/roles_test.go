@@ -8,6 +8,8 @@ import (
 	"io"
 	"log"
 	"net"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -82,6 +84,12 @@ func TestServeWorkerControlRequiresToken(t *testing.T) {
 
 func TestProbeRoleClassifiesMismatchAndStopsConflict(t *testing.T) {
 	endpoint := fmt.Sprintf("wsl-win-relay-role-test-%d", time.Now().UnixNano())
+	if runtime.GOOS != "windows" {
+		// WSL checkouts under /mnt use DrvFS, which cannot host Unix sockets.
+		// Keep this test endpoint on the Linux filesystem while retaining a
+		// named-pipe-safe endpoint for Windows.
+		endpoint = filepath.Join(t.TempDir(), "role")
+	}
 	listener, err := localipc.Listen(deriveEndpoint(endpoint, "control"))
 	if err != nil {
 		t.Fatal(err)
