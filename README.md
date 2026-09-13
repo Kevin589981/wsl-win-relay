@@ -522,8 +522,9 @@ direct `vfork()` followed by `execl()`, `execvp()`, or descriptor-based
 `fexecve()`, plus `execvpe()` with an explicit child environment; these paths
 retain the same bounded ownership and cleanup guarantees. The kernel adapter does not
 promise arbitrary child-side work between `vfork()` and `exec`/`_exit`.
-The static lifecycle smoke also covers `daemon()` detaching the root leader
-before a child listener binds, which is a supported process-tree boundary for
+The static lifecycle smoke also covers `forkpty()` process creation and
+`daemon()` detaching the root leader before a child listener binds, which is a
+supported process-tree boundary for
 long-running services. It also launches a static listener from the installed
 strict-shell wrapper, verifying that shell descendants use the same reservation
 and cleanup protocol. The same shell path is exercised with a forced Windows

@@ -143,7 +143,8 @@
 - [ ] Kernel-level coverage for non-direct vfork libc interactions remains
       open for implementations beyond the `system()`, `popen()`, `posix_spawn`,
       and `posix_spawnp`
-      and pre-exec file-action paths, which are covered by the native smoke test together with
+      and pre-exec file-action paths; `forkpty()` process creation is now also
+      covered by the native smoke test together with
       leader-exit/sibling-listener ownership. Setuid/setgid binaries remain
       intentionally rejected because neither launcher path can preserve their
       semantics.

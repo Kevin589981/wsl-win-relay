@@ -29,6 +29,7 @@ printf '%s\n' \
     '#include <linux/sched.h>' \
     '#include <limits.h>' \
     '#include <pthread.h>' \
+    '#include <pty.h>' \
     '#include <spawn.h>' \
     '#include <signal.h>' \
     '#include <sys/syscall.h>' \
@@ -51,6 +52,15 @@ printf '%s\n' \
     '    if (child < 0) return errno == ENOTSUP ? 0 : 7;' \
     '    if (child == 0) { usleep(100000); close(fd); _exit(0); }' \
     '    close(fd); return waitpid(child, 0, 0) == child ? 0 : 6;' \
+    '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "forkpty") == 0) {' \
+    '    int master = -1; pid_t child = forkpty(&master, NULL, NULL, NULL);' \
+    '    if (child < 0) return errno == ENOSYS ? 77 : 7;' \
+    '    if (child == 0) { int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0};' \
+    '      address.sin_family = AF_INET; address.sin_port = htons(47157); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
+    '      if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) _exit(2);' \
+    '      close(fd); _exit(0); }' \
+    '    close(master); int status = 0; if (waitpid(child, &status, 0) != child) return 6; return WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : 77;' \
     '  }' \
     '  if (argc > 1 && strcmp(argv[1], "daemon") == 0) {' \
     '    if (daemon(1, 1) < 0) return errno == ENOSYS ? 77 : 7;' \
@@ -354,7 +364,7 @@ printf '%s\n' \
     '  if (duplicate) { int alias = dup(fd); if (alias < 0) return 4; close(fd); usleep(100000); close(alias); return 0; }' \
     '  usleep(100000); close(fd); return 0;' \
     '}' >"$tmp_dir/target.c"
-gcc -static -O2 -pthread -o "$tmp_dir/static-target" "$tmp_dir/target.c"
+gcc -static -O2 -pthread -o "$tmp_dir/static-target" "$tmp_dir/target.c" -lutil
 
 start_control() {
     socket_path=$1
@@ -386,6 +396,22 @@ WSL_WIN_RELAY_CONTROL="$tmp_dir/tcp.sock" "$repo_dir/scripts/wsl-win-relay-run" 
 grep -q 'RESERVE .* tcp4 47125' "$tmp_dir/tcp.log"
 grep -q '^COMMIT ' "$tmp_dir/tcp.log"
 grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/tcp.log"
+stop_control
+
+start_control "$tmp_dir/forkpty.sock" "$tmp_dir/forkpty.log"
+set +e
+WSL_WIN_RELAY_CONTROL="$tmp_dir/forkpty.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" forkpty
+forkpty_status=$?
+set -e
+if [ "$forkpty_status" -ne 0 ] && [ "$forkpty_status" -ne 77 ]; then
+    echo "forkpty target failed with status $forkpty_status" >&2
+    exit 1
+fi
+if [ "$forkpty_status" -eq 0 ]; then
+    grep -q 'RESERVE .* tcp4 47157' "$tmp_dir/forkpty.log"
+    grep -q '^COMMIT ' "$tmp_dir/forkpty.log"
+    grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/forkpty.log"
+fi
 stop_control
 
 start_control "$tmp_dir/udp.sock" "$tmp_dir/udp.log"
@@ -751,4 +777,4 @@ fi
 grep -q 'RESERVE .* tcp4 47154' "$tmp_dir/shell-reject.log"
 ! grep -q '^COMMIT ' "$tmp_dir/shell-reject.log"
 stop_control
-echo "kernel supervisor coordinated static TCP/UDP, vfork exec paths, POSIX_SPAWN_USEVFORK, and propagated rejection"
+echo "kernel supervisor coordinated static TCP/UDP, forkpty/vfork exec paths, POSIX_SPAWN_USEVFORK, and propagated rejection"
