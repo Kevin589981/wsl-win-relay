@@ -32,7 +32,9 @@ Provide `libwsl_win_relay_listen.so` and a `wsl-win-relay-run` launcher. The int
    `clone()` and `clone3()` process children. Ordinary pthread/
    `CLONE_THREAD` children share the thread-group PID and therefore share the
    existing process owner. A mapping is released only after every process
-   owner has gone away.
+   owner has gone away. The ordinary `fork()` wrapper holds the child behind a
+   close-on-exec gate until its inherited leases have been adopted, and exits
+   the child before application code on adoption failure.
 8. Releases abandoned mappings through the control daemon's process-identity
    lease reaper when an owner exits without callbacks. `RESERVE` and `ADOPT`
    optionally carry the Linux `/proc/<pid>/fd` socket identity (`socket:[inode]`)
@@ -61,9 +63,10 @@ Provide `libwsl_win_relay_listen.so` and a `wsl-win-relay-run` launcher. The int
   still requires a kernel-aware adapter.
 - Descriptor duplication through the standard `dup*()` calls,
   `fcntl(F_DUPFD*)`, ordinary `fork()`, process-style `clone()`/`clone3()`,
-  and ordinary pthread/`CLONE_THREAD` listeners are covered. A parent-side
-  `vfork()` wrapper adopts inherited leases after the child returns when the
-  platform permits `vfork`; the dynamic path rejects process-style
+  and ordinary pthread/`CLONE_THREAD` listeners are covered. The `fork()`
+  wrapper gates child return until inherited leases are adopted. The dynamic
+  `vfork()` wrapper has no post-return bookkeeping because the shared address
+  space makes wrapper-local state unsafe; the dynamic path rejects process-style
   `CLONE_FILES` in both raw/libc `clone()` and safely inspected `clone3()`
   calls because its fd table is process-local. The smoke test tolerates
   sandboxed kernels that return `ENOSYS`, `EPERM`, `EINVAL`, or `ENOTSUP` for

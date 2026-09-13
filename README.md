@@ -463,7 +463,9 @@ Strict mode currently covers dynamically linked applications using libc or
 direct `syscall(SYS_listen/SYS_bind)` calls, including TCP `listen()`, non-zero
 UDP `bind()`, `dup()`, `dup2()`, `dup3()`, `fcntl(F_DUPFD*)`, `close_range()`,
 ordinary `fork()` descriptor inheritance, process-style `clone()` without
-`CLONE_FILES`, and parent-side `vfork()` adoption. The kernel adapter additionally
+`CLONE_FILES`, and fail-closed fork adoption gating. The dynamic wrapper
+deliberately forwards `vfork()` without post-return bookkeeping because its
+shared address space can overwrite wrapper-local state. The kernel adapter additionally
 tracks `SOCK_CLOEXEC`/`FD_CLOEXEC` through `PTRACE_EVENT_EXEC`; the dynamic
 interposer cannot run post-exec cleanup in the replaced image, so it includes
 the socket inode identity in `RESERVE`/`ADOPT` and lets the control daemon's

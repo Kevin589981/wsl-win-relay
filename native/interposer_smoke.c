@@ -8,6 +8,7 @@
 #include <sched.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
@@ -66,7 +67,33 @@ static int wait_for_child(pid_t child) {
     return result == child ? 0 : -1;
 }
 
-int main(void) {
+static int adoption_failure_smoke(void) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return 1;
+    struct sockaddr_in address = {0};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = htons(47131);
+    if (bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 16) < 0) {
+        close(fd);
+        return 2;
+    }
+    errno = 0;
+    pid_t child = fork();
+    if (child >= 0) {
+        close(fd);
+        return 3;
+    }
+    int saved = errno;
+    close(fd);
+    /* The control test server returns errno 5 for a rejected ADOPT. */
+    return saved == EIO ? 0 : 4;
+}
+
+int main(int argc, char **argv) {
+    if (argc > 1 && strcmp(argv[1], "adopt-failure") == 0) {
+        return adoption_failure_smoke();
+    }
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) return 1;
     struct sockaddr_in address = {0};

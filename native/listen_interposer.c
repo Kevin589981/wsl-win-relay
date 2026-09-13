@@ -19,6 +19,8 @@
 #include <sys/un.h>
 #include <sys/types.h>
 #include <sys/uio.h>
+#include <sys/wait.h>
+#include <signal.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -59,6 +61,12 @@ static clone_fn real_clone;
 static readlink_fn real_readlink;
 static pthread_once_t init_once = PTHREAD_ONCE_INIT;
 static pthread_mutex_t tracked_mu = PTHREAD_MUTEX_INITIALIZER;
+/* Serialize the short fork-gate setup window. The gate descriptors are
+ * inherited across fork and consumed by the atfork child handler before the
+ * child is allowed to return to application code. */
+static pthread_mutex_t fork_gate_mu = PTHREAD_MUTEX_INITIALIZER;
+static int fork_gate_read_fd = -1;
+static int fork_gate_write_fd = -1;
 static struct tracked_fd *tracked;
 static __thread int syscall_interposer_depth;
 
@@ -382,7 +390,9 @@ static void atfork_parent(void) {
     pthread_mutex_unlock(&tracked_mu);
 }
 
-static void adopt_tracked_for_pid(pid_t pid) {
+static int adopt_tracked_for_pid(pid_t pid) {
+    int first_error = 0;
+    int failed = 0;
     pthread_mutex_lock(&tracked_mu);
     for (struct tracked_fd *entry = tracked; entry != NULL; entry = entry->next) {
         int seen = 0;
@@ -396,17 +406,58 @@ static void adopt_tracked_for_pid(pid_t pid) {
         if (!seen) {
             (void)descriptor_target(entry->fd, target, sizeof(target));
         }
-        if (!seen && adopt_lease(pid, entry->lease->id, target) < 0 && debug_enabled()) {
-            fprintf(stderr, "wsl-win-relay interposer: ADOPT failed for lease %llu: %s\n",
-                    (unsigned long long)entry->lease->id, strerror(errno));
+        if (!seen && adopt_lease(pid, entry->lease->id, target) < 0) {
+            if (!failed) {
+                first_error = errno;
+            }
+            failed = 1;
+            if (debug_enabled()) {
+                fprintf(stderr, "wsl-win-relay interposer: ADOPT failed for lease %llu: %s\n",
+                        (unsigned long long)entry->lease->id, strerror(errno));
+            }
         }
     }
     pthread_mutex_unlock(&tracked_mu);
+    if (failed) {
+        errno = first_error == 0 ? EIO : first_error;
+        return -1;
+    }
+    return 0;
 }
 
 static void atfork_child(void) {
     pthread_mutex_unlock(&tracked_mu);
-    adopt_tracked_for_pid(getpid());
+    int read_fd = fork_gate_read_fd;
+    int write_fd = fork_gate_write_fd;
+    fork_gate_read_fd = -1;
+    fork_gate_write_fd = -1;
+    if (read_fd >= 0) {
+        if (write_fd >= 0 && real_close != NULL) {
+            (void)real_close(write_fd);
+        }
+        unsigned char decision = 0;
+        ssize_t count;
+        do {
+            count = read(read_fd, &decision, sizeof(decision));
+        } while (count < 0 && errno == EINTR);
+        if (real_close != NULL) {
+            (void)real_close(read_fd);
+        }
+        (void)pthread_mutex_unlock(&fork_gate_mu);
+        if (count != (ssize_t)sizeof(decision) || decision != 1) {
+            _exit(127);
+        }
+    }
+}
+
+static int abort_unadopted_child(pid_t child) {
+    int saved = errno;
+    (void)kill(child, SIGKILL);
+    int status;
+    while (waitpid(child, &status, __WALL) < 0 && errno == EINTR) {
+    }
+    errno = saved == 0 ? EIO : saved;
+    return -1;
 }
 
 static int find_tracked(int fd) {
@@ -748,8 +799,8 @@ long syscall(long number, ...) {
             syscall_interposer_depth++;
             long result = real_syscall(SYS_clone, flags, stack, parent_tid, child_tid, tls);
             syscall_interposer_depth--;
-            if (result > 0 && (flags & CLONE_THREAD) == 0) {
-                adopt_tracked_for_pid((pid_t)result);
+            if (result > 0 && (flags & CLONE_THREAD) == 0 && adopt_tracked_for_pid((pid_t)result) < 0) {
+                return abort_unadopted_child((pid_t)result);
             }
             return result;
         }
@@ -769,8 +820,8 @@ long syscall(long number, ...) {
             long result = real_syscall(SYS_clone3, clone_arguments, clone_arguments_size);
             syscall_interposer_depth--;
             if (result > 0) {
-                if ((clone_flags & CLONE_THREAD) == 0) {
-                    adopt_tracked_for_pid((pid_t)result);
+                if ((clone_flags & CLONE_THREAD) == 0 && adopt_tracked_for_pid((pid_t)result) < 0) {
+                    return abort_unadopted_child((pid_t)result);
                 }
             }
             return result;
@@ -855,9 +906,49 @@ pid_t fork(void) {
         errno = ENOSYS;
         return -1;
     }
+    if (pthread_mutex_lock(&fork_gate_mu) != 0) {
+        errno = EAGAIN;
+        return -1;
+    }
+    int gate[2];
+    if (pipe2(gate, O_CLOEXEC) < 0) {
+        int saved = errno;
+        (void)pthread_mutex_unlock(&fork_gate_mu);
+        errno = saved;
+        return -1;
+    }
+    fork_gate_read_fd = gate[0];
+    fork_gate_write_fd = gate[1];
     pid_t child = real_fork();
-    if (child > 0) {
-        adopt_tracked_for_pid(child);
+    if (child < 0) {
+        int saved = errno;
+        (void)real_close(gate[0]);
+        (void)real_close(gate[1]);
+        fork_gate_read_fd = -1;
+        fork_gate_write_fd = -1;
+        (void)pthread_mutex_unlock(&fork_gate_mu);
+        errno = saved;
+        return -1;
+    }
+    if (child == 0) {
+        /* atfork_child consumed the read end and released fork_gate_mu. */
+        return 0;
+    }
+    (void)real_close(gate[0]);
+    fork_gate_read_fd = -1;
+    int adoption_error = adopt_tracked_for_pid(child);
+    unsigned char decision = adoption_error < 0 ? 0 : 1;
+    ssize_t written;
+    do {
+        written = write(gate[1], &decision, sizeof(decision));
+    } while (written < 0 && errno == EINTR);
+    int saved = adoption_error < 0 ? errno : (written == (ssize_t)sizeof(decision) ? 0 : EIO);
+    (void)real_close(gate[1]);
+    fork_gate_write_fd = -1;
+    (void)pthread_mutex_unlock(&fork_gate_mu);
+    if (adoption_error < 0 || written != (ssize_t)sizeof(decision)) {
+        errno = saved == 0 ? EIO : saved;
+        return abort_unadopted_child(child);
     }
     return child;
 }
@@ -873,11 +964,12 @@ pid_t vfork(void) {
         errno = ENOSYS;
         return -1;
     }
-    pid_t child = real_vfork();
-    if (child > 0) {
-        adopt_tracked_for_pid(child);
-    }
-    return child;
+    /* vfork shares the caller's address space and stack until exec/_exit.
+     * Any wrapper-local return value can be overwritten by the child before
+     * the parent resumes, so there is deliberately no parent-side bookkeeping
+     * after this call. The kernel supervisor provides the strict vfork
+     * adoption path; dynamic interposition keeps the inherited parent owner. */
+    return real_vfork();
 }
 
 /*
@@ -913,8 +1005,8 @@ int clone(int (*function)(void *), void *stack, int flags, void *argument, ...) 
         return -1;
     }
     pid_t child = real_clone(function, stack, flags, argument, parent_tid, tls, child_tid);
-    if (child > 0 && (flags & CLONE_THREAD) == 0) {
-        adopt_tracked_for_pid(child);
+    if (child > 0 && (flags & CLONE_THREAD) == 0 && adopt_tracked_for_pid(child) < 0) {
+        return abort_unadopted_child(child);
     }
     return child;
 }

@@ -42,4 +42,30 @@ missing_adopt_targets=$(awk '$1 == "ADOPT" && NF < 4 { count++ } END { print cou
 [ "$release_count" -ge 9 ] && [ "$release_count" -le 10 ] || { echo "expected all TCP/UDP leases including delayed retry, clone, and pthread owners to RELEASE, got $release_count" >&2; exit 1; }
 [ "$missing_reserve_targets" -eq 0 ] || { echo "expected every dynamic RESERVE to carry a socket inode target, got $missing_reserve_targets missing" >&2; exit 1; }
 [ "$missing_adopt_targets" -eq 0 ] || { echo "expected every dynamic ADOPT to carry a socket inode target, got $missing_adopt_targets missing" >&2; exit 1; }
-echo "native interposer TCP/UDP, raw syscall, clone, clone3, optional vfork, and pthread lifecycle passed"
+
+# Adoption failure must fail closed: the fork caller sees an error and the
+# child exits before it can run user code with an unowned listener.
+kill "$control_pid" 2>/dev/null || true
+wait "$control_pid" 2>/dev/null || true
+control_pid=
+reject_socket=$tmp_dir/reject-adopt.sock
+reject_log=$tmp_dir/reject-adopt.log
+(
+    WWR_TEST_REJECT_ALL_ADOPT=1 \
+        exec python3 "$repo_dir/scripts/interposer-control.py" "$reject_socket" "$reject_log"
+) &
+control_pid=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [ -S "$reject_socket" ] && break
+    sleep 0.1
+done
+[ -S "$reject_socket" ] || { echo "adoption rejection control socket did not appear" >&2; exit 1; }
+WSL_WIN_RELAY_CONTROL="$reject_socket" \
+WSL_WIN_RELAY_CONTROL_RETRY_SECONDS=1 \
+LD_PRELOAD="$repo_dir/lib/libwsl_win_relay_listen.so" \
+    "$tmp_dir/interposer-smoke" adopt-failure
+grep -q 'RESERVE .* tcp4 47131' "$reject_log"
+grep -q '^COMMIT ' "$reject_log"
+grep -q '^ADOPT ' "$reject_log"
+test "$(grep -Ec '^RELEASE ' "$reject_log")" -eq 1
+echo "native interposer TCP/UDP, raw syscall, clone, clone3, optional vfork, pthread, and fail-closed adoption lifecycle passed"

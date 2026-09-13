@@ -78,9 +78,13 @@
       both-end transport replacement.
 - [x] Non-zero normal Windows relay exit status is classified as fatal instead
       of causing an unbounded restart loop.
-- [x] Parent-side `vfork()` lease adoption is covered by the native lifecycle
-      smoke test; child-side pre-exec networking remains unsupported by the
-      shared-address-space contract.
+- [x] Kernel-supervisor parent-side `vfork()` lease adoption is covered by the
+      native lifecycle smoke test; child-side pre-exec networking remains
+      unsupported by the shared-address-space contract.
+- [x] Dynamic `fork()` inheritance uses a close-on-exec gate: the child cannot
+      return to application code until the parent has completed `ADOPT`, and a
+      rejected adoption terminates the child before it can use the inherited
+      listener.
 - [x] The kernel supervisor explicitly handles the `PTRACE_EVENT_VFORK_DONE`
       notification emitted for traced `vfork()` parents instead of treating it
       as an unknown event.

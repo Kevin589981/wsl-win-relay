@@ -11,6 +11,7 @@ reject_port = sys.argv[3] if len(sys.argv) > 3 else None
 delay_port = sys.argv[4] if len(sys.argv) > 4 else None
 delay_seconds = float(sys.argv[5]) if len(sys.argv) > 5 else 0
 reject_adopt_after = int(os.environ.get("WWR_TEST_REJECT_ADOPT_AFTER", "0") or 0)
+reject_all_adopt = os.environ.get("WWR_TEST_REJECT_ALL_ADOPT", "") not in ("", "0")
 adopt_count = 0
 next_lease = 0
 delayed = False
@@ -50,7 +51,7 @@ with server:
             else:
                 if text.startswith("ADOPT "):
                     adopt_count += 1
-                    if reject_adopt_after > 0 and adopt_count > reject_adopt_after:
+                    if reject_all_adopt or (reject_adopt_after > 0 and adopt_count > reject_adopt_after):
                         connection.sendall(b"ERR 5 forced adopt failure\n")
                         continue
                 if text.startswith("COMMIT ") and delayed and not delay_commit_done:
