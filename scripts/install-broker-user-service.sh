@@ -101,6 +101,14 @@ if [ ! -e "$env_file" ]; then
         fi
     } >"$env_file"
 fi
+configured_broker_exe=$(sed -n "s/^WSL_WIN_RELAY_BROKER_EXE='\(.*\)'$/\1/p" "$env_file" | head -n 1)
+if [ -n "$configured_broker_exe" ] && [ "$configured_broker_exe" != "$WSL_WIN_RELAY_BROKER_EXE" ]; then
+    echo "broker environment executable does not match the requested value" >&2
+    exit 1
+fi
+if [ -z "$configured_broker_exe" ]; then
+    printf 'WSL_WIN_RELAY_BROKER_EXE=%s\n' "$(quote_env_value "$WSL_WIN_RELAY_BROKER_EXE")" >>"$env_file"
+fi
 configured_connector_exe=$(sed -n "s/^WSL_WIN_RELAY_CONNECTOR_EXE='\(.*\)'$/\1/p" "$env_file" | head -n 1)
 if [ -n "$configured_connector_exe" ] && [ "$configured_connector_exe" != "$requested_connector_exe" ]; then
     echo "broker environment connector executable does not match the requested value" >&2

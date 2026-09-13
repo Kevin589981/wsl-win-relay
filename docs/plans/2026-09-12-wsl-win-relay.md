@@ -358,6 +358,9 @@
 - [x] Broker installation records and validates the Windows connector path;
       the proxy service wrapper overrides `relay_exe` in broker mode so a new
       installation cannot accidentally launch the stdio relay from stale JSON.
+- [x] Broker installer upgrades migrate missing legacy executable fields and
+      reject broker/connector path conflicts instead of silently retaining a
+      different active binary.
 - [x] Broker installation restarts an already-installed proxy user unit after
       broker startup, while still allowing either unit to be installed first.
 - [x] Process-isolated broker frontend/bridge-worker/socket-host/socket-owner

@@ -104,6 +104,10 @@ be rewritten and cannot accidentally launch the stdio relay.
 When the proxy user unit is already installed, the broker installer restarts it
 after the broker is ready so the connector override takes effect immediately;
 otherwise it leaves the independent proxy installation order unchanged.
+Re-running the installer migrates missing legacy executable fields but rejects
+requested broker or connector paths that conflict with the active private
+environment, preventing an apparent upgrade from silently retaining another
+binary.
 
 New broker installations also create `attach.token` with mode `0600` and pass
 that path to the Windows broker (the wrapper converts a WSL path with

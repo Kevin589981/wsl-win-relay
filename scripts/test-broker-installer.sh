@@ -33,6 +33,16 @@ grep -Fqx "WSL_WIN_RELAY_ATTACH_TOKEN_FILE='$token_file'" "$env_file"
 grep -Fqx 'WSL_WIN_RELAY_BROKER_MODE=1' "$env_file"
 grep -Fqx "WSL_WIN_RELAY_CONNECTOR_EXE='/bin/true'" "$env_file"
 grep -Fqx -- '--user restart wsl-win-relay.service' "$WWR_TEST_SYSTEMCTL_LOG"
+
+if HOME="$tmp_dir/home" \
+    XDG_CONFIG_HOME="$tmp_dir/config" \
+    PATH="$tmp_dir/bin:/usr/bin:/bin" \
+    WSL_WIN_RELAY_BROKER_EXE=/bin/false \
+        "$repo_dir/scripts/install-broker-user-service.sh" >"$tmp_dir/broker-mismatch.out" 2>&1; then
+    echo "broker installer unexpectedly accepted a conflicting broker executable" >&2
+    exit 1
+fi
+grep -q 'environment executable does not match' "$tmp_dir/broker-mismatch.out"
 grep -Fqx "WSL_WIN_RELAY_UPSTREAM_PROXY='socks5h://matebookxpro.local:7890'" "$env_file"
 
 if HOME="$tmp_dir/home" \
