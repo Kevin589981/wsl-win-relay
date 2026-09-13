@@ -15,6 +15,7 @@ const (
 	MaxTargetSize             = 4096
 	MaxErrorSize              = 4096
 	MaxDataSize               = 32 << 10
+	MaxDatagramSize           = 2 + MaxTargetSize + 65535
 	InitialStreamWindow       = 256 << 10
 )
 
@@ -58,55 +59,59 @@ type Frame struct {
 }
 
 func (f Frame) Validate() error {
-	if f.StreamID == 0 && f.Type != TypeHello && f.Type != TypeHelloOK {
+	return validateFrameMetadata(f.Type, f.StreamID, uint64(len(f.Payload)))
+}
+
+func validateFrameMetadata(kind Type, streamID uint32, payloadLength uint64) error {
+	if streamID == 0 && kind != TypeHello && kind != TypeHelloOK {
 		return errors.New("stream id must be non-zero")
 	}
-	if (f.Type == TypeHello || f.Type == TypeHelloOK) && f.StreamID != 0 {
+	if (kind == TypeHello || kind == TypeHelloOK) && streamID != 0 {
 		return errors.New("hello frames must use stream id zero")
 	}
-	if !knownType(f.Type) {
-		return fmt.Errorf("unknown frame type %d", f.Type)
+	if !knownType(kind) {
+		return fmt.Errorf("unknown frame type %d", kind)
 	}
-	if len(f.Payload) > MaxPayloadSize {
+	if payloadLength > MaxPayloadSize {
 		return fmt.Errorf("payload exceeds %d bytes", MaxPayloadSize)
 	}
-	if (f.Type == TypeOpenOK || f.Type == TypeHalfClose || f.Type == TypeClose || f.Type == TypeListenClose || f.Type == TypeListenCommit || f.Type == TypeDatagramOpen || f.Type == TypeDatagramOK || f.Type == TypeDatagramClose || f.Type == TypeListenDatagramClose) && len(f.Payload) != 0 {
-		return fmt.Errorf("frame type %d must have an empty payload", f.Type)
+	if (kind == TypeOpenOK || kind == TypeHalfClose || kind == TypeClose || kind == TypeListenClose || kind == TypeListenCommit || kind == TypeDatagramOpen || kind == TypeDatagramOK || kind == TypeDatagramClose || kind == TypeListenDatagramClose) && payloadLength != 0 {
+		return fmt.Errorf("frame type %d must have an empty payload", kind)
 	}
-	if (f.Type == TypeListenOK || f.Type == TypeListenDatagramOK) && len(f.Payload) > MaxTargetSize {
+	if (kind == TypeListenOK || kind == TypeListenDatagramOK) && payloadLength > MaxTargetSize {
 		return fmt.Errorf("bound listen address exceeds %d bytes", MaxTargetSize)
 	}
-	if isErrorType(f.Type) && len(f.Payload) > MaxErrorSize {
+	if isErrorType(kind) && payloadLength > MaxErrorSize {
 		return fmt.Errorf("error payload exceeds %d bytes", MaxErrorSize)
 	}
-	if f.Type == TypeOpen && (len(f.Payload) == 0 || len(f.Payload) > MaxTargetSize) {
+	if kind == TypeOpen && (payloadLength == 0 || payloadLength > MaxTargetSize) {
 		return fmt.Errorf("open target must be between 1 and %d bytes", MaxTargetSize)
 	}
-	if f.Type == TypeListenOpen && (len(f.Payload) == 0 || len(f.Payload) > MaxTargetSize) {
+	if kind == TypeListenOpen && (payloadLength == 0 || payloadLength > MaxTargetSize) {
 		return fmt.Errorf("listen address must be between 1 and %d bytes", MaxTargetSize)
 	}
-	if f.Type == TypeListenDatagramOpen && (len(f.Payload) == 0 || len(f.Payload) > MaxTargetSize) {
+	if kind == TypeListenDatagramOpen && (payloadLength == 0 || payloadLength > MaxTargetSize) {
 		return fmt.Errorf("datagram listen address must be between 1 and %d bytes", MaxTargetSize)
 	}
-	if f.Type == TypeInboundOpen && len(f.Payload) != 4 {
+	if kind == TypeInboundOpen && payloadLength != 4 {
 		return errors.New("inbound open must contain a listener id")
 	}
-	if f.Type == TypeDatagramData && len(f.Payload) < 3 {
-		return errors.New("datagram data must contain an endpoint and payload")
+	if kind == TypeDatagramData && (payloadLength < 3 || payloadLength > MaxDatagramSize) {
+		return fmt.Errorf("datagram data must be between 3 and %d bytes", MaxDatagramSize)
 	}
-	if f.Type == TypeListenDatagramData && len(f.Payload) < 3 {
-		return errors.New("reverse datagram data must contain an endpoint and payload")
+	if kind == TypeListenDatagramData && (payloadLength < 3 || payloadLength > MaxDatagramSize) {
+		return fmt.Errorf("reverse datagram data must be between 3 and %d bytes", MaxDatagramSize)
 	}
-	if f.Type == TypeData && (len(f.Payload) == 0 || len(f.Payload) > MaxDataSize) {
+	if kind == TypeData && (payloadLength == 0 || payloadLength > MaxDataSize) {
 		return fmt.Errorf("stream data must be between 1 and %d bytes", MaxDataSize)
 	}
-	if f.Type == TypeWindowUpdate && len(f.Payload) != 4 {
+	if kind == TypeWindowUpdate && payloadLength != 4 {
 		return errors.New("window update must contain a byte count")
 	}
-	if f.Type == TypeHello && len(f.Payload) != 8 {
+	if kind == TypeHello && payloadLength != 8 {
 		return errors.New("hello frame must contain capabilities")
 	}
-	if f.Type == TypeHelloOK && len(f.Payload) != 8 && len(f.Payload) != 16 {
+	if kind == TypeHelloOK && payloadLength != 8 && payloadLength != 16 {
 		return errors.New("hello response must contain 8 or 16 bytes")
 	}
 	return nil
@@ -164,15 +169,13 @@ func Read(r io.Reader) (Frame, error) {
 	if header[4] != Version {
 		return Frame{}, fmt.Errorf("unsupported protocol version %d", header[4])
 	}
-	length := binary.BigEndian.Uint32(header[12:16])
-	if length > MaxPayloadSize {
-		return Frame{}, fmt.Errorf("payload exceeds %d bytes", MaxPayloadSize)
-	}
 	kind := Type(header[5])
-	if isErrorType(kind) && length > MaxErrorSize {
-		return Frame{}, fmt.Errorf("error payload exceeds %d bytes", MaxErrorSize)
+	streamID := binary.BigEndian.Uint32(header[8:12])
+	length := binary.BigEndian.Uint32(header[12:16])
+	if err := validateFrameMetadata(kind, streamID, uint64(length)); err != nil {
+		return Frame{}, err
 	}
-	f := Frame{Type: kind, StreamID: binary.BigEndian.Uint32(header[8:12]), Payload: make([]byte, length)}
+	f := Frame{Type: kind, StreamID: streamID, Payload: make([]byte, length)}
 	if _, err := io.ReadFull(r, f.Payload); err != nil {
 		return Frame{}, err
 	}

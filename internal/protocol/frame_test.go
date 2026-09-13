@@ -89,15 +89,37 @@ func TestReadRejectsOversizedPayload(t *testing.T) {
 	}
 }
 
-func TestReadRejectsOversizedErrorBeforeReadingPayload(t *testing.T) {
-	header := make([]byte, HeaderSize)
-	copy(header[:4], magic[:])
-	header[4] = Version
-	header[5] = byte(TypeOpenError)
-	binary.BigEndian.PutUint32(header[8:12], 1)
-	binary.BigEndian.PutUint32(header[12:16], MaxErrorSize+1)
-	if _, err := Read(bytes.NewReader(header)); err == nil || !strings.Contains(err.Error(), "error payload exceeds") {
-		t.Fatalf("Read returned %v", err)
+func TestReadRejectsInvalidMetadataBeforeReadingPayload(t *testing.T) {
+	cases := []struct {
+		name     string
+		kind     Type
+		streamID uint32
+		length   uint32
+		want     string
+	}{
+		{"error", TypeOpenError, 1, MaxErrorSize + 1, "error payload exceeds"},
+		{"stream data", TypeData, 1, MaxDataSize + 1, "stream data must be"},
+		{"datagram data", TypeDatagramData, 1, MaxDatagramSize + 1, "datagram data must be"},
+		{"reverse datagram data", TypeListenDatagramData, 1, MaxDatagramSize + 1, "reverse datagram data must be"},
+		{"open target", TypeOpen, 1, MaxTargetSize + 1, "open target must be"},
+		{"empty control", TypeClose, 1, 1, "empty payload"},
+		{"inbound", TypeInboundOpen, 1, 3, "listener id"},
+		{"hello", TypeHello, 0, 7, "capabilities"},
+		{"unknown", Type(99), 1, 1, "unknown frame type"},
+		{"zero stream", TypeData, 0, 1, "stream id"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			header := make([]byte, HeaderSize)
+			copy(header[:4], magic[:])
+			header[4] = Version
+			header[5] = byte(test.kind)
+			binary.BigEndian.PutUint32(header[8:12], test.streamID)
+			binary.BigEndian.PutUint32(header[12:16], test.length)
+			if _, err := Read(bytes.NewReader(header)); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Read returned %v", err)
+			}
+		})
 	}
 }
 

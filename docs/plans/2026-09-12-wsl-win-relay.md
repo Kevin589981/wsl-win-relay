@@ -9,6 +9,9 @@
 ## Current Completion Matrix
 
 - [x] Framed stdio relay with bounded streams and capability negotiation.
+- [x] Frame type, stream ID, and type-specific payload length are validated
+      from the header before any payload allocation/read, preventing malformed
+      peers from using invalid frames for memory or I/O amplification.
 - [x] Control error frames and persisted automatic-mapping errors are bounded
       at 4 KiB so a malformed peer cannot amplify diagnostic text into large
       logs or status snapshots.

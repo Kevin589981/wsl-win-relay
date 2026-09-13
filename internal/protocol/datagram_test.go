@@ -25,3 +25,12 @@ func TestDecodeDatagramRejectsInvalidLength(t *testing.T) {
 		t.Fatal("expected invalid endpoint error")
 	}
 }
+
+func TestDatagramCodecRejectsPayloadBeyondUDPReadLimit(t *testing.T) {
+	if _, err := EncodeDatagram("127.0.0.1:53", make([]byte, MaxDatagramSize)); err == nil {
+		t.Fatal("oversized datagram was encoded")
+	}
+	if _, _, err := DecodeDatagram(make([]byte, MaxDatagramSize+1)); err == nil {
+		t.Fatal("oversized datagram was decoded")
+	}
+}
