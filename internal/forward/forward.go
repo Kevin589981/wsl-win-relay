@@ -77,12 +77,18 @@ type Set struct {
 }
 
 func OpenAll(ctx context.Context, opener Opener, mappings []Mapping) (*Set, error) {
+	if opener == nil {
+		return nil, errors.New("reverse forward opener is required")
+	}
 	return openAll(ctx, mappings, func(mapping Mapping) (io.Closer, error) {
 		return opener.ReverseForward(ctx, mapping.Windows, mapping.WSL)
 	})
 }
 
 func OpenDatagramAll(ctx context.Context, opener DatagramOpener, mappings []Mapping) (*Set, error) {
+	if opener == nil {
+		return nil, errors.New("reverse datagram opener is required")
+	}
 	return openAll(ctx, mappings, func(mapping Mapping) (io.Closer, error) {
 		return opener.ReverseDatagramForward(ctx, mapping.Windows, mapping.WSL)
 	})

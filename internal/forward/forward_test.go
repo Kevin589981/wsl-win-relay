@@ -60,9 +60,23 @@ func TestOpenAllRejectsNilCloser(t *testing.T) {
 	}
 }
 
+func TestOpenAllRejectsNilOpener(t *testing.T) {
+	_, err := OpenAll(context.Background(), nil, []Mapping{{Windows: "a", WSL: "x"}})
+	if err == nil || !strings.Contains(err.Error(), "opener is required") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
 func TestOpenDatagramAllRejectsNilCloser(t *testing.T) {
 	_, err := OpenDatagramAll(context.Background(), nilDatagramOpener{}, []Mapping{{Windows: "a", WSL: "x"}})
 	if err == nil || !strings.Contains(err.Error(), "opener returned nil mapping") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestOpenDatagramAllRejectsNilOpener(t *testing.T) {
+	_, err := OpenDatagramAll(context.Background(), nil, []Mapping{{Windows: "a", WSL: "x"}})
+	if err == nil || !strings.Contains(err.Error(), "opener is required") {
 		t.Fatalf("err=%v", err)
 	}
 }
