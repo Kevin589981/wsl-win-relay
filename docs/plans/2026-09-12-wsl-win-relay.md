@@ -27,6 +27,9 @@
       transports.
 - [x] Opt-in TUN/tun2socks transparent TCP/UDP routing, including real WSL
       verification while HNS had removed the default route.
+- [x] Transparent relay shutdown handles `HUP`/`QUIT` and bounds tun2socks
+      termination before route, DNS, and TUN rollback; a mock fault-injection
+      smoke runs this path without requiring root or a real TUN device.
 - [x] systemd user-service installer and private configuration handling.
 - [x] Independent IPv4/IPv6 Windows bind hosts for automatic and strict
       listener mappings.
