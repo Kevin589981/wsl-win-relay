@@ -46,6 +46,30 @@ SYSTEMCTL_LOG="$tmp_dir/systemctl.log" \
     -check-config >"$tmp_dir/check.log" 2>"$tmp_dir/check.err"
 grep -q '^configuration valid$' "$tmp_dir/check.log"
 [ ! -s "$tmp_dir/check.err" ]
+grep -q 'daemon-reload' "$tmp_dir/systemctl.log"
+! grep -q 'enable wsl-win-relay.service' "$tmp_dir/systemctl.log"
+! grep -q 'restart wsl-win-relay.service' "$tmp_dir/systemctl.log"
+grep -q 'without starting it' "$tmp_dir/install.log"
+
+printf '%s\n' '{"relay_exe":"/mnt/c/Users/you/bin/wsl-win-relay.exe"}' >"$tmp_dir/config/wsl-win-relay/config.json"
+: >"$tmp_dir/systemctl.log"
+HOME="$tmp_dir/home" \
+XDG_CONFIG_HOME="$tmp_dir/config" \
+PATH="$tmp_dir/bin:/usr/bin:/bin" \
+SYSTEMCTL_LOG="$tmp_dir/systemctl.log" \
+    "$repo_dir/scripts/install-user-service.sh" >"$tmp_dir/minified-placeholder.log"
+! grep -q 'enable wsl-win-relay.service' "$tmp_dir/systemctl.log"
+! grep -q 'restart wsl-win-relay.service' "$tmp_dir/systemctl.log"
+
+printf '%s\n' '{"relay_exe":"/mnt/c/relay.exe"}' >"$tmp_dir/config/wsl-win-relay/config.json"
+: >"$tmp_dir/systemctl.log"
+HOME="$tmp_dir/home" \
+XDG_CONFIG_HOME="$tmp_dir/config" \
+PATH="$tmp_dir/bin:/usr/bin:/bin" \
+SYSTEMCTL_LOG="$tmp_dir/systemctl.log" \
+    "$repo_dir/scripts/install-user-service.sh" >"$tmp_dir/reinstall.log"
+grep -q 'enable wsl-win-relay.service' "$tmp_dir/systemctl.log"
+grep -q 'restart wsl-win-relay.service' "$tmp_dir/systemctl.log"
 
 : >"$tmp_dir/systemctl.log"
 printf '%s\n' '{"unknown_setting":true}' >"$tmp_dir/config/wsl-win-relay/config.json"
@@ -61,6 +85,21 @@ set -e
 grep -q 'configuration validation failed' "$tmp_dir/invalid-install.log"
 [ ! -s "$tmp_dir/systemctl.log" ]
 install -m 0600 "$repo_dir/wsl-win-relay.example.json" "$tmp_dir/config/wsl-win-relay/config.json"
+printf '%s\n' '#!/bin/sh' 'exit 0' >"$tmp_dir/fake-connector.exe"
+chmod 700 "$tmp_dir/fake-connector.exe"
+printf '%s\n' \
+    'WSL_WIN_RELAY_BROKER_MODE=1' \
+    "WSL_WIN_RELAY_CONNECTOR_EXE='$tmp_dir/fake-connector.exe'" \
+    >"$tmp_dir/config/wsl-win-relay/broker.env"
+chmod 600 "$tmp_dir/config/wsl-win-relay/broker.env"
+: >"$tmp_dir/systemctl.log"
+HOME="$tmp_dir/home" \
+XDG_CONFIG_HOME="$tmp_dir/config" \
+PATH="$tmp_dir/bin:/usr/bin:/bin" \
+SYSTEMCTL_LOG="$tmp_dir/systemctl.log" \
+    "$repo_dir/scripts/install-user-service.sh" >"$tmp_dir/broker-first.log"
+grep -q 'enable wsl-win-relay.service' "$tmp_dir/systemctl.log"
+grep -q 'restart wsl-win-relay.service' "$tmp_dir/systemctl.log"
 
 set +e
 HOME="$tmp_dir/home" \

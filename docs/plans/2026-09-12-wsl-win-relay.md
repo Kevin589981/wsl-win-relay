@@ -69,6 +69,9 @@
       path and restores both symlink shape and original contents in the smoke
       test, keeping container and namespace verification off the host resolver.
 - [x] systemd user-service installer and private configuration handling.
+- [x] A first stdio-mode install with the example relay-path placeholder stages
+      but does not enable/start a guaranteed-failing service; an already
+      provisioned broker override still permits either installation order.
 - [x] `wsl-proxy -check-config` runs the production option parser without
       starting a relay or binding ports; the user-service installer uses it to
       reject invalid upgrades before touching running services.

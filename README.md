@@ -788,10 +788,16 @@ With WSL systemd enabled, install the user service:
 systemctl --user status wsl-win-relay.service
 ```
 
+On a first stdio-mode installation, the example contains a deliberate
+`/mnt/c/Users/you/...` relay placeholder. The installer deploys and reloads the
+unit but does not enable or start it until that path is edited and the installer
+is run again. If broker mode was installed first, its validated connector path
+overrides the placeholder and the user service can start immediately.
+
 Re-running the installer updates the installed binaries and unit, validates the
 existing configuration through the installed proxy, then restarts the user
-service so the new configuration is active immediately. A failed validation
-leaves running services untouched.
+service so the new configuration is active immediately. A failed validation or
+an unchanged example placeholder leaves running services untouched.
 
 The service restarts the proxy after a Windows relay crash or broken stdio
 transport; startup handshake and reverse registrations are recreated on each

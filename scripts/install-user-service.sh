@@ -6,6 +6,7 @@ bin_dir=$HOME/bin
 lib_dir=$HOME/lib
 service_dir=${XDG_CONFIG_HOME:-"$HOME/.config"}/systemd/user
 config_dir=${XDG_CONFIG_HOME:-"$HOME/.config"}/wsl-win-relay
+broker_env=$config_dir/broker.env
 if [ ! -x "$repo_dir/bin/wsl-proxy-linux" ]; then
     echo "missing $repo_dir/bin/wsl-proxy-linux; run scripts/build-wsl.sh first" >&2
     exit 1
@@ -51,11 +52,31 @@ if ! "$bin_dir/wsl-proxy-linux" -config "$config_path" -check-config >/dev/null;
     echo "relay configuration validation failed; services were not restarted" >&2
     exit 1
 fi
+configuration_ready=1
+if grep -Eq '"relay_exe"[[:space:]]*:[[:space:]]*"/mnt/c/Users/you/bin/wsl-win-relay\.exe"' "$config_path"; then
+    configuration_ready=0
+    if [ -f "$broker_env" ] && [ ! -L "$broker_env" ]; then
+        case "$(stat -c '%a' "$broker_env" 2>/dev/null || stat -f '%Lp' "$broker_env")" in
+            600|0600)
+                if grep -Eq "^WSL_WIN_RELAY_BROKER_MODE=('1'|1)$" "$broker_env"; then
+                    configured_connector=$(sed -n "s/^WSL_WIN_RELAY_CONNECTOR_EXE='\(.*\)'$/\1/p" "$broker_env" | head -n 1)
+                    if [ -n "$configured_connector" ] && { [ -f "$configured_connector" ] || command -v "$configured_connector" >/dev/null 2>&1; }; then
+                        configuration_ready=1
+                    fi
+                fi
+                ;;
+        esac
+    fi
+fi
 systemctl --user daemon-reload
 if [ -n "${XDG_CONFIG_HOME:-}" ]; then
     systemctl --user import-environment XDG_CONFIG_HOME
 else
     systemctl --user unset-environment XDG_CONFIG_HOME
+fi
+if [ "$configuration_ready" -eq 0 ]; then
+    echo "installed wsl-win-relay.service without starting it; configure relay_exe or install broker mode, then rerun this installer"
+    exit 0
 fi
 systemctl --user enable wsl-win-relay.service
 systemctl --user restart wsl-win-relay.service
