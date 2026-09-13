@@ -911,12 +911,12 @@ func TestReverseUDPForwardReportsWindowsAllocatedAddress(t *testing.T) {
 
 func TestReverseUDPForwardBoundsSourceFlows(t *testing.T) {
 	listener := newClientReverseDatagram(NewClient(&discardReadWriter{}), 1, "127.0.0.1:5353", mustUDPAddr(t, "127.0.0.1:9"), context.Background())
-	for index := 0; index < maxReverseDatagramFlows; index++ {
+	for index := 0; index < MaxReverseDatagramFlows; index++ {
 		listener.flows[fmt.Sprintf("source-%d", index)] = nil
 	}
 	listener.handle(protocol.Frame{Type: protocol.TypeListenDatagramData, StreamID: 1, Payload: mustDatagramPayload(t, "127.0.0.1:9", []byte("drop"))})
-	if len(listener.flows) != maxReverseDatagramFlows {
-		t.Fatalf("flow count=%d, want cap %d", len(listener.flows), maxReverseDatagramFlows)
+	if len(listener.flows) != MaxReverseDatagramFlows {
+		t.Fatalf("flow count=%d, want cap %d", len(listener.flows), MaxReverseDatagramFlows)
 	}
 }
 
@@ -1361,6 +1361,11 @@ func (b *lockedBuffer) Len() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.data.Len()
+}
+func (b *lockedBuffer) Snapshot() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]byte(nil), b.data.Bytes()...)
 }
 
 type frameCapture struct {

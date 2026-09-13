@@ -27,6 +27,7 @@ type Server struct {
 	dial             DialContextFunc
 	packetDial       PacketDialContextFunc
 	resolveUDP       func(context.Context, string, string) (*net.UDPAddr, error)
+	openSlots        chan struct{}
 	writeMu          sync.Mutex
 	mu               sync.Mutex
 	streams          map[uint32]*serverStream
@@ -88,7 +89,7 @@ func NewServerWithPacketDialer(rw io.ReadWriter, dial DialContextFunc, packetDia
 	if packetDial == nil {
 		packetDial = func(context.Context) (net.PacketConn, error) { return net.ListenUDP("udp", nil) }
 	}
-	return &Server{rw: rw, dial: dial, packetDial: packetDial, resolveUDP: netutil.ResolveUDPAddr, streams: make(map[uint32]*serverStream), listeners: make(map[uint32]*serverListener), datagrams: make(map[uint32]*serverDatagram), reverseDatagrams: make(map[uint32]*serverReverseDatagram)}
+	return &Server{rw: rw, dial: dial, packetDial: packetDial, resolveUDP: netutil.ResolveUDPAddr, openSlots: make(chan struct{}, MaxConcurrentOpenOperations), streams: make(map[uint32]*serverStream), listeners: make(map[uint32]*serverListener), datagrams: make(map[uint32]*serverDatagram), reverseDatagrams: make(map[uint32]*serverReverseDatagram)}
 }
 
 // NewServerWithLink creates a server whose frame transport can be replaced by
@@ -188,9 +189,9 @@ func (s *Server) handle(frame protocol.Frame) {
 		s.peerCapabilities.Store(protocol.DecodeCapabilities(frame.Payload))
 		_ = s.send(protocol.Frame{Type: protocol.TypeHelloOK, Payload: protocol.EncodeHelloOK(protocol.AllCapabilities, s.peerInstanceID.Load())})
 	case protocol.TypeOpen:
-		go s.open(frame.StreamID, string(frame.Payload))
+		s.startOpen(protocol.TypeOpenError, frame.StreamID, func() { s.open(frame.StreamID, string(frame.Payload)) })
 	case protocol.TypeListenOpen:
-		go s.openListener(frame.StreamID, string(frame.Payload))
+		s.startOpen(protocol.TypeListenError, frame.StreamID, func() { s.openListener(frame.StreamID, string(frame.Payload)) })
 	case protocol.TypeListenClose:
 		s.removeListener(frame.StreamID)
 	case protocol.TypeListenCommit:
@@ -204,7 +205,7 @@ func (s *Server) handle(frame protocol.Frame) {
 	case protocol.TypeListenDatagramClose:
 		s.removeReverseDatagram(frame.StreamID)
 	case protocol.TypeDatagramOpen:
-		go s.openDatagram(frame.StreamID)
+		s.startOpen(protocol.TypeDatagramError, frame.StreamID, func() { s.openDatagram(frame.StreamID) })
 	case protocol.TypeDatagramData:
 		s.writeDatagram(frame.StreamID, frame.Payload)
 	case protocol.TypeDatagramClose:
@@ -243,6 +244,18 @@ func (s *Server) handle(frame protocol.Frame) {
 	}
 }
 
+func (s *Server) startOpen(errorType protocol.Type, streamID uint32, open func()) {
+	select {
+	case s.openSlots <- struct{}{}:
+		go func() {
+			defer func() { <-s.openSlots }()
+			open()
+		}()
+	default:
+		_ = s.send(protocol.Frame{Type: errorType, StreamID: streamID, Payload: protocol.ErrorPayload(resourceLimitError("concurrent open operations", MaxConcurrentOpenOperations))})
+	}
+}
+
 type serverDatagram struct {
 	conn      net.PacketConn
 	ctx       context.Context
@@ -253,21 +266,35 @@ type serverDatagram struct {
 }
 
 func (s *Server) openDatagram(id uint32) {
-	conn, err := s.packetDial(s.ctx)
-	if err != nil {
-		_ = s.send(protocol.Frame{Type: protocol.TypeDatagramError, StreamID: id, Payload: protocol.ErrorPayload(err)})
-		return
-	}
 	datagramCtx, cancelDatagram := context.WithCancel(s.ctx)
+	datagram := &serverDatagram{ctx: datagramCtx, cancel: cancelDatagram, incoming: make(chan []byte, datagramQueueDepth), done: make(chan struct{})}
 	s.mu.Lock()
 	if _, exists := s.datagrams[id]; exists {
 		s.mu.Unlock()
 		cancelDatagram()
+		return
+	}
+	if len(s.datagrams) >= MaxConcurrentDatagrams {
+		s.mu.Unlock()
+		cancelDatagram()
+		_ = s.send(protocol.Frame{Type: protocol.TypeDatagramError, StreamID: id, Payload: protocol.ErrorPayload(resourceLimitError("UDP associations", MaxConcurrentDatagrams))})
+		return
+	}
+	s.datagrams[id] = datagram
+	s.mu.Unlock()
+	conn, err := s.packetDial(datagramCtx)
+	if err != nil {
+		s.removeDatagram(id)
+		_ = s.send(protocol.Frame{Type: protocol.TypeDatagramError, StreamID: id, Payload: protocol.ErrorPayload(err)})
+		return
+	}
+	s.mu.Lock()
+	if s.datagrams[id] != datagram || datagramCtx.Err() != nil {
+		s.mu.Unlock()
 		_ = conn.Close()
 		return
 	}
-	datagram := &serverDatagram{conn: conn, ctx: datagramCtx, cancel: cancelDatagram, incoming: make(chan []byte, 64), done: make(chan struct{})}
-	s.datagrams[id] = datagram
+	datagram.conn = conn
 	s.mu.Unlock()
 	if err := s.send(protocol.Frame{Type: protocol.TypeDatagramOK, StreamID: id}); err != nil {
 		s.removeDatagram(id)
@@ -362,7 +389,9 @@ func (s *Server) removeDatagram(id uint32) {
 			if datagram.cancel != nil {
 				datagram.cancel()
 			}
-			_ = datagram.conn.Close()
+			if datagram.conn != nil {
+				_ = datagram.conn.Close()
+			}
 		})
 	}
 }
@@ -381,26 +410,41 @@ func (s *Server) openReverseDatagram(id uint32, addr string) {
 		_ = s.send(protocol.Frame{Type: protocol.TypeListenDatagramError, StreamID: id, Payload: []byte("invalid datagram listen request")})
 		return
 	}
-	address, err := s.resolveUDP(s.ctx, "udp", addr)
+	datagramCtx, cancelDatagram := context.WithCancel(s.ctx)
+	datagram := &serverReverseDatagram{ctx: datagramCtx, cancel: cancelDatagram, incoming: make(chan []byte, datagramQueueDepth), done: make(chan struct{})}
+	s.mu.Lock()
+	if _, exists := s.reverseDatagrams[id]; exists {
+		s.mu.Unlock()
+		cancelDatagram()
+		return
+	}
+	if len(s.reverseDatagrams) >= MaxConcurrentReverseDatagrams {
+		s.mu.Unlock()
+		cancelDatagram()
+		_ = s.send(protocol.Frame{Type: protocol.TypeListenDatagramError, StreamID: id, Payload: protocol.ErrorPayload(resourceLimitError("reverse UDP listeners", MaxConcurrentReverseDatagrams))})
+		return
+	}
+	s.reverseDatagrams[id] = datagram
+	s.mu.Unlock()
+	address, err := s.resolveUDP(datagramCtx, "udp", addr)
 	if err != nil {
+		s.removeReverseDatagram(id)
 		_ = s.send(protocol.Frame{Type: protocol.TypeListenDatagramError, StreamID: id, Payload: protocol.ErrorPayload(err)})
 		return
 	}
 	conn, err := net.ListenUDP("udp", address)
 	if err != nil {
+		s.removeReverseDatagram(id)
 		_ = s.send(protocol.Frame{Type: protocol.TypeListenDatagramError, StreamID: id, Payload: protocol.ErrorPayload(err)})
 		return
 	}
-	datagramCtx, cancelDatagram := context.WithCancel(s.ctx)
 	s.mu.Lock()
-	if _, exists := s.reverseDatagrams[id]; exists {
+	if s.reverseDatagrams[id] != datagram || datagramCtx.Err() != nil {
 		s.mu.Unlock()
-		cancelDatagram()
 		_ = conn.Close()
 		return
 	}
-	datagram := &serverReverseDatagram{conn: conn, ctx: datagramCtx, cancel: cancelDatagram, incoming: make(chan []byte, 64), done: make(chan struct{})}
-	s.reverseDatagrams[id] = datagram
+	datagram.conn = conn
 	s.mu.Unlock()
 	if err := s.send(protocol.Frame{Type: protocol.TypeListenDatagramOK, StreamID: id, Payload: s.boundAddressPayload(conn.LocalAddr())}); err != nil {
 		s.removeReverseDatagram(id)
@@ -482,7 +526,9 @@ func (s *Server) removeReverseDatagram(id uint32) {
 			if datagram.cancel != nil {
 				datagram.cancel()
 			}
-			_ = datagram.conn.Close()
+			if datagram.conn != nil {
+				_ = datagram.conn.Close()
+			}
 		})
 	}
 }
@@ -505,6 +551,12 @@ func (s *Server) openListener(id uint32, addr string) {
 	if _, exists := s.listeners[id]; exists {
 		s.mu.Unlock()
 		cancel()
+		return
+	}
+	if len(s.listeners) >= MaxConcurrentListeners {
+		s.mu.Unlock()
+		cancel()
+		_ = s.send(protocol.Frame{Type: protocol.TypeListenError, StreamID: id, Payload: protocol.ErrorPayload(resourceLimitError("TCP listeners", MaxConcurrentListeners))})
 		return
 	}
 	s.listeners[id] = listener
@@ -533,6 +585,10 @@ func (s *Server) openListener(id uint32, addr string) {
 		s.removeListener(id)
 		return
 	}
+	go s.serveListener(id, listener, ln, ctx)
+}
+
+func (s *Server) serveListener(id uint32, listener *serverListener, ln net.Listener, ctx context.Context) {
 	go func() {
 		<-ctx.Done()
 		_ = ln.Close()
@@ -549,11 +605,11 @@ func (s *Server) openListener(id uint32, addr string) {
 			_ = s.send(protocol.Frame{Type: protocol.TypeListenClose, StreamID: id})
 			return
 		}
-		streamID := s.nextStream.Add(2)
-		stream := newServerStream(conn, func() {})
-		s.mu.Lock()
-		s.streams[streamID] = stream
-		s.mu.Unlock()
+		streamID, stream, accepted := s.registerInboundStream(conn)
+		if !accepted {
+			_ = conn.Close()
+			continue
+		}
 		go s.writeToRemote(streamID, stream)
 		payload := make([]byte, 4)
 		binary.BigEndian.PutUint32(payload, id)
@@ -563,6 +619,21 @@ func (s *Server) openListener(id uint32, addr string) {
 		}
 		go s.copyToClient(streamID, conn)
 	}
+}
+
+func (s *Server) registerInboundStream(conn net.Conn) (uint32, *serverStream, bool) {
+	stream := newServerStream(conn, func() {})
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.streams) >= MaxConcurrentStreams {
+		return 0, nil, false
+	}
+	streamID := s.nextStream.Add(2)
+	if _, exists := s.streams[streamID]; exists {
+		return 0, nil, false
+	}
+	s.streams[streamID] = stream
+	return streamID, stream, true
 }
 
 func (s *Server) boundAddressPayload(address net.Addr) []byte {
@@ -605,6 +676,12 @@ func (s *Server) open(id uint32, target string) {
 	if _, exists := s.streams[id]; exists {
 		s.mu.Unlock()
 		cancel()
+		return
+	}
+	if len(s.streams) >= MaxConcurrentStreams {
+		s.mu.Unlock()
+		cancel()
+		s.send(protocol.Frame{Type: protocol.TypeOpenError, StreamID: id, Payload: protocol.ErrorPayload(resourceLimitError("TCP streams", MaxConcurrentStreams))})
 		return
 	}
 	s.streams[id] = stream

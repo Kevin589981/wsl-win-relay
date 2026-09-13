@@ -9,6 +9,9 @@
 ## Current Completion Matrix
 
 - [x] Framed stdio relay with bounded streams and capability negotiation.
+- [x] Client/server registries, reverse UDP source flows, UDP queues, and
+      asynchronous open workers have explicit global caps with type-matched
+      protocol rejection; saturation preserves established relay objects.
 - [x] Frame type, stream ID, and type-specific payload length are validated
       from the header before any payload allocation/read, preventing malformed
       peers from using invalid frames for memory or I/O amplification.

@@ -25,6 +25,8 @@ usable and tested:
 - Optional Windows-side HTTP CONNECT or SOCKS5/SOCKS5H upstream proxy; SOCKS5
   upstreams also carry relay UDP via UDP ASSOCIATE.
 - Per-stream 256 KiB credit windows that isolate slow TCP consumers.
+- Global relay registry, UDP queue/source-flow, and concurrent-open caps that
+  reject excess work without disturbing established streams or mappings.
 - Startup capability negotiation before any proxy or mapped port is advertised.
 - Idempotent systemd user-service installation with private configuration permissions and restart-on-relay-failure.
 - Broker installation validates the protected token file and rejects missing,

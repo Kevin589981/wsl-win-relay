@@ -167,8 +167,18 @@ func (c *Client) ResetPeerState(cause error) {
 
 func (c *Client) OpenPacketContext(ctx context.Context) (net.PacketConn, error) {
 	id := c.nextID.Add(2)
-	p := &clientPacketConn{client: c, id: id, ready: make(chan error, 1), incoming: make(chan packetEvent, 64), done: make(chan struct{}), deadlineChanged: make(chan struct{})}
+	p := &clientPacketConn{client: c, id: id, ready: make(chan error, 1), incoming: make(chan packetEvent, datagramQueueDepth), done: make(chan struct{}), deadlineChanged: make(chan struct{})}
 	c.mu.Lock()
+	select {
+	case <-c.closed:
+		c.mu.Unlock()
+		return nil, ErrClientClosed
+	default:
+	}
+	if len(c.datagrams) >= MaxConcurrentDatagrams {
+		c.mu.Unlock()
+		return nil, resourceLimitError("UDP associations", MaxConcurrentDatagrams)
+	}
 	c.datagrams[id] = p
 	c.mu.Unlock()
 	if err := c.write(protocol.Frame{Type: protocol.TypeDatagramOpen, StreamID: id}); err != nil {
@@ -267,6 +277,10 @@ func (c *Client) DialContext(ctx context.Context, target string) (net.Conn, erro
 		return nil, ErrClientClosed
 	default:
 	}
+	if len(c.streams) >= MaxConcurrentStreams {
+		c.mu.Unlock()
+		return nil, resourceLimitError("TCP streams", MaxConcurrentStreams)
+	}
 	c.streams[id] = s
 	c.mu.Unlock()
 	if err := c.write(protocol.Frame{Type: protocol.TypeOpen, StreamID: id, Payload: []byte(target)}); err != nil {
@@ -317,6 +331,18 @@ func (c *Client) ReverseDatagramForward(ctx context.Context, windowsAddr, target
 	l := newClientReverseDatagram(c, id, windowsAddr, targetAddr, listenerCtx)
 	l.cancel = listenerCancel
 	c.mu.Lock()
+	select {
+	case <-c.closed:
+		c.mu.Unlock()
+		listenerCancel()
+		return nil, ErrClientClosed
+	default:
+	}
+	if len(c.reverseDatagrams) >= MaxConcurrentReverseDatagrams {
+		c.mu.Unlock()
+		listenerCancel()
+		return nil, resourceLimitError("reverse UDP listeners", MaxConcurrentReverseDatagrams)
+	}
 	c.reverseDatagrams[id] = l
 	c.mu.Unlock()
 	if err := c.write(protocol.Frame{Type: protocol.TypeListenDatagramOpen, StreamID: id, Payload: []byte(windowsAddr)}); err != nil {
@@ -351,6 +377,18 @@ func (c *Client) ReserveReverseForward(ctx context.Context, windowsAddr, target 
 	listenerCtx, listenerCancel := context.WithCancel(context.Background())
 	l := &clientListener{id: id, client: c, requestedAddress: windowsAddr, target: target, ctx: listenerCtx, cancel: listenerCancel, ready: make(chan listenerReady, 1)}
 	c.mu.Lock()
+	select {
+	case <-c.closed:
+		c.mu.Unlock()
+		listenerCancel()
+		return nil, ErrClientClosed
+	default:
+	}
+	if len(c.listeners) >= MaxConcurrentListeners {
+		c.mu.Unlock()
+		listenerCancel()
+		return nil, resourceLimitError("TCP listeners", MaxConcurrentListeners)
+	}
 	c.listeners[id] = l
 	c.mu.Unlock()
 	if err := c.write(protocol.Frame{Type: protocol.TypeListenOpen, StreamID: id, Payload: []byte(windowsAddr)}); err != nil {
@@ -522,6 +560,11 @@ func (c *Client) dispatch(frame protocol.Frame) {
 			if _, exists := c.streams[frame.StreamID]; exists {
 				c.mu.Unlock()
 				_ = c.write(protocol.Frame{Type: protocol.TypeReset, StreamID: frame.StreamID, Payload: []byte("duplicate inbound stream id")})
+				return
+			}
+			if len(c.streams) >= MaxConcurrentStreams {
+				c.mu.Unlock()
+				_ = c.write(protocol.Frame{Type: protocol.TypeReset, StreamID: frame.StreamID, Payload: protocol.ErrorPayload(resourceLimitError("TCP streams", MaxConcurrentStreams))})
 				return
 			}
 			c.streams[frame.StreamID] = s
@@ -808,7 +851,6 @@ const (
 	reverseDatagramIdleTimeout = 5 * time.Minute
 	// Bound per-mapping local sockets when a Windows listener is exposed to
 	// untrusted sources. Expired flows are reclaimed by the idle deadline.
-	maxReverseDatagramFlows = 1024
 )
 
 type clientReverseDatagram struct {
@@ -874,7 +916,7 @@ func (l *clientReverseDatagram) handle(frame protocol.Frame) {
 		}
 		flow := l.flows[key]
 		if flow == nil {
-			if len(l.flows) >= maxReverseDatagramFlows {
+			if len(l.flows) >= MaxReverseDatagramFlows {
 				l.mu.Unlock()
 				return
 			}
