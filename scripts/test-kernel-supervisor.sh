@@ -181,6 +181,21 @@ printf '%s\n' \
     '    posix_spawnattr_destroy(&attributes); if (spawn_error != 0) return spawn_error;' \
     '    return waitpid(child, NULL, 0) == child ? 0 : 6;' \
     '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "posix-spawn-chdir") == 0) {' \
+    '#if defined(__GLIBC__) && defined(__GLIBC_PREREQ) && __GLIBC_PREREQ(2, 29)' \
+    '    posix_spawn_file_actions_t actions; if (posix_spawn_file_actions_init(&actions) != 0) return 4;' \
+    '    int directory = open("/tmp", O_RDONLY | O_DIRECTORY | O_CLOEXEC);' \
+    '    if (directory < 0 || posix_spawn_file_actions_addchdir_np(&actions, "/tmp") != 0 || posix_spawn_file_actions_addfchdir_np(&actions, directory) != 0) {' \
+    '      if (directory >= 0) close(directory); posix_spawn_file_actions_destroy(&actions); return 77;' \
+    '    }' \
+    '    pid_t child = -1; char *spawn_argv[] = { argv[0], (char *)"spawn-child", NULL };' \
+    '    int spawn_error = posix_spawn(&child, argv[0], &actions, NULL, spawn_argv, environ);' \
+    '    close(directory); posix_spawn_file_actions_destroy(&actions); if (spawn_error != 0) return spawn_error;' \
+    '    return waitpid(child, NULL, 0) == child ? 0 : 6;' \
+    '#else' \
+    '    return 77;' \
+    '#endif' \
+    '  }' \
     '  if (argc > 1 && strcmp(argv[1], "posix-spawnp") == 0) {' \
     '    char executable[PATH_MAX]; if (realpath(argv[0], executable) == NULL) return 4;' \
     '    char *slash = strrchr(executable, '\''/'\''); if (slash == NULL) return 4; *slash = '\''\0'\'';' \
@@ -573,6 +588,22 @@ grep -q '^COMMIT ' "$tmp_dir/posix-spawn-attrs.log"
 grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/posix-spawn-attrs.log"
 stop_control
 
+start_control "$tmp_dir/posix-spawn-chdir.sock" "$tmp_dir/posix-spawn-chdir.log"
+set +e
+WSL_WIN_RELAY_CONTROL="$tmp_dir/posix-spawn-chdir.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" posix-spawn-chdir
+posix_spawn_chdir_status=$?
+set -e
+if [ "$posix_spawn_chdir_status" -ne 0 ] && [ "$posix_spawn_chdir_status" -ne 77 ]; then
+    echo "posix_spawn chdir target failed with status $posix_spawn_chdir_status" >&2
+    exit 1
+fi
+if [ "$posix_spawn_chdir_status" -eq 0 ]; then
+    grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/posix-spawn-chdir.log"
+    grep -q '^COMMIT ' "$tmp_dir/posix-spawn-chdir.log"
+    grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/posix-spawn-chdir.log"
+fi
+stop_control
+
 start_control "$tmp_dir/system.sock" "$tmp_dir/system.log"
 WSL_WIN_RELAY_CONTROL="$tmp_dir/system.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" system
 grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/system.log"
@@ -812,4 +843,4 @@ fi
 grep -q 'RESERVE .* tcp4 47154' "$tmp_dir/shell-reject.log"
 ! grep -q '^COMMIT ' "$tmp_dir/shell-reject.log"
 stop_control
-echo "kernel supervisor coordinated static TCP/UDP, forkpty/vfork exec paths, POSIX_SPAWN_USEVFORK/attributes, and propagated rejection"
+echo "kernel supervisor coordinated static TCP/UDP, forkpty/vfork exec paths, POSIX_SPAWN_USEVFORK/attributes/file-actions, and propagated rejection"

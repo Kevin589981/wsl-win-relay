@@ -523,6 +523,8 @@ ownership cleanup.
 The native lifecycle smoke also exercises `posix_spawnp()` PATH lookup and
 the explicit `POSIX_SPAWN_USEVFORK` attribute path, plus
 `posix_spawn` signal-mask, signal-default, and process-group attributes, plus
+GNU `posix_spawn_file_actions_addchdir_np()` and `addfchdir_np()` actions when
+available, plus
 direct `vfork()` followed by `execl()`, `execvp()`, or descriptor-based
 `fexecve()`, plus `execvpe()` with an explicit child environment; these paths
 retain the same bounded ownership and cleanup guarantees. The kernel adapter does not
