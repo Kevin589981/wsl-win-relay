@@ -12,6 +12,9 @@
 - [x] SOCKS5 TCP CONNECT and UDP ASSOCIATE, plus optional HTTP CONNECT.
 - [x] Windows-side HTTP CONNECT and SOCKS5/SOCKS5H upstream support.
 - [x] Explicit TCP and UDP reverse forwarding with bind-error propagation.
+- [x] Reverse UDP source flows use connected WSL sockets, preventing an
+      unrelated local UDP sender from entering a Windows client's response
+      path.
 - [x] Polling TCP listener discovery with include/exclude policies.
 - [x] Strict TCP `listen()` and non-zero UDP `bind()` coordination through the
       native launcher/interposer, including descriptor ownership cleanup.
