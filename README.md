@@ -267,6 +267,11 @@ Remove-Item Env:GOOS,Env:GOARCH
 `scripts/build-wsl.sh` selects `amd64` or `arm64` from `uname -m`; set
 `WSL_WIN_RELAY_GOARCH=amd64|arm64` to override it for Go cross-builds. Set
 `WSL_WIN_RELAY_OUTPUT_DIR` to place a build in a separate staging directory.
+The script embeds a tag/commit description, commit ID, and UTC build time into
+all Go executables and the native strict supervisor. Run any executable with
+`-version` or `--version` before comparing logs from different installations.
+`WSL_WIN_RELAY_BUILD_VERSION`, `WSL_WIN_RELAY_BUILD_COMMIT`, and
+`SOURCE_DATE_EPOCH` provide reproducible build overrides.
 The native strict supervisor is compiled for the running WSL architecture, so
 an arm64 cross-build of the Go binaries is not a substitute for native ptrace
 runtime validation. Native arm64 runtime validation is outside the current

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Kevin589981/wsl-win-relay/internal/autoforward"
+	"github.com/Kevin589981/wsl-win-relay/internal/buildinfo"
 	appconfig "github.com/Kevin589981/wsl-win-relay/internal/config"
 	"github.com/Kevin589981/wsl-win-relay/internal/forward"
 	"github.com/Kevin589981/wsl-win-relay/internal/httpproxy"
@@ -65,6 +66,9 @@ const relayRestartMaxDelay = 30 * time.Second
 const relayRestartResetAfter = time.Minute
 
 func main() {
+	if buildinfo.PrintRequested(os.Stdout, "wsl-proxy", os.Args[1:]) {
+		return
+	}
 	logger := log.New(os.Stderr, "wsl-proxy: ", log.LstdFlags)
 	opts, err := parseOptions(os.Args[1:])
 	if err != nil {

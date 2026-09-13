@@ -21,6 +21,16 @@
 #include <time.h>
 #include "strict_supervisor_regs.h"
 
+#ifndef WWR_VERSION
+#define WWR_VERSION "dev"
+#endif
+#ifndef WWR_COMMIT
+#define WWR_COMMIT "unknown"
+#endif
+#ifndef WWR_BUILT_AT
+#define WWR_BUILT_AT "unknown"
+#endif
+
 #ifndef CLOSE_RANGE_UNSHARE
 #define CLOSE_RANGE_UNSHARE (1U << 1)
 #endif
@@ -1153,6 +1163,10 @@ static int trace_target(void) {
 }
 
 int main(int argc, char **argv) {
+    if (argc == 2 && (strcmp(argv[1], "-version") == 0 || strcmp(argv[1], "--version") == 0)) {
+        printf("wsl-win-relay-strict %s (commit %s, built %s)\n", WWR_VERSION, WWR_COMMIT, WWR_BUILT_AT);
+        return 0;
+    }
     if (argc < 2) {
         fprintf(stderr, "usage: wsl-win-relay-strict COMMAND [ARG ...]\n");
         return 2;

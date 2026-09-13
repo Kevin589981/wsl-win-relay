@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/Kevin589981/wsl-win-relay/internal/buildinfo"
 )
 
 type options struct {
@@ -28,6 +30,9 @@ type options struct {
 }
 
 func main() {
+	if buildinfo.PrintRequested(os.Stdout, "wsl-win-broker", os.Args[1:]) {
+		return
+	}
 	logger := log.New(os.Stderr, "win-broker: ", log.LstdFlags)
 	opts, err := parseOptions(os.Args[1:])
 	if err != nil {

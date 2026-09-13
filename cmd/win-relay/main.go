@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Kevin589981/wsl-win-relay/internal/buildinfo"
 	"github.com/Kevin589981/wsl-win-relay/internal/relay"
 	"github.com/Kevin589981/wsl-win-relay/internal/transport/stdio"
 	"github.com/Kevin589981/wsl-win-relay/internal/upstream"
@@ -19,6 +20,9 @@ type options struct {
 }
 
 func main() {
+	if buildinfo.PrintRequested(os.Stdout, "wsl-win-relay", os.Args[1:]) {
+		return
+	}
 	logger := log.New(os.Stderr, "win-relay: ", log.LstdFlags)
 	opts, err := parseOptions(os.Args[1:])
 	if err != nil {

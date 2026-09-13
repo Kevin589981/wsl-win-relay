@@ -14,6 +14,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/Kevin589981/wsl-win-relay/internal/buildinfo"
 	"github.com/Kevin589981/wsl-win-relay/internal/connector"
 	"github.com/Kevin589981/wsl-win-relay/internal/transport/stdio"
 )
@@ -25,6 +26,9 @@ type options struct {
 }
 
 func main() {
+	if buildinfo.PrintRequested(os.Stdout, "wsl-win-connector", os.Args[1:]) {
+		return
+	}
 	logger := log.New(os.Stderr, "win-connector: ", log.LstdFlags)
 	opts, err := parseOptions(os.Args[1:])
 	if err != nil {

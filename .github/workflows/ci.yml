@@ -92,7 +92,8 @@ jobs:
           go-version-file: go.mod
           check-latest: true
           cache: false
-      - run: ./scripts/build-wsl.sh
+      - run: WSL_WIN_RELAY_BUILD_VERSION=ci WSL_WIN_RELAY_BUILD_COMMIT=${GITHUB_SHA::12} SOURCE_DATE_EPOCH=0 ./scripts/build-wsl.sh
+      - run: ./scripts/test-build-metadata.sh
       - run: sh -n scripts/*.sh scripts/wsl-win-relay-run
       - run: ./scripts/test-user-installer.sh
       - run: ./scripts/test-launcher-preflight.sh

@@ -9,6 +9,8 @@
 ## Current Completion Matrix
 
 - [x] Framed stdio relay with bounded streams and capability negotiation.
+- [x] Every executable exposes consistent version, commit, and build-time
+      metadata; the WSL build and CI paths inject and verify matching values.
 - [x] SOCKS5 TCP CONNECT and UDP ASSOCIATE, plus optional HTTP CONNECT and
       absolute-form cleartext HTTP forwarding.
 - [x] JSON configuration uses the accurate `http_proxy_listen` name for the
