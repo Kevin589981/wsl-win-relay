@@ -159,6 +159,9 @@
 - [x] The static lifecycle smoke covers the combined
       `posix_spawnp(POSIX_SPAWN_USEVFORK)` and `addopen()` path, verifying
       PATH-search file actions under the shared-address-space spawn variant.
+- [x] The static lifecycle smoke covers `posix_spawn(POSIX_SPAWN_USEVFORK)`
+      with `adddup2()`/`addclose()` actions, extending descriptor ownership
+      coverage through a vfork child.
 - [x] The static lifecycle smoke covers GNU `posix_spawn` `addclosefrom_np`,
       verifying child-side bulk descriptor cleanup while the parent lease
       remains live; older glibc versions skip this optional action explicitly.

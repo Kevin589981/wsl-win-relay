@@ -51,7 +51,8 @@ work follows the same model:
   before the parent event; the supervisor recovers that stop only when procfs
   confirms the tracked parent still has an unfinished create syscall, and
   rejects all unmatched stops. `system()`, `popen()`, and `wordexp()` nested-vfork launches,
-  plus `posix_spawnp()` PATH lookup, explicit `POSIX_SPAWN_USEVFORK`, and direct
+  plus `posix_spawnp()` PATH lookup, explicit `POSIX_SPAWN_USEVFORK`, and
+  `POSIX_SPAWN_USEVFORK` descriptor `adddup2`/`addclose` actions, and direct
   `vfork()`/`execl()` and
   `vfork()`/`execvp()` and descriptor-based `vfork()`/`fexecve()` children are
   covered by the static smoke test. The same smoke covers `daemon()` root-leader

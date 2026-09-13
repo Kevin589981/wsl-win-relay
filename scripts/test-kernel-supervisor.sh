@@ -219,6 +219,23 @@ printf '%s\n' \
     '    return 77;' \
     '#endif' \
     '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "posix-spawn-vfork-dupclose") == 0) {' \
+    '#ifdef POSIX_SPAWN_USEVFORK' \
+    '    posix_spawnattr_t attributes; if (posix_spawnattr_init(&attributes) != 0) return 4;' \
+    '    if (posix_spawnattr_setflags(&attributes, POSIX_SPAWN_USEVFORK) != 0) { posix_spawnattr_destroy(&attributes); return 4; }' \
+    '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0};' \
+    '    address.sin_family = AF_INET; address.sin_port = htons(47163); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
+    '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) { if (fd >= 0) close(fd); posix_spawnattr_destroy(&attributes); return 2; }' \
+    '    posix_spawn_file_actions_t actions; if (posix_spawn_file_actions_init(&actions) != 0) { close(fd); posix_spawnattr_destroy(&attributes); return 4; }' \
+    '    if (posix_spawn_file_actions_adddup2(&actions, fd, 9) != 0 || posix_spawn_file_actions_addclose(&actions, fd) != 0) { posix_spawn_file_actions_destroy(&actions); close(fd); posix_spawnattr_destroy(&attributes); return 4; }' \
+    '    pid_t child = -1; char *spawn_argv[] = { argv[0], (char *)"spawn-child", NULL };' \
+    '    int spawn_error = posix_spawn(&child, argv[0], &actions, &attributes, spawn_argv, environ);' \
+    '    posix_spawn_file_actions_destroy(&actions); posix_spawnattr_destroy(&attributes); if (spawn_error != 0) { close(fd); return spawn_error; }' \
+    '    int result = waitpid(child, NULL, 0) == child ? 0 : 6; close(fd); return result;' \
+    '#else' \
+    '    return 77;' \
+    '#endif' \
+    '  }' \
     '  if (argc > 1 && strcmp(argv[1], "posix-spawn-attrs") == 0) {' \
     '    posix_spawnattr_t attributes; sigset_t empty, defaults; if (posix_spawnattr_init(&attributes) != 0) return 4;' \
     '    if (sigemptyset(&empty) != 0 || sigemptyset(&defaults) != 0 || sigaddset(&defaults, SIGPIPE) != 0 ||' \
@@ -737,6 +754,22 @@ if [ "$posix_spawnp_vfork_actions_status" -eq 0 ]; then
 fi
 stop_control
 
+start_control "$tmp_dir/posix-spawn-vfork-dupclose.sock" "$tmp_dir/posix-spawn-vfork-dupclose.log"
+set +e
+WSL_WIN_RELAY_CONTROL="$tmp_dir/posix-spawn-vfork-dupclose.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" posix-spawn-vfork-dupclose
+posix_spawn_vfork_dupclose_status=$?
+set -e
+if [ "$posix_spawn_vfork_dupclose_status" -ne 0 ] && [ "$posix_spawn_vfork_dupclose_status" -ne 77 ]; then
+    echo "posix_spawn(POSIX_SPAWN_USEVFORK + dup2/close) target failed with status $posix_spawn_vfork_dupclose_status" >&2
+    exit 1
+fi
+if [ "$posix_spawn_vfork_dupclose_status" -eq 0 ]; then
+    grep -q 'RESERVE .* tcp4 47163' "$tmp_dir/posix-spawn-vfork-dupclose.log"
+    grep -q '^COMMIT ' "$tmp_dir/posix-spawn-vfork-dupclose.log"
+    grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/posix-spawn-vfork-dupclose.log"
+fi
+stop_control
+
 start_control "$tmp_dir/posix-spawnp.sock" "$tmp_dir/posix-spawnp.log"
 WSL_WIN_RELAY_CONTROL="$tmp_dir/posix-spawnp.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" posix-spawnp
 grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/posix-spawnp.log"
@@ -1143,4 +1176,4 @@ fi
 grep -q 'RESERVE .* tcp4 47154' "$tmp_dir/shell-reject.log"
 ! grep -q '^COMMIT ' "$tmp_dir/shell-reject.log"
 stop_control
-echo "kernel supervisor coordinated static TCP/UDP, forkpty/vfork exec variants, POSIX_SPAWN_USEVFORK/attributes/SETSID/RESETIDS/file-actions/closefrom and posix_spawnp PATH actions/chdir/vfork-actions, and propagated rejection"
+echo "kernel supervisor coordinated static TCP/UDP, forkpty/vfork exec variants, POSIX_SPAWN_USEVFORK/attributes/SETSID/RESETIDS/file-actions/closefrom/dupclose and posix_spawnp PATH actions/chdir/vfork-actions, and propagated rejection"
