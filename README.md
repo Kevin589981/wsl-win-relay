@@ -318,6 +318,34 @@ verification target.
 launched by it through WSL interop. Alternatively, run `go build` for the
 Linux proxy directly inside WSL.
 
+### Release verification
+
+Run the complete repeatable release gate inside WSL:
+
+```bash
+./scripts/test-release.sh
+```
+
+It runs all Go tests, vet, the race detector, amd64 Linux/Windows builds, native
+strict adapters, transparent rollback, isolated installers, and the complete
+Linux-hosted broker recovery matrix. Add `--windows-interop` to also launch the
+built Windows binaries and verify stdio/broker networking, automatic TCP/UDP
+mapping, connector recovery, and cleanup. In this environment the full command
+is:
+
+```bash
+WWR_WINDOWS_SHELL=/mnt/d/AppGallery/Downloads/PowerShell/7/pwsh.exe \
+WWR_WINDOWS_UPSTREAM_PROXY=socks5h://matebookxpro.local:7890 \
+WWR_BROKER_INTEROP_SERVICE_WRAPPER=1 \
+WWR_BROKER_INTEROP_WINDOWS_PORT_AUTO=1 \
+WWR_BROKER_INTEROP_AUTO_UDP=1 \
+  ./scripts/test-release.sh --windows-interop
+```
+
+`--native-only` is reserved for CI jobs that already ran the Go matrix. The
+release gate intentionally performs no aarch64 runtime test; arm64 build
+coverage remains a separate CI job.
+
 ## Configuration
 
 For long-running use, start from [`wsl-win-relay.example.json`](wsl-win-relay.example.json):

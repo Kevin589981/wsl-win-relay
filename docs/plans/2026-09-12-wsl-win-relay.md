@@ -21,6 +21,9 @@
       rune-safe encoder and additionally remain single-line.
 - [x] Every executable exposes consistent version, commit, and build-time
       metadata; the WSL build and CI paths inject and verify matching values.
+- [x] A fail-fast WSL release gate runs Go tests/vet/race, amd64 builds, native
+      adapters, isolated installers, and the broker recovery matrix; optional
+      Windows interop adds real TCP/UDP egress and mapping lifecycle checks.
 - [x] SOCKS5 TCP CONNECT and UDP ASSOCIATE, plus optional HTTP CONNECT and
       absolute-form cleartext HTTP forwarding.
 - [x] UDP endpoint resolution is context-aware on WSL and Windows; per-object

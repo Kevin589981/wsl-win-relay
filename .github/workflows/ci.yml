@@ -93,20 +93,4 @@ jobs:
           go-version-file: go.mod
           check-latest: true
           cache: false
-      - run: WSL_WIN_RELAY_BUILD_VERSION=ci WSL_WIN_RELAY_BUILD_COMMIT=${GITHUB_SHA::12} SOURCE_DATE_EPOCH=0 ./scripts/build-wsl.sh
-      - run: ./scripts/test-build-metadata.sh
-      - run: sh -n scripts/*.sh scripts/wsl-win-relay-run
-      - run: ./scripts/test-user-installer.sh
-      - run: ./scripts/test-doctor.sh
-      - run: ./scripts/test-launcher-preflight.sh
-      - run: ./scripts/test-kernel-supervisor.sh
-      - run: ./scripts/test-interposer.sh
-      - run: ./scripts/test-transparent-relay.sh
-      - run: ./scripts/test-transparent-installer.sh
-      - run: GOPROXY=off ./scripts/test-broker-connector.sh
-      - run: GOPROXY=off ./scripts/test-broker-reconnect.sh
-      - run: GOPROXY=off ./scripts/test-broker-auto-rebind.sh
-      - run: GOPROXY=off ./scripts/test-broker-restart.sh
-      - run: GOPROXY=off ./scripts/test-broker-supervisor.sh
-      - run: ./scripts/test-broker-service-wrapper.sh
-      - run: ./scripts/test-broker-installer.sh
+      - run: WSL_WIN_RELAY_BUILD_VERSION=ci WSL_WIN_RELAY_BUILD_COMMIT=${GITHUB_SHA::12} SOURCE_DATE_EPOCH=0 ./scripts/test-release.sh --native-only
