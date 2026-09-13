@@ -15,15 +15,16 @@ turn one expected conflict into sustained log and CPU load.
 
 Keep rejection state per discovered address-family/port and retry it with a
 bounded exponential delay. The default delay starts at one second and doubles
-up to thirty seconds. A successful mapping clears the failure count and emits
-the existing restoration log. Removing the WSL listener, resetting the relay
-session, or shutting down the watcher clears the rejection state so a new
-session is retried immediately.
+up to thirty seconds. Deployments may override the lower and upper bounds with
+`auto_forward.retry_min`/`auto_forward.retry_max` or the equivalent CLI flags;
+the maximum cannot be lower than the minimum. A successful mapping clears the
+failure count and emits the existing restoration log. Removing the WSL
+listener, resetting the relay session, or shutting down the watcher clears the
+rejection state so a new session is retried immediately.
 
 Cancellation and stale-generation results are not recorded as rejections. The
-policy remains inside the watcher for now; the protocol and configuration
-formats do not gain another tuning surface until operational evidence shows a
-need for per-deployment values.
+policy remains local to the watcher; the values only control retry scheduling
+and do not change the Windows bind or WSL listener contract.
 
 ## Consequences
 
@@ -33,4 +34,3 @@ need for per-deployment values.
 - The first retry can be delayed by at most the configured scan interval plus
   the one-second minimum; strict interposition remains the mechanism for
   synchronous bind-error propagation.
-

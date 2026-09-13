@@ -348,6 +348,8 @@ Useful controls:
 -auto-forward-include 8000,9000    Optional allowlist; empty means all discovered ports
 -auto-forward-exclude 22,53        Ports that must never be mirrored
 -auto-forward-interval 1s          Discovery interval
+-auto-forward-retry-min 1s         Minimum delay after a Windows refusal
+-auto-forward-retry-max 30s        Maximum delay after repeated refusals
 ```
 
 The SOCKS5 listener and explicit reverse-forward destinations are excluded automatically. Automatic mappings are removed when their WSL listener disappears. The watcher lives for the whole proxy process: when the Windows relay child is replaced, old mappings are closed and recreated on the replacement session after it becomes ready.
@@ -357,7 +359,10 @@ scan retries it after the session recovers.
 When Windows rejects a discovered port, repeated attempts use a bounded
 exponential backoff (one second initially, capped at thirty seconds) instead
 of hammering the relay on every scan. A relay-session reset or disappearance of
-the WSL listener clears that backoff.
+the WSL listener clears that backoff. The retry bounds are configurable with
+the two flags above or the `auto_forward.retry_min` and
+`auto_forward.retry_max` JSON fields; the maximum must be greater than or equal
+to the minimum.
 
 To run the real WSL/Windows recovery check after building both binaries, use
 `./scripts/test-auto-rebind.sh`. It requires WSL Windows interop and verifies

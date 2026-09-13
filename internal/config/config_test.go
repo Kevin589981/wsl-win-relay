@@ -23,6 +23,9 @@ func TestLoadMergesDefaultsAndRejectsUnknownFields(t *testing.T) {
 	if duration, _ := got.AutoForwardDuration(); duration != 250*time.Millisecond {
 		t.Fatalf("duration %s", duration)
 	}
+	if minimum, maximum, err := got.AutoForwardRetryDurations(); err != nil || minimum != time.Second || maximum != 30*time.Second {
+		t.Fatalf("retry durations: %s, %s, %v", minimum, maximum, err)
+	}
 	if duration, _ := got.UDPAssociateIdleDuration(); duration != 5*time.Minute {
 		t.Fatalf("UDP idle duration %s", duration)
 	}
@@ -37,6 +40,16 @@ func TestLoadMergesDefaultsAndRejectsUnknownFields(t *testing.T) {
 	}
 	if _, err := Load(path); err == nil {
 		t.Fatal("expected unknown-field error")
+	}
+}
+
+func TestAutoForwardRetryDurationsRejectInvalidValues(t *testing.T) {
+	for _, values := range [][2]string{{"", "30s"}, {"0", "30s"}, {"-1s", "30s"}, {"1s", ""}, {"1s", "0"}, {"1s", "not-a-duration"}, {"30s", "1s"}} {
+		file := Default()
+		file.AutoForward.RetryMin, file.AutoForward.RetryMax = values[0], values[1]
+		if _, _, err := file.AutoForwardRetryDurations(); err == nil {
+			t.Fatalf("retry values %q/%q should be rejected", values[0], values[1])
+		}
 	}
 }
 

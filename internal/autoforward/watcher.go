@@ -31,6 +31,8 @@ type DatagramWatcher struct {
 	WindowsHost6 string
 	Interval     time.Duration
 	OpenTimeout  time.Duration
+	RetryMin     time.Duration
+	RetryMax     time.Duration
 	Included     map[uint16]bool
 	Excluded     map[uint16]bool
 	Logger       *log.Logger
@@ -54,7 +56,8 @@ func (w *DatagramWatcher) Run(ctx context.Context) error {
 	}
 	runner := &Watcher{
 		Scanner: w.datagramScanner(), Opener: w.datagramOpener(), WindowsHost: w.WindowsHost,
-		WindowsHost6: w.WindowsHost6, Interval: w.Interval, OpenTimeout: w.OpenTimeout, Included: w.Included,
+		WindowsHost6: w.WindowsHost6, Interval: w.Interval, OpenTimeout: w.OpenTimeout,
+		RetryMin: w.RetryMin, RetryMax: w.RetryMax, Included: w.Included,
 		Excluded: w.Excluded, Logger: w.Logger, Label: "auto-forward UDP",
 	}
 	w.runnerMu.Lock()
@@ -96,7 +99,7 @@ type Watcher struct {
 	Logger       *log.Logger
 	Label        string
 	// RetryMin and RetryMax bound retries after a Windows mapping refusal.
-	// They remain policy knobs for tests and future operators, not config yet.
+	// Callers can expose these as deployment policy knobs.
 	RetryMin      time.Duration
 	RetryMax      time.Duration
 	mu            sync.Mutex

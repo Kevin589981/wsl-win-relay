@@ -185,6 +185,9 @@
 - [x] Automatic mapping refusals use bounded exponential retry backoff instead
       of issuing a Windows bind attempt on every procfs scan; session resets
       clear the backoff immediately.
+- [x] Automatic mapping retry bounds are configurable through JSON and CLI
+      settings with validation that preserves a non-decreasing backoff range;
+      TCP and allowlisted UDP watchers share the same policy.
 - [x] Logical relay object closes use bounded best-effort control-frame writes,
       so detached broker links cannot block shutdown while waiting for a future
       connector attachment.

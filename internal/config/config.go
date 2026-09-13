@@ -32,6 +32,8 @@ type AutoForwardConfig struct {
 	WindowsHost  string   `json:"windows_host"`
 	WindowsHost6 string   `json:"windows_host6"`
 	Interval     string   `json:"interval"`
+	RetryMin     string   `json:"retry_min"`
+	RetryMax     string   `json:"retry_max"`
 	Include      []uint16 `json:"include"`
 	UDPInclude   []uint16 `json:"udp_include"`
 	Exclude      []uint16 `json:"exclude"`
@@ -47,7 +49,7 @@ func Default() File {
 		RelayHandshakeTimeout: "5s",
 		RelayDialTimeout:      "30s",
 		UDPAssociateIdle:      "5m",
-		AutoForward:           AutoForwardConfig{WindowsHost: "127.0.0.1", WindowsHost6: "::1", Interval: "1s"},
+		AutoForward:           AutoForwardConfig{WindowsHost: "127.0.0.1", WindowsHost6: "::1", Interval: "1s", RetryMin: "1s", RetryMax: "30s"},
 	}
 }
 
@@ -68,6 +70,9 @@ func Load(path string) (File, error) {
 		return File{}, errors.New("configuration must contain exactly one JSON object")
 	}
 	if _, err := result.AutoForwardDuration(); err != nil {
+		return File{}, err
+	}
+	if _, _, err := result.AutoForwardRetryDurations(); err != nil {
 		return File{}, err
 	}
 	if _, err := result.UDPAssociateIdleDuration(); err != nil {
@@ -106,6 +111,21 @@ func (f File) AutoForwardDuration() (time.Duration, error) {
 		return 0, fmt.Errorf("auto_forward.interval must be a positive duration")
 	}
 	return duration, nil
+}
+
+func (f File) AutoForwardRetryDurations() (time.Duration, time.Duration, error) {
+	minimum, err := time.ParseDuration(f.AutoForward.RetryMin)
+	if err != nil || minimum <= 0 {
+		return 0, 0, fmt.Errorf("auto_forward.retry_min must be a positive duration")
+	}
+	maximum, err := time.ParseDuration(f.AutoForward.RetryMax)
+	if err != nil || maximum <= 0 {
+		return 0, 0, fmt.Errorf("auto_forward.retry_max must be a positive duration")
+	}
+	if maximum < minimum {
+		return 0, 0, fmt.Errorf("auto_forward.retry_max must be greater than or equal to auto_forward.retry_min")
+	}
+	return minimum, maximum, nil
 }
 
 func (f File) UDPAssociateIdleDuration() (time.Duration, error) {
