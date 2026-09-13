@@ -78,6 +78,30 @@ func TestListenDoesNotRemoveNonSocketPath(t *testing.T) {
 	}
 }
 
+func TestListenerCloseDoesNotRemoveReplacedPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "endpoint")
+	listener, err := Listen(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "replacement" {
+		t.Fatalf("replacement content=%q", content)
+	}
+}
+
 func TestDialHonorsCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

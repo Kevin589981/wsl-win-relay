@@ -41,12 +41,19 @@ func Listen(name string) (net.Listener, error) {
 	if err != nil {
 		return nil, err
 	}
+	info, err := os.Lstat(name)
+	if err != nil {
+		_ = listener.Close()
+		return nil, fmt.Errorf("stat local IPC socket: %w", err)
+	}
 	if err := os.Chmod(name, 0o600); err != nil {
 		_ = listener.Close()
-		_ = os.Remove(name)
+		if current, statErr := os.Lstat(name); statErr == nil && os.SameFile(info, current) {
+			_ = os.Remove(name)
+		}
 		return nil, fmt.Errorf("restrict local IPC socket: %w", err)
 	}
-	return &listenerWithCleanup{Listener: listener, path: name}, nil
+	return &listenerWithCleanup{Listener: listener, path: name, fileInfo: info}, nil
 }
 
 func Dial(ctx context.Context, name string) (net.Conn, error) {
@@ -58,14 +65,19 @@ func Dial(ctx context.Context, name string) (net.Conn, error) {
 
 type listenerWithCleanup struct {
 	net.Listener
-	path string
+	path     string
+	fileInfo os.FileInfo
 }
 
 func (l *listenerWithCleanup) Close() error {
 	err := l.Listener.Close()
-	removeErr := os.Remove(l.path)
-	if os.IsNotExist(removeErr) {
-		removeErr = nil
+	var removeErr error
+	if current, statErr := os.Lstat(l.path); statErr == nil {
+		if l.fileInfo == nil || os.SameFile(l.fileInfo, current) {
+			removeErr = os.Remove(l.path)
+		}
+	} else if !os.IsNotExist(statErr) {
+		removeErr = statErr
 	}
 	if err != nil {
 		return err
