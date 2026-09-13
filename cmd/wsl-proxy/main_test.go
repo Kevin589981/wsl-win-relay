@@ -183,6 +183,12 @@ func TestParseOptionsSupportsBrokerMode(t *testing.T) {
 	}
 }
 
+func TestParseOptionsRejectsUpstreamProxyInBrokerMode(t *testing.T) {
+	if _, err := parseOptions([]string{"-broker-mode", "-upstream-proxy", "socks5h://127.0.0.1:7890"}); err == nil || !strings.Contains(err.Error(), "Windows broker") {
+		t.Fatalf("expected broker upstream configuration error, got %v", err)
+	}
+}
+
 func TestParseOptionsSupportsRepeatedUDPMappings(t *testing.T) {
 	opts, err := parseOptions([]string{"-reverse-udp", "127.0.0.1:5353=127.0.0.1:5353", "-reverse-udp", "127.0.0.1:5354=127.0.0.1:5354"})
 	if err != nil {

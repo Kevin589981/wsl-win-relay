@@ -232,6 +232,9 @@ func parseOptions(args []string) (options, error) {
 	if opts.relayExe == "" {
 		return options{}, errors.New("relay executable cannot be empty")
 	}
+	if opts.brokerMode && opts.upstreamProxy != "" {
+		return options{}, errors.New("upstream proxy must be configured on the Windows broker when broker mode is enabled")
+	}
 	if opts.autoForwardUDP {
 		if !opts.autoForward {
 			return options{}, errors.New("-auto-forward-udp requires -auto-forward")

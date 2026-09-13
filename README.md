@@ -161,6 +161,11 @@ WWR_WINDOWS_UPSTREAM_PROXY=socks5h://matebookxpro.local:7890 \
   ./scripts/test-broker-windows-interop.sh
 ```
 
+In broker mode, configure the upstream proxy on `wsl-win-broker.exe` (or its
+private service environment), not on `wsl-proxy`. The WSL connector only carries
+the attach stream; `wsl-proxy -broker-mode -upstream-proxy ...` is rejected at
+startup to avoid passing an unsupported flag to the connector.
+
 ## Security model
 
 - The WSL listener binds to `127.0.0.1` by default.
