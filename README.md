@@ -409,6 +409,7 @@ Useful controls:
 ```text
 -auto-forward-host 127.0.0.1       Windows bind host; use 0.0.0.0 deliberately for LAN access
 -auto-forward-host6 ::1             Windows IPv6 bind host; use :: deliberately for LAN access
+-auto-forward-port-offset 10000    Optional offset added to Windows ports; 0 preserves same-port mapping
 -auto-forward-include 8000,9000    Optional allowlist; empty means all discovered ports
 -auto-forward-exclude 22,53        Ports that must never be mirrored
 -auto-forward-interval 1s          Discovery interval
@@ -431,6 +432,15 @@ Bind-conflict diagnostics include a mirrored-networking hint when Windows
 reports `EADDRINUSE` or its localized equivalent, because WSL and Windows can
 share one port namespace even when no separate Windows process appears to own
 the port.
+
+When mirrored networking shares the WSL and Windows port namespace, set
+`-auto-forward-port-offset` (or `auto_forward.windows_port_offset` in JSON) to
+place automatic Windows listeners in a deterministic alternate range. The WSL
+listener and reverse-forward target remain on the original port; only the
+Windows-facing listener changes. The default offset is `0`, so existing
+same-port behavior is unchanged. The offset must be between `-65534` and
+`65534`, and a discovered port is rejected if the resulting Windows port would
+fall outside `1..65535`.
 
 To run the real WSL/Windows recovery check after building both binaries, use
 `./scripts/test-auto-rebind.sh`. It requires WSL Windows interop and verifies

@@ -238,6 +238,7 @@ func TestParseOptionsRejectsNonPositiveDurationOverrides(t *testing.T) {
 		"-relay-handshake-timeout=0",
 		"-relay-dial-timeout=0",
 		"-proxy-handshake-timeout=0",
+		"-auto-forward-port-offset=65535",
 	} {
 		if _, err := parseOptions([]string{argument}); err == nil {
 			t.Fatalf("argument %q should be rejected", argument)
@@ -245,6 +246,16 @@ func TestParseOptionsRejectsNonPositiveDurationOverrides(t *testing.T) {
 	}
 	if _, err := parseOptions([]string{"-auto-forward-retry-min=2s", "-auto-forward-retry-max=1s"}); err == nil {
 		t.Fatal("expected retry maximum ordering error")
+	}
+}
+
+func TestParseOptionsSupportsAutomaticForwardPortOffset(t *testing.T) {
+	opts, err := parseOptions([]string{"-auto-forward", "-auto-forward-port-offset", "10000"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.autoForwardPortOffset != 10000 {
+		t.Fatalf("options: %#v", opts)
 	}
 }
 
@@ -294,7 +305,7 @@ func TestConnectorEnvironmentExportsBrokerCredentialsThroughWSLENV(t *testing.T)
 
 func TestParseOptionsLoadsConfigThenAppliesCLIOverrides(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "relay.json")
-	content := `{"relay_exe":"from-config.exe","broker_mode":true,"socks5_listen":"127.0.0.1:1100","relay_handshake_timeout":"12s","relay_dial_timeout":"45s","reverse":["127.0.0.1:80=127.0.0.1:8080"],"auto_forward":{"enabled":true,"windows_host":"127.0.0.1","interval":"250ms","retry_min":"2s","retry_max":"10s","include":[8000],"exclude":[53]}}`
+	content := `{"relay_exe":"from-config.exe","broker_mode":true,"socks5_listen":"127.0.0.1:1100","relay_handshake_timeout":"12s","relay_dial_timeout":"45s","reverse":["127.0.0.1:80=127.0.0.1:8080"],"auto_forward":{"enabled":true,"windows_host":"127.0.0.1","windows_port_offset":10000,"interval":"250ms","retry_min":"2s","retry_max":"10s","include":[8000],"exclude":[53]}}`
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +316,7 @@ func TestParseOptionsLoadsConfigThenAppliesCLIOverrides(t *testing.T) {
 	if opts.relayExe != "from-cli.exe" || opts.socksListen != "127.0.0.1:1100" || !opts.brokerMode || opts.autoForward {
 		t.Fatalf("options: %#v", opts)
 	}
-	if opts.autoForwardInterval != 250*time.Millisecond || opts.autoRetryMin != 2*time.Second || opts.autoRetryMax != 10*time.Second || opts.relayHandshakeTimeout != 12*time.Second || opts.relayDialTimeout != 45*time.Second || !opts.autoInclude[8000] || !opts.autoExclude[53] || len(opts.reverse) != 1 {
+	if opts.autoForwardInterval != 250*time.Millisecond || opts.autoForwardPortOffset != 10000 || opts.autoRetryMin != 2*time.Second || opts.autoRetryMax != 10*time.Second || opts.relayHandshakeTimeout != 12*time.Second || opts.relayDialTimeout != 45*time.Second || !opts.autoInclude[8000] || !opts.autoExclude[53] || len(opts.reverse) != 1 {
 		t.Fatalf("options: %#v", opts)
 	}
 }

@@ -26,19 +26,20 @@ type DatagramOpener interface {
 // scanner and opener. It is intentionally a separate opt-in adapter because
 // procfs cannot prove that an unconnected UDP socket is a server.
 type DatagramWatcher struct {
-	Scanner      DatagramScanner
-	Opener       DatagramOpener
-	WindowsHost  string
-	WindowsHost6 string
-	Interval     time.Duration
-	OpenTimeout  time.Duration
-	RetryMin     time.Duration
-	RetryMax     time.Duration
-	Included     map[uint16]bool
-	Excluded     map[uint16]bool
-	Logger       *log.Logger
-	runnerMu     sync.Mutex
-	runner       *Watcher
+	Scanner           DatagramScanner
+	Opener            DatagramOpener
+	WindowsHost       string
+	WindowsHost6      string
+	WindowsPortOffset int
+	Interval          time.Duration
+	OpenTimeout       time.Duration
+	RetryMin          time.Duration
+	RetryMax          time.Duration
+	Included          map[uint16]bool
+	Excluded          map[uint16]bool
+	Logger            *log.Logger
+	runnerMu          sync.Mutex
+	runner            *Watcher
 }
 
 type datagramScannerAdapter struct{ scanner DatagramScanner }
@@ -57,7 +58,7 @@ func (w *DatagramWatcher) Run(ctx context.Context) error {
 	}
 	runner := &Watcher{
 		Scanner: w.datagramScanner(), Opener: w.datagramOpener(), WindowsHost: w.WindowsHost,
-		WindowsHost6: w.WindowsHost6, Interval: w.Interval, OpenTimeout: w.OpenTimeout,
+		WindowsHost6: w.WindowsHost6, WindowsPortOffset: w.WindowsPortOffset, Interval: w.Interval, OpenTimeout: w.OpenTimeout,
 		RetryMin: w.RetryMin, RetryMax: w.RetryMax, Included: w.Included,
 		Excluded: w.Excluded, Logger: w.Logger, Label: "auto-forward UDP",
 	}
@@ -89,16 +90,17 @@ func (w *DatagramWatcher) datagramScanner() Scanner {
 func (w *DatagramWatcher) datagramOpener() Opener { return datagramOpenerAdapter{opener: w.Opener} }
 
 type Watcher struct {
-	Scanner      Scanner
-	Opener       Opener
-	WindowsHost  string
-	WindowsHost6 string
-	Interval     time.Duration
-	OpenTimeout  time.Duration
-	Included     map[uint16]bool
-	Excluded     map[uint16]bool
-	Logger       *log.Logger
-	Label        string
+	Scanner           Scanner
+	Opener            Opener
+	WindowsHost       string
+	WindowsHost6      string
+	WindowsPortOffset int
+	Interval          time.Duration
+	OpenTimeout       time.Duration
+	Included          map[uint16]bool
+	Excluded          map[uint16]bool
+	Logger            *log.Logger
+	Label             string
 	// RetryMin and RetryMax bound retries after a Windows mapping refusal.
 	// Callers can expose these as deployment policy knobs.
 	RetryMin      time.Duration
@@ -311,7 +313,15 @@ func (w *Watcher) openOne(ctx context.Context, key listenerKey, listener Listene
 	if w.OpenTimeout > 0 {
 		openCtx, cancelOpen = context.WithTimeout(ctx, w.OpenTimeout)
 	}
-	closer, openErr := w.Opener.ReverseForward(openCtx, windowsAddr, wslTarget)
+	mappedPort := int(listener.Port) + w.WindowsPortOffset
+	var closer io.Closer
+	var openErr error
+	if mappedPort < 1 || mappedPort > 65535 {
+		openErr = fmt.Errorf("WSL port %d plus Windows port offset %d is outside 1..65535", listener.Port, w.WindowsPortOffset)
+	} else {
+		windowsAddr = net.JoinHostPort(windowsHost, strconv.Itoa(mappedPort))
+		closer, openErr = w.Opener.ReverseForward(openCtx, windowsAddr, wslTarget)
+	}
 	cancelOpen()
 	w.mu.Lock()
 	staleGeneration := generation != w.generation

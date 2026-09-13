@@ -30,16 +30,17 @@ type File struct {
 }
 
 type AutoForwardConfig struct {
-	Enabled      bool     `json:"enabled"`
-	UDPEnabled   bool     `json:"udp_enabled"`
-	WindowsHost  string   `json:"windows_host"`
-	WindowsHost6 string   `json:"windows_host6"`
-	Interval     string   `json:"interval"`
-	RetryMin     string   `json:"retry_min"`
-	RetryMax     string   `json:"retry_max"`
-	Include      []uint16 `json:"include"`
-	UDPInclude   []uint16 `json:"udp_include"`
-	Exclude      []uint16 `json:"exclude"`
+	Enabled           bool     `json:"enabled"`
+	UDPEnabled        bool     `json:"udp_enabled"`
+	WindowsHost       string   `json:"windows_host"`
+	WindowsHost6      string   `json:"windows_host6"`
+	WindowsPortOffset int      `json:"windows_port_offset"`
+	Interval          string   `json:"interval"`
+	RetryMin          string   `json:"retry_min"`
+	RetryMax          string   `json:"retry_max"`
+	Include           []uint16 `json:"include"`
+	UDPInclude        []uint16 `json:"udp_include"`
+	Exclude           []uint16 `json:"exclude"`
 }
 
 func Default() File {
@@ -81,6 +82,9 @@ func Load(path string) (File, error) {
 	if _, _, err := result.AutoForwardRetryDurations(); err != nil {
 		return File{}, err
 	}
+	if err := validateAutoForwardPortOffset(result.AutoForward.WindowsPortOffset); err != nil {
+		return File{}, err
+	}
 	if _, err := result.UDPAssociateIdleDuration(); err != nil {
 		return File{}, err
 	}
@@ -97,6 +101,13 @@ func Load(path string) (File, error) {
 		return File{}, err
 	}
 	return result, nil
+}
+
+func validateAutoForwardPortOffset(offset int) error {
+	if offset < -65534 || offset > 65534 {
+		return fmt.Errorf("auto_forward.windows_port_offset must be between -65534 and 65534")
+	}
+	return nil
 }
 
 func normalizeHTTPProxyListen(data []byte, result *File) error {

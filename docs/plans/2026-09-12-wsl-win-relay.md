@@ -58,6 +58,8 @@
       to inherit synchronous listener coordination without per-command setup.
 - [x] Independent IPv4/IPv6 Windows bind hosts for automatic and strict
       listener mappings.
+- [x] Configurable Windows port offsets for automatic mappings, preserving the
+      WSL listener port while avoiding mirrored shared-namespace collisions.
 - [x] Session-independent local SOCKS5/HTTP listeners with a reconnecting
       dialer for new requests during relay restarts.
 - [x] Strict control socket and live listener leases survive relay child

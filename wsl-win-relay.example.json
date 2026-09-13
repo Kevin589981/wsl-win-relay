@@ -20,6 +20,7 @@
     "udp_enabled": false,
     "windows_host": "127.0.0.1",
     "windows_host6": "::1",
+    "windows_port_offset": 0,
     "interval": "1s",
     "retry_min": "1s",
     "retry_max": "30s",
