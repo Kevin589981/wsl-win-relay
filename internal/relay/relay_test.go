@@ -812,6 +812,37 @@ func TestReverseUDPForwardBoundsSourceFlows(t *testing.T) {
 	}
 }
 
+func TestReverseUDPFlowRejectsPacketsFromUnexpectedLocalSource(t *testing.T) {
+	target, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	capture := &lockedBuffer{}
+	listener := newClientReverseDatagram(NewClient(capture), 1, target.LocalAddr().(*net.UDPAddr), context.Background())
+	defer listener.Close()
+	remote := "127.0.0.1:49001"
+	listener.handle(protocol.Frame{Type: protocol.TypeListenDatagramData, StreamID: 1, Payload: mustDatagramPayload(t, remote, []byte("request"))})
+	listener.mu.Lock()
+	flow := listener.flows[remote]
+	listener.mu.Unlock()
+	if flow == nil {
+		t.Fatal("reverse UDP flow was not created")
+	}
+	attacker, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer attacker.Close()
+	if _, err := attacker.WriteToUDP([]byte("spoofed"), flow.conn.LocalAddr().(*net.UDPAddr)); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if got := capture.Len(); got != 0 {
+		t.Fatalf("unexpected source produced %d relay bytes", got)
+	}
+}
+
 func mustDatagramPayload(t *testing.T, endpoint string, data []byte) []byte {
 	t.Helper()
 	payload, err := protocol.EncodeDatagram(endpoint, data)
@@ -1130,6 +1161,23 @@ type discardReadWriter struct{}
 
 func (*discardReadWriter) Read([]byte) (int, error)    { return 0, io.EOF }
 func (*discardReadWriter) Write(p []byte) (int, error) { return len(p), nil }
+
+type lockedBuffer struct {
+	mu   sync.Mutex
+	data bytes.Buffer
+}
+
+func (*lockedBuffer) Read([]byte) (int, error) { return 0, io.EOF }
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.data.Write(p)
+}
+func (b *lockedBuffer) Len() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.data.Len()
+}
 
 type frameCapture struct {
 	mu     sync.Mutex

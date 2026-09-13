@@ -855,10 +855,10 @@ func (l *clientReverseDatagram) handle(frame protocol.Frame) {
 				l.mu.Unlock()
 				return
 			}
-			conn, listenErr := net.ListenUDP("udp", nil)
-			if listenErr != nil {
+			conn, dialErr := net.DialUDP("udp", nil, l.target)
+			if dialErr != nil {
 				l.mu.Unlock()
-				l.fail(listenErr)
+				l.fail(dialErr)
 				return
 			}
 			flow = &reverseDatagramFlow{listener: l, key: key, remote: endpoint, conn: conn}
@@ -867,7 +867,7 @@ func (l *clientReverseDatagram) handle(frame protocol.Frame) {
 		}
 		l.mu.Unlock()
 		_ = flow.conn.SetReadDeadline(time.Now().Add(reverseDatagramIdleTimeout))
-		if _, err := flow.conn.WriteToUDP(data, l.target); err != nil {
+		if _, err := flow.conn.Write(data); err != nil {
 			l.removeFlow(flow)
 		}
 	}
@@ -922,7 +922,7 @@ func (l *clientReverseDatagram) Close() error {
 func (f *reverseDatagramFlow) readLoop() {
 	buffer := make([]byte, 65535)
 	for {
-		count, _, err := f.conn.ReadFromUDP(buffer)
+		count, err := f.conn.Read(buffer)
 		if err != nil {
 			f.listener.removeFlow(f)
 			return
