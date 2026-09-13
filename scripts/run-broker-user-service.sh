@@ -22,6 +22,15 @@ set +a
 : "${WSL_WIN_RELAY_ATTACH_TOKEN:?WSL_WIN_RELAY_ATTACH_TOKEN is required in $env_file}"
 broker_endpoint=${WSL_WIN_RELAY_BROKER_ENDPOINT:-wsl-win-relay-broker}
 
+if [ -n "${WSL_WIN_RELAY_UPSTREAM_PROXY:-}" ]; then
+    wslenv=${WSLENV:-}
+    case ":$wslenv:" in
+        *":WSL_WIN_RELAY_UPSTREAM_PROXY:"*) ;;
+        *) wslenv=${wslenv:+$wslenv:}WSL_WIN_RELAY_UPSTREAM_PROXY ;;
+    esac
+    export WSLENV=$wslenv
+fi
+
 broker_token_path() {
     token_path=$1
     case "$WSL_WIN_RELAY_BROKER_EXE" in

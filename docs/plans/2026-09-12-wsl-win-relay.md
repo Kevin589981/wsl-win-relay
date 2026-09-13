@@ -83,6 +83,9 @@
       summary snapshots, attach/resume acceptance, and stale-session isolation.
 - [x] Broker listener lifecycle with active connector tracking, cancellation
       teardown, and handler draining before service return.
+- [x] The installed broker service wrapper propagates an optional Windows-side
+      upstream proxy through `WSLENV`, keeping the URL out of the broker command
+      line while preserving private environment-file permissions.
 - [x] Opt-in broker and connector executables bridge stdio to local IPC and
       run the existing relay server after attach; offline WSL SOCKS5 integration
       is covered by `scripts/test-broker-connector.sh`.

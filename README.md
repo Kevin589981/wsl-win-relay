@@ -107,6 +107,12 @@ The broker unit uses `KillMode=process` so systemd frontend restarts do not
 terminate the bridge worker, socket-host bridge, or socket owner; a normal stop still shuts them down
 through the private control endpoints.
 
+To configure a Windows-side upstream proxy for the installed broker, add
+`WSL_WIN_RELAY_UPSTREAM_PROXY=socks5h://matebookxpro.local:7890` to the private
+`broker.env`. The broker service wrapper adds this one variable to `WSLENV`
+before launching the Windows executable, so the URL is propagated without
+placing it in the broker command line.
+
 If the broker must outlive the WSL VM or user service, install the optional
 Windows Task Scheduler boundary from PowerShell 7:
 

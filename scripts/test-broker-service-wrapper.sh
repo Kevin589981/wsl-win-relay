@@ -54,4 +54,23 @@ legacy_output=$(WSL_WIN_RELAY_BROKER_ENV_FILE="$legacy_env" "$repo_dir/scripts/r
     exit 1
 }
 
+capture_script=$tmp_dir/capture-broker.sh
+capture_file=$tmp_dir/capture.env
+printf '%s\n' '#!/bin/sh' 'printf "%s\\n" "$WSL_WIN_RELAY_UPSTREAM_PROXY" >"$WWR_TEST_CAPTURE"' 'printf "%s\\n" "$WSLENV" >>"$WWR_TEST_CAPTURE"' 'printf "%s" "$*"' >"$capture_script"
+chmod 700 "$capture_script"
+upstream_env=$tmp_dir/upstream.env
+write_env "$upstream_env" upstream-endpoint
+printf 'WSL_WIN_RELAY_BROKER_EXE=%s\n' "$capture_script" >>"$upstream_env"
+printf '%s\n' 'WSL_WIN_RELAY_UPSTREAM_PROXY=socks5h://matebookxpro.local:7890' >>"$upstream_env"
+upstream_output=$(WSLENV= WWR_TEST_CAPTURE="$capture_file" WSL_WIN_RELAY_BROKER_ENV_FILE="$upstream_env" "$repo_dir/scripts/run-broker-user-service.sh")
+[ "$upstream_output" = "-supervise -endpoint upstream-endpoint -token-hex deadbeef" ] || {
+    echo "unexpected upstream wrapper args: $upstream_output" >&2
+    exit 1
+}
+grep -qx 'socks5h://matebookxpro.local:7890' "$capture_file"
+tail -n 1 "$capture_file" | grep -qx 'WSL_WIN_RELAY_UPSTREAM_PROXY' || {
+    echo "upstream proxy was not added to WSLENV" >&2
+    exit 1
+}
+
 echo "broker service wrapper token-file and legacy credential paths passed"
