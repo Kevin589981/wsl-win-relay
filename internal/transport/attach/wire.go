@@ -397,7 +397,20 @@ func ServerResumeHandshake(rw io.ReadWriter, registry *Registry, capabilities ui
 }
 
 func ServerResumeHandshakeWithInstance(rw io.ReadWriter, registry *Registry, capabilities uint64, summary Summary) (*Attachment, uint64, uint64, uint64, error) {
-	attachment, peerCapabilities, lastEpoch, instanceID, err := ServerHandshakeWithInstance(rw, registry, capabilities)
+	if registry == nil {
+		return nil, 0, 0, 0, errors.New("attach registry is nil")
+	}
+	request, err := ReadServerAttachRequest(rw)
+	if err != nil {
+		return nil, 0, 0, 0, err
+	}
+	return CompleteServerResumeHandshakeWithInstance(rw, registry, capabilities, summary, request)
+}
+
+// CompleteServerResumeHandshakeWithInstance authenticates a previously read
+// request, installs its registry generation, and completes summary/ack.
+func CompleteServerResumeHandshakeWithInstance(rw io.ReadWriter, registry *Registry, capabilities uint64, summary Summary, request ServerAttachRequest) (*Attachment, uint64, uint64, uint64, error) {
+	attachment, peerCapabilities, lastEpoch, instanceID, err := completeServerHandshakeWithInstance(rw, registry, capabilities, request)
 	if err != nil {
 		return nil, peerCapabilities, lastEpoch, 0, err
 	}
@@ -430,6 +443,42 @@ func ServerResumeHandshakeWithInstance(rw io.ReadWriter, registry *Registry, cap
 		return nil, peerCapabilities, lastEpoch, instanceID, err
 	}
 	return attachment, peerCapabilities, lastEpoch, instanceID, nil
+}
+
+// ServerAttachRequest is the bounded, decoded request prefix received before a
+// registry generation is installed.
+type ServerAttachRequest struct {
+	Token            []byte
+	PeerCapabilities uint64
+	LastEpoch        uint64
+}
+
+// ReadServerAttachRequest reads HELLO and ATTACH without mutating a registry.
+// A broker can run this bounded I/O concurrently, then serialize completion.
+func ReadServerAttachRequest(rw io.Reader) (ServerAttachRequest, error) {
+	hello, err := Read(rw)
+	if err != nil {
+		return ServerAttachRequest{}, err
+	}
+	if hello.Type != MessageHello {
+		return ServerAttachRequest{}, fmt.Errorf("expected hello, got %d", hello.Type)
+	}
+	peerCapabilities, err := DecodeCapabilities(hello.Payload)
+	if err != nil {
+		return ServerAttachRequest{}, err
+	}
+	attachMessage, err := Read(rw)
+	if err != nil {
+		return ServerAttachRequest{}, err
+	}
+	if attachMessage.Type != MessageAttach {
+		return ServerAttachRequest{}, fmt.Errorf("expected attach, got %d", attachMessage.Type)
+	}
+	token, lastEpoch, err := DecodeAttach(attachMessage.Payload)
+	if err != nil {
+		return ServerAttachRequest{}, err
+	}
+	return ServerAttachRequest{Token: token, PeerCapabilities: peerCapabilities, LastEpoch: lastEpoch}, nil
 }
 
 // ClientHandshake performs HELLO -> ATTACH and waits for ATTACH_OK.
@@ -473,42 +522,31 @@ func ServerHandshakeWithInstance(rw io.ReadWriter, registry *Registry, capabilit
 	if registry == nil {
 		return nil, 0, 0, 0, errors.New("attach registry is nil")
 	}
-	hello, err := Read(rw)
+	request, err := ReadServerAttachRequest(rw)
 	if err != nil {
 		return nil, 0, 0, 0, err
 	}
-	if hello.Type != MessageHello {
-		return nil, 0, 0, 0, fmt.Errorf("expected hello, got %d", hello.Type)
+	return completeServerHandshakeWithInstance(rw, registry, capabilities, request)
+}
+
+func completeServerHandshakeWithInstance(rw io.Writer, registry *Registry, capabilities uint64, request ServerAttachRequest) (*Attachment, uint64, uint64, uint64, error) {
+	if registry == nil {
+		return nil, request.PeerCapabilities, request.LastEpoch, 0, errors.New("attach registry is nil")
 	}
-	peerCapabilities, err := DecodeCapabilities(hello.Payload)
-	if err != nil {
-		return nil, 0, 0, 0, err
-	}
-	attachMessage, err := Read(rw)
-	if err != nil {
-		return nil, 0, 0, 0, err
-	}
-	if attachMessage.Type != MessageAttach {
-		return nil, 0, 0, 0, fmt.Errorf("expected attach, got %d", attachMessage.Type)
-	}
-	token, lastEpoch, err := DecodeAttach(attachMessage.Payload)
-	if err != nil {
-		return nil, 0, 0, 0, err
-	}
-	attachment, err := registry.Attach(token)
+	attachment, err := registry.Attach(request.Token)
 	if err != nil {
 		message := err.Error()
 		if len(message) > maxWireError {
 			message = message[:maxWireError]
 		}
 		_ = Write(rw, Message{Type: MessageAttachError, Payload: []byte(message)})
-		return nil, peerCapabilities, lastEpoch, 0, err
+		return nil, request.PeerCapabilities, request.LastEpoch, 0, err
 	}
 	if err := Write(rw, Message{Type: MessageAttachOK, Payload: EncodeAttachOKWithInstance(attachment.Epoch(), capabilities, registry.InstanceID())}); err != nil {
 		_ = attachment.Detach()
-		return nil, peerCapabilities, lastEpoch, 0, err
+		return nil, request.PeerCapabilities, request.LastEpoch, 0, err
 	}
-	return attachment, peerCapabilities, lastEpoch, registry.InstanceID(), nil
+	return attachment, request.PeerCapabilities, request.LastEpoch, registry.InstanceID(), nil
 }
 
 func writeFull(w io.Writer, p []byte) error {

@@ -23,6 +23,11 @@ var (
 
 var brokerHandshakeTimeout = 15 * time.Second
 
+const (
+	MaxConcurrentConnections      = 32
+	MaxConcurrentAttachHandshakes = 16
+)
+
 type Broker struct {
 	mu           sync.Mutex
 	registry     *attach.Registry
@@ -201,7 +206,10 @@ func (b *Broker) Serve(ctx context.Context, listener net.Listener, handler func(
 			}
 			return err
 		}
-		b.trackConnection(conn)
+		if !b.trackConnection(conn, MaxConcurrentConnections) {
+			_ = conn.Close()
+			continue
+		}
 		handlers.Add(1)
 		go func() {
 			defer handlers.Done()
@@ -228,11 +236,14 @@ func (b *Broker) ServeAttachedWith(ctx context.Context, listener net.Listener, l
 		return errors.New("broker frame link is nil")
 	}
 	serveCtx, cancel := context.WithCancel(ctx)
+	var handlers sync.WaitGroup
+	var installMu sync.Mutex
 	defer func() {
 		cancel()
 		_ = listener.Close()
 		_ = link.Close()
 		b.closeConnections()
+		handlers.Wait()
 	}()
 	go func() {
 		select {
@@ -253,23 +264,63 @@ func (b *Broker) ServeAttachedWith(ctx context.Context, listener net.Listener, l
 			}
 			return err
 		}
-		session, err := b.Accept(conn)
-		if err != nil {
+		if !b.trackConnection(conn, MaxConcurrentAttachHandshakes) {
 			_ = conn.Close()
 			continue
 		}
-		if onAttach != nil {
-			onAttach(session)
-		}
-		if _, err := link.Attach(conn); err != nil {
-			// The handshake installed a registry attachment before the frame
-			// link accepted the transport. Release it on this failure path so a
-			// closed link cannot leave a phantom current generation behind.
-			_ = session.Close()
-			_ = conn.Close()
-			continue
-		}
+		handlers.Add(1)
+		go func() {
+			defer handlers.Done()
+			b.serveAttachConnection(conn, link, onAttach, &installMu)
+		}()
 	}
+}
+
+func (b *Broker) serveAttachConnection(conn net.Conn, link *framed.Link, onAttach func(*Session), installMu sync.Locker) {
+	keepConnection := false
+	defer func() {
+		b.untrackConnection(conn)
+		if !keepConnection {
+			_ = conn.Close()
+		}
+	}()
+	clearDeadline := setHandshakeDeadline(conn, brokerHandshakeTimeout)
+	defer clearDeadline()
+	request, err := attach.ReadServerAttachRequest(conn)
+	if err != nil {
+		return
+	}
+	installMu.Lock()
+	defer installMu.Unlock()
+	b.mu.Lock()
+	if b.closed || b.registry == nil {
+		b.mu.Unlock()
+		return
+	}
+	registry := b.registry
+	capabilities := b.capabilities
+	entries := make([]attach.RegistryEntry, 0, len(b.entries))
+	for _, entry := range b.entries {
+		entries = append(entries, entry)
+	}
+	b.mu.Unlock()
+	sort.Slice(entries, func(i, j int) bool { return entries[i].ID < entries[j].ID })
+	attachment, peerCapabilities, lastEpoch, instanceID, err := attach.CompleteServerResumeHandshakeWithInstance(conn, registry, capabilities, attach.Summary{Entries: entries}, request)
+	if err != nil {
+		return
+	}
+	session := &Session{broker: b, attachment: attachment, peerCapabilities: peerCapabilities, lastEpoch: lastEpoch, instanceID: instanceID}
+	if onAttach != nil {
+		onAttach(session)
+	}
+	if _, err := link.Attach(conn); err != nil {
+		// The handshake installed a registry attachment before the frame link
+		// accepted the transport. Release it so a closed link cannot leave a
+		// phantom current generation behind.
+		_ = session.Close()
+		return
+	}
+	keepConnection = true
 }
 
 func (b *Broker) serveConnection(ctx context.Context, conn net.Conn, handler func(context.Context, *Session, net.Conn) error) {
@@ -289,13 +340,17 @@ func (b *Broker) serveConnection(ctx context.Context, conn net.Conn, handler fun
 	<-ctx.Done()
 }
 
-func (b *Broker) trackConnection(conn net.Conn) {
+func (b *Broker) trackConnection(conn net.Conn, maximum int) bool {
 	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed || len(b.connections) >= maximum {
+		return false
+	}
 	if b.connections == nil {
 		b.connections = make(map[net.Conn]struct{})
 	}
 	b.connections[conn] = struct{}{}
-	b.mu.Unlock()
+	return true
 }
 
 func (b *Broker) untrackConnection(conn net.Conn) {

@@ -245,6 +245,83 @@ func TestBrokerServeAttachedReplacesLinkWithoutStoppingListener(t *testing.T) {
 	}
 }
 
+func TestBrokerServeAttachedStalledHandshakeDoesNotBlockConnector(t *testing.T) {
+	oldTimeout := brokerHandshakeTimeout
+	brokerHandshakeTimeout = 5 * time.Second
+	defer func() { brokerHandshakeTimeout = oldTimeout }()
+	broker, err := New(0x40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := framed.New()
+	ctx, cancel := context.WithCancel(context.Background())
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- broker.ServeAttached(ctx, listener, link) }()
+	stalled, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stalled.Close()
+	waitForBrokerConnections(t, broker, 1)
+
+	connector, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connector.Close()
+	_ = connector.SetDeadline(time.Now().Add(time.Second))
+	if _, _, _, err := attach.ClientResumeHandshake(connector, broker.Token(), 0, 0); err != nil {
+		t.Fatalf("valid connector was blocked by stalled handshake: %v", err)
+	}
+	_ = connector.SetDeadline(time.Time{})
+	go func() {
+		_ = protocol.Write(connector, protocol.Frame{Type: protocol.TypeHello, Payload: protocol.EncodeCapabilities(0)})
+	}()
+	if frame, err := link.ReadFrame(); err != nil || frame.Type != protocol.TypeHello {
+		t.Fatalf("relay frame=%+v err=%v", frame, err)
+	}
+
+	cancel()
+	select {
+	case err := <-serveDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("serve attached err=%v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("pending handshake delayed broker shutdown")
+	}
+}
+
+func TestBrokerConnectionTrackingHasHardLimit(t *testing.T) {
+	broker, err := New(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	connections := make([]net.Conn, 0, MaxConcurrentConnections)
+	for index := 0; index < MaxConcurrentConnections; index++ {
+		left, right := net.Pipe()
+		defer right.Close()
+		if !broker.trackConnection(left, MaxConcurrentConnections) {
+			t.Fatalf("connection %d was rejected before the limit", index)
+		}
+		connections = append(connections, left)
+	}
+	extra, extraPeer := net.Pipe()
+	defer extra.Close()
+	defer extraPeer.Close()
+	if broker.trackConnection(extra, MaxConcurrentConnections) {
+		t.Fatal("connection beyond limit was tracked")
+	}
+	broker.closeConnections()
+	for _, connection := range connections {
+		broker.untrackConnection(connection)
+	}
+}
+
 func TestBrokerServeAttachedDetachesWhenLinkIsClosed(t *testing.T) {
 	broker, err := New(0x40)
 	if err != nil {
@@ -281,4 +358,19 @@ func TestBrokerServeAttachedDetachesWhenLinkIsClosed(t *testing.T) {
 	if err := <-serveDone; !errors.Is(err, context.Canceled) {
 		t.Fatalf("serve attached err=%v", err)
 	}
+}
+
+func waitForBrokerConnections(t *testing.T, broker *Broker, want int) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		broker.mu.Lock()
+		count := len(broker.connections)
+		broker.mu.Unlock()
+		if count == want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("broker did not track %d pending connection(s)", want)
 }

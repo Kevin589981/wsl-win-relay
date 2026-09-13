@@ -221,6 +221,10 @@ rejected token or invalid connector configuration fails immediately.
 The broker bounds each individual attach handshake at 15 seconds so a half-open
 same-user IPC connection cannot consume a service goroutine forever; the
 deadline is cleared once the session is authenticated.
+Up to 16 handshake prefixes are processed concurrently, so a half-open client
+cannot head-of-line block a valid replacement connector. Registry generation
+and frame-link installation remain serialized; pending handshakes are tracked
+and closed immediately during broker shutdown.
 
 To exercise the same path while keeping an upstream proxy on the Windows side,
 set `WWR_WINDOWS_UPSTREAM_PROXY` when running the smoke. WSL still sends only
