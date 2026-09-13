@@ -118,6 +118,9 @@
 - [x] The static lifecycle smoke covers `posix_spawnp()` PATH lookup with an
       `addopen()` file action, extending file setup coverage to the PATH-search
       libc entry point.
+- [x] The static lifecycle smoke covers `posix_spawnp()` PATH lookup with
+      `adddup2()`/`addclose()` actions, verifying inherited lease adoption while
+      the child rewires a descriptor before exec.
 - [x] The static lifecycle smoke covers `posix_spawn` signal-mask,
       signal-default, and process-group attributes, extending non-direct libc
       vfork coverage to common pre-exec process state setup.
