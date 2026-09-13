@@ -187,7 +187,7 @@ startup to avoid passing an unsupported flag to the connector.
 ## Layered adapters
 
 ```text
-SOCKS5 / HTTP CONNECT / TUN transparent adapter
+SOCKS5 / HTTP / TUN transparent adapter
               |
        multiplexed relay
               |

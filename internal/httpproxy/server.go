@@ -29,7 +29,7 @@ type Server struct {
 
 const (
 	defaultHandshakeTimeout = 15 * time.Second
-	maxConnectRequestBytes  = 64 << 10
+	maxRequestHeaderBytes   = 64 << 10
 )
 
 func (s *Server) Serve(ctx context.Context) error {
@@ -55,7 +55,7 @@ func (s *Server) ServeConn(ctx context.Context, client net.Conn) error {
 	if err := client.SetDeadline(time.Now().Add(timeout)); err != nil {
 		return err
 	}
-	limited := &handshakeReader{reader: client, remaining: maxConnectRequestBytes, bounded: true}
+	limited := &handshakeReader{reader: client, remaining: maxRequestHeaderBytes, bounded: true}
 	reader := bufio.NewReader(limited)
 	request, err := http.ReadRequest(reader)
 	if err != nil {

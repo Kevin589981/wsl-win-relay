@@ -39,7 +39,7 @@ func TestConnectTimesOutStalledHandshake(t *testing.T) {
 }
 
 func TestHandshakeReaderBoundsHTTPHeaders(t *testing.T) {
-	reader := &handshakeReader{reader: bytes.NewReader(make([]byte, maxConnectRequestBytes+1)), remaining: maxConnectRequestBytes, bounded: true}
+	reader := &handshakeReader{reader: bytes.NewReader(make([]byte, maxRequestHeaderBytes+1)), remaining: maxRequestHeaderBytes, bounded: true}
 	if _, err := io.Copy(io.Discard, reader); err == nil {
 		t.Fatal("oversized HTTP CONNECT request was accepted")
 	}
