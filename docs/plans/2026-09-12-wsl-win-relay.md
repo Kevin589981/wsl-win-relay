@@ -151,6 +151,9 @@
 - [x] The static lifecycle smoke covers GNU `posix_spawn` `addchdir_np` and
       `addfchdir_np` file actions when the host glibc provides them, with an
       explicit skip on older libc versions.
+- [x] The static lifecycle smoke covers `posix_spawnp()` PATH lookup combined
+      with GNU `addchdir_np`/`addfchdir_np` actions, extending pre-exec working
+      directory coverage to the PATH-search libc entry point.
 - [x] The static lifecycle smoke covers GNU `posix_spawn` `addclosefrom_np`,
       verifying child-side bulk descriptor cleanup while the parent lease
       remains live; older glibc versions skip this optional action explicitly.
