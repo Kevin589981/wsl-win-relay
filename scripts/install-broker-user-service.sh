@@ -35,6 +35,28 @@ if [ ! -f "$requested_connector_exe" ] && ! command -v "$requested_connector_exe
     echo "Windows connector executable is unavailable: $requested_connector_exe (set WSL_WIN_RELAY_CONNECTOR_EXE)" >&2
     exit 1
 fi
+connector_exe_path=$requested_connector_exe
+if [ ! -f "$connector_exe_path" ]; then
+    connector_exe_path=$(command -v "$connector_exe_path")
+fi
+if [ "${WSL_WIN_RELAY_ALLOW_UNVERIFIED_BINARIES:-0}" != 1 ]; then
+    broker_version=$("$broker_exe_path" -version 2>/dev/null | tr -d '\r' | head -n 1 || true)
+    connector_version=$("$connector_exe_path" -version 2>/dev/null | tr -d '\r' | head -n 1 || true)
+    case "$broker_version" in
+        "wsl-win-broker "*) ;;
+        *) echo "unable to verify Windows broker build metadata: $broker_exe_path" >&2; exit 1 ;;
+    esac
+    case "$connector_version" in
+        "wsl-win-connector "*) ;;
+        *) echo "unable to verify Windows connector build metadata: $connector_exe_path" >&2; exit 1 ;;
+    esac
+    broker_build=${broker_version#wsl-win-broker }
+    connector_build=${connector_version#wsl-win-connector }
+    if [ "$broker_build" != "$connector_build" ]; then
+        echo "Windows broker and connector build metadata do not match" >&2
+        exit 1
+    fi
+fi
 if [ -L "$env_file" ] || { [ -e "$env_file" ] && [ ! -f "$env_file" ]; }; then
     echo "refusing non-regular broker environment file: $env_file" >&2
     exit 1

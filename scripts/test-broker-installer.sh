@@ -12,6 +12,7 @@ mkdir -p "$tmp_dir/home" "$tmp_dir/config" "$tmp_dir/bin"
 printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$*" >>"$WWR_TEST_SYSTEMCTL_LOG"' >"$tmp_dir/bin/systemctl"
 chmod 700 "$tmp_dir/bin/systemctl"
 export WSL_WIN_RELAY_CONNECTOR_EXE=/bin/true
+export WSL_WIN_RELAY_ALLOW_UNVERIFIED_BINARIES=1
 export WWR_TEST_SYSTEMCTL_LOG=$tmp_dir/systemctl.log
 
 HOME="$tmp_dir/home" \
@@ -121,4 +122,30 @@ mkdir -p "$tmp_dir/windows" "$tmp_dir/derived-home" "$tmp_dir/derived-config"
         "$repo_dir/scripts/install-broker-user-service.sh" >/dev/null
 )
 grep -Fqx "WSL_WIN_RELAY_CONNECTOR_EXE='$tmp_dir/windows/wsl-win-connector.exe'" "$tmp_dir/derived-config/wsl-win-relay/broker.env"
+
+mkdir -p "$tmp_dir/verified" "$tmp_dir/verified-home" "$tmp_dir/verified-config"
+printf '%s\n' '#!/bin/sh' 'echo "wsl-win-broker test (commit abc123, built 2026-09-14T00:00:00Z)"' >"$tmp_dir/verified/wsl-win-broker.exe"
+printf '%s\n' '#!/bin/sh' 'echo "wsl-win-connector test (commit abc123, built 2026-09-14T00:00:00Z)"' >"$tmp_dir/verified/wsl-win-connector.exe"
+chmod 755 "$tmp_dir/verified/wsl-win-broker.exe" "$tmp_dir/verified/wsl-win-connector.exe"
+(
+    unset WSL_WIN_RELAY_ALLOW_UNVERIFIED_BINARIES WSL_WIN_RELAY_CONNECTOR_EXE
+    HOME="$tmp_dir/verified-home" \
+    XDG_CONFIG_HOME="$tmp_dir/verified-config" \
+    PATH="$tmp_dir/bin:/usr/bin:/bin" \
+    WSL_WIN_RELAY_BROKER_EXE="$tmp_dir/verified/wsl-win-broker.exe" \
+        "$repo_dir/scripts/install-broker-user-service.sh" >/dev/null
+)
+printf '%s\n' '#!/bin/sh' 'echo "wsl-win-connector other (commit def456, built 2026-09-14T00:00:00Z)"' >"$tmp_dir/verified/wsl-win-connector.exe"
+if (
+    unset WSL_WIN_RELAY_ALLOW_UNVERIFIED_BINARIES WSL_WIN_RELAY_CONNECTOR_EXE
+    HOME="$tmp_dir/verified-home" \
+    XDG_CONFIG_HOME="$tmp_dir/verified-config" \
+    PATH="$tmp_dir/bin:/usr/bin:/bin" \
+    WSL_WIN_RELAY_BROKER_EXE="$tmp_dir/verified/wsl-win-broker.exe" \
+        "$repo_dir/scripts/install-broker-user-service.sh" >"$tmp_dir/build-mismatch.out" 2>&1
+); then
+    echo "broker installer unexpectedly accepted mismatched build metadata" >&2
+    exit 1
+fi
+grep -q 'build metadata do not match' "$tmp_dir/build-mismatch.out"
 echo "broker installer creates and preserves protected token file"

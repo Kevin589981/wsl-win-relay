@@ -108,6 +108,10 @@ Re-running the installer migrates missing legacy executable fields but rejects
 requested broker or connector paths that conflict with the active private
 environment, preventing an apparent upgrade from silently retaining another
 binary.
+Before restarting services, the installer also compares the broker and
+connector `-version` metadata and rejects mixed builds. Set
+`WSL_WIN_RELAY_ALLOW_UNVERIFIED_BINARIES=1` only for a deliberate legacy or
+custom build that does not implement the version contract.
 
 New broker installations also create `attach.token` with mode `0600` and pass
 that path to the Windows broker (the wrapper converts a WSL path with

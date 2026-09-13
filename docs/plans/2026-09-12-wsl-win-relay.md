@@ -361,6 +361,9 @@
 - [x] Broker installer upgrades migrate missing legacy executable fields and
       reject broker/connector path conflicts instead of silently retaining a
       different active binary.
+- [x] Broker installation verifies matching broker/connector version, commit,
+      and build-time metadata before service restart, with an explicit legacy
+      bypass rather than an implicit mixed-binary deployment.
 - [x] Broker installation restarts an already-installed proxy user unit after
       broker startup, while still allowing either unit to be installed first.
 - [x] Process-isolated broker frontend/bridge-worker/socket-host/socket-owner
