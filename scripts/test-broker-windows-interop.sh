@@ -12,6 +12,7 @@ auto_port=${WWR_BROKER_INTEROP_AUTO_PORT:-}
 reverse_wsl_host=${WWR_BROKER_INTEROP_WSL_HOST:-127.0.0.2}
 endpoint=${WWR_BROKER_INTEROP_ENDPOINT:-"wsl-win-relay-interop-$$"}
 upstream_proxy=${WWR_WINDOWS_UPSTREAM_PROXY:-}
+service_wrapper=${WWR_BROKER_INTEROP_SERVICE_WRAPPER:-0}
 windows_shell=${WWR_WINDOWS_SHELL:-powershell.exe}
 work=$(mktemp -d "${TMPDIR:-/tmp}/wsl-win-relay-broker-interop.XXXXXX")
 broker_pid=
@@ -105,6 +106,21 @@ fi
 
 token=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
 start_broker() {
+	if [ "$service_wrapper" = 1 ]; then
+		broker_env="$work/broker.env"
+		{
+			printf '%s\n' "WSL_WIN_RELAY_BROKER_EXE=$broker_exe"
+			printf '%s\n' "WSL_WIN_RELAY_BROKER_ENDPOINT=$endpoint"
+			printf '%s\n' "WSL_WIN_RELAY_ATTACH_TOKEN=$token"
+			if [ -n "$upstream_proxy" ]; then
+				printf '%s\n' "WSL_WIN_RELAY_UPSTREAM_PROXY=$upstream_proxy"
+			fi
+		} >"$broker_env"
+		chmod 600 "$broker_env"
+		WSL_WIN_RELAY_BROKER_ENV_FILE="$broker_env" \
+			"$repo_dir/scripts/run-broker-user-service.sh"
+		return
+	fi
 	if [ -n "$upstream_proxy" ]; then
 		"$broker_exe" -endpoint "$endpoint" -token-hex "$token" -upstream-proxy "$upstream_proxy"
 		return

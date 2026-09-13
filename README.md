@@ -163,6 +163,10 @@ The same smoke terminates the broker connector once after initial success and
 checks that the connector reattaches and both automatic and explicit reverse
 listeners remain usable through the replacement.
 
+Set `WWR_BROKER_INTEROP_SERVICE_WRAPPER=1` to run the same smoke through the
+private broker service wrapper and its `0600` environment file, including
+upstream proxy propagation.
+
 On mirrored WSL networking, Windows and WSL can share the host's TCP port
 namespace. A WSL listener may therefore make the same Windows port unavailable
 even when no separate Windows process owns it; this is an operating-system
