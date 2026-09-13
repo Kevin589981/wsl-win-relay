@@ -39,19 +39,21 @@ type Server struct {
 }
 
 type lease struct {
-	mu          sync.Mutex
-	reservation Reservation
-	windows     string
-	wsl         string
-	datagram    bool
-	owners      map[int]string
-	committed   bool
+	mu           sync.Mutex
+	reservation  Reservation
+	windows      string
+	wsl          string
+	datagram     bool
+	owners       map[int]string
+	ownerTargets map[int]string
+	committed    bool
 }
 
 type leaseOwner struct {
 	id       uint64
 	pid      int
 	identity string
+	target   string
 }
 
 func (s *Server) Serve(ctx context.Context) error {
@@ -188,7 +190,7 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 }
 
 func (s *Server) handleReserve(ctx context.Context, conn net.Conn, parts []string) {
-	if len(parts) != 4 && len(parts) != 5 {
+	if len(parts) != 4 && len(parts) != 5 && len(parts) != 6 {
 		writeError(conn, 22, "RESERVE requires pid, network, and port")
 		return
 	}
@@ -258,7 +260,11 @@ func (s *Server) handleReserve(ctx context.Context, conn net.Conn, parts []strin
 	id := s.next.Add(1)
 	s.mu.Lock()
 	s.ensureLeases()
-	s.leases[id] = &lease{reservation: reservation, windows: windowsAddr, wsl: wslTarget, datagram: parts[2] == "udp4" || parts[2] == "udp6", owners: map[int]string{pid: identity}}
+	ownerTarget := ""
+	if len(parts) == 6 {
+		ownerTarget = parts[5]
+	}
+	s.leases[id] = &lease{reservation: reservation, windows: windowsAddr, wsl: wslTarget, datagram: parts[2] == "udp4" || parts[2] == "udp6", owners: map[int]string{pid: identity}, ownerTargets: map[int]string{pid: ownerTarget}}
 	s.mu.Unlock()
 	if _, err := fmt.Fprintf(conn, "OK %d\n", id); err != nil {
 		// The requester may disappear after Windows has bound the port but before
@@ -268,7 +274,7 @@ func (s *Server) handleReserve(ctx context.Context, conn net.Conn, parts []strin
 }
 
 func (s *Server) handleAdopt(conn net.Conn, parts []string) {
-	id, pid, ok := parseOwnerParts(parts)
+	id, pid, target, ok := parseAdoptParts(parts)
 	if !ok {
 		writeError(conn, 22, "ADOPT requires pid and lease")
 		return
@@ -288,7 +294,11 @@ func (s *Server) handleAdopt(conn net.Conn, parts []string) {
 	if l.owners == nil {
 		l.owners = make(map[int]string)
 	}
+	if l.ownerTargets == nil {
+		l.ownerTargets = make(map[int]string)
+	}
 	l.owners[pid] = identity
+	l.ownerTargets[pid] = target
 	s.mu.Unlock()
 	_, _ = io.WriteString(conn, "OK\n")
 }
@@ -325,6 +335,21 @@ func parseOwnerParts(parts []string) (uint64, int, bool) {
 		return 0, 0, false
 	}
 	return id, pid, true
+}
+
+func parseAdoptParts(parts []string) (uint64, int, string, bool) {
+	if len(parts) != 3 && len(parts) != 4 {
+		return 0, 0, "", false
+	}
+	id, pid, ok := parseOwnerParts(parts[:3])
+	if !ok {
+		return 0, 0, "", false
+	}
+	target := ""
+	if len(parts) == 4 {
+		target = parts[3]
+	}
+	return id, pid, target, true
 }
 
 func (s *Server) handleCommit(conn net.Conn, parts []string) {
@@ -400,6 +425,9 @@ func (s *Server) removeOwner(id uint64, pid int, identity string) Reservation {
 		return nil
 	}
 	delete(l.owners, pid)
+	if l.ownerTargets != nil {
+		delete(l.ownerTargets, pid)
+	}
 	if len(l.owners) != 0 {
 		s.mu.Unlock()
 		return nil
@@ -536,18 +564,41 @@ func (s *Server) reapDeadProcesses() {
 	owners := make([]leaseOwner, 0, len(s.leases))
 	for id, l := range s.leases {
 		for pid, identity := range l.owners {
-			owners = append(owners, leaseOwner{id: id, pid: pid, identity: identity})
+			target := ""
+			if l.ownerTargets != nil {
+				target = l.ownerTargets[pid]
+			}
+			owners = append(owners, leaseOwner{id: id, pid: pid, identity: identity, target: target})
 		}
 	}
 	s.mu.Unlock()
 	for _, candidate := range owners {
 		identity, err := s.ProcessIdentity(candidate.pid)
-		if err != nil || identity != candidate.identity {
+		if err != nil || identity != candidate.identity || (candidate.target != "" && !processHasDescriptor(candidate.pid, candidate.target)) {
 			if reservation := s.removeOwner(candidate.id, candidate.pid, candidate.identity); reservation != nil {
 				_ = reservation.Close()
 			}
 		}
 	}
+}
+
+func processHasDescriptor(pid int, target string) bool {
+	if target == "" {
+		return true
+	}
+	entries, err := os.ReadDir(filepath.Join("/proc", strconv.Itoa(pid), "fd"))
+	if err != nil {
+		// Permission or transient procfs failures are not proof that the
+		// descriptor disappeared; identity reaping still handles dead owners.
+		return true
+	}
+	for _, entry := range entries {
+		value, err := os.Readlink(filepath.Join("/proc", strconv.Itoa(pid), "fd", entry.Name()))
+		if err == nil && value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func procProcessIdentity(pid int) (string, error) {

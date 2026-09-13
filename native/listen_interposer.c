@@ -34,6 +34,7 @@ typedef int (*close_range_fn)(unsigned int, unsigned int, int);
 typedef int (*fcntl_fn)(int, int, ...);
 typedef long (*syscall_fn)(long, ...);
 typedef int (*clone_fn)(int (*)(void *), void *, int, void *, ...);
+typedef ssize_t (*readlink_fn)(const char *, char *, size_t);
 
 struct tracked_lease { uint64_t id; unsigned refs; };
 
@@ -55,6 +56,7 @@ static close_range_fn real_close_range;
 static fcntl_fn real_fcntl;
 static syscall_fn real_syscall;
 static clone_fn real_clone;
+static readlink_fn real_readlink;
 static pthread_once_t init_once = PTHREAD_ONCE_INIT;
 static pthread_mutex_t tracked_mu = PTHREAD_MUTEX_INITIALIZER;
 static struct tracked_fd *tracked;
@@ -204,6 +206,7 @@ static void initialize(void) {
     real_fcntl = (fcntl_fn)dlsym(RTLD_NEXT, "fcntl");
     real_syscall = (syscall_fn)dlsym(RTLD_NEXT, "syscall");
     real_clone = (clone_fn)dlsym(RTLD_NEXT, "clone");
+    real_readlink = (readlink_fn)dlsym(RTLD_NEXT, "readlink");
     (void)pthread_atfork(atfork_prepare, atfork_parent, atfork_child);
 }
 
@@ -294,10 +297,39 @@ static int control_request(const char *request, char *response, size_t capacity)
     return 0;
 }
 
-static int reserve_listener(const char *network, uint16_t port, const char *host, uint64_t *lease) {
-    char request[128];
+static int descriptor_target(int fd, char *target, size_t capacity) {
+    if (target == NULL || capacity < 2) {
+        errno = EINVAL;
+        return -1;
+    }
+    target[0] = '\0';
+    if (real_readlink == NULL) {
+        return -1;
+    }
+    char path[64];
+    int length = snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
+    if (length < 0 || (size_t)length >= sizeof(path)) {
+        return -1;
+    }
+    ssize_t copied = real_readlink(path, target, capacity - 1);
+    if (copied < 0) {
+        return -1;
+    }
+    target[copied] = '\0';
+    if (strncmp(target, "socket:[", 8) != 0) {
+        target[0] = '\0';
+    }
+    return 0;
+}
+
+static int reserve_listener(const char *network, uint16_t port, const char *host, const char *target, uint64_t *lease) {
+    char request[512];
     char response[256];
-    snprintf(request, sizeof(request), "RESERVE %ld %s %u %s\n", (long)getpid(), network, (unsigned)port, host);
+    if (target != NULL && target[0] != '\0') {
+        snprintf(request, sizeof(request), "RESERVE %ld %s %u %s %s\n", (long)getpid(), network, (unsigned)port, host, target);
+    } else {
+        snprintf(request, sizeof(request), "RESERVE %ld %s %u %s\n", (long)getpid(), network, (unsigned)port, host);
+    }
     if (control_request_retry(request, response, sizeof(response), control_retry_attempts()) < 0) {
         return -1;
     }
@@ -318,10 +350,14 @@ static int lease_operation(const char *operation, uint64_t lease) {
     return control_request_retry(request, response, sizeof(response), attempts);
 }
 
-static int adopt_lease(pid_t pid, uint64_t lease) {
-    char request[128];
+static int adopt_lease(pid_t pid, uint64_t lease, const char *target) {
+    char request[512];
     char response[256];
-    snprintf(request, sizeof(request), "ADOPT %ld %llu\n", (long)pid, (unsigned long long)lease);
+    if (target != NULL && target[0] != '\0') {
+        snprintf(request, sizeof(request), "ADOPT %ld %llu %s\n", (long)pid, (unsigned long long)lease, target);
+    } else {
+        snprintf(request, sizeof(request), "ADOPT %ld %llu\n", (long)pid, (unsigned long long)lease);
+    }
     return control_request_retry(request, response, sizeof(response), control_retry_attempts());
 }
 
@@ -356,7 +392,11 @@ static void adopt_tracked_for_pid(pid_t pid) {
                 break;
             }
         }
-        if (!seen && adopt_lease(pid, entry->lease->id) < 0 && debug_enabled()) {
+        char target[128];
+        if (!seen) {
+            (void)descriptor_target(entry->fd, target, sizeof(target));
+        }
+        if (!seen && adopt_lease(pid, entry->lease->id, target) < 0 && debug_enabled()) {
             fprintf(stderr, "wsl-win-relay interposer: ADOPT failed for lease %llu: %s\n",
                     (unsigned long long)entry->lease->id, strerror(errno));
         }
@@ -525,6 +565,8 @@ static int coordinated_listen(int sockfd, int backlog, listen_fn call) {
 	const char *network;
 	char host[INET6_ADDRSTRLEN];
 	uint16_t port;
+	char target[128];
+	(void)descriptor_target(sockfd, target, sizeof(target));
 	if (local.ss_family == AF_INET) {
 		network = "tcp4";
 		port = ntohs(((struct sockaddr_in *)&local)->sin_port);
@@ -540,7 +582,7 @@ static int coordinated_listen(int sockfd, int backlog, listen_fn call) {
         return call(sockfd, backlog);
     }
     uint64_t lease;
-	if (reserve_listener(network, port, host, &lease) < 0) {
+	if (reserve_listener(network, port, host, target, &lease) < 0) {
         return -1;
     }
 	if (call(sockfd, backlog) < 0) {
@@ -586,6 +628,8 @@ static int coordinated_bind(int sockfd, const struct sockaddr *address, socklen_
     const char *network;
     char host[INET6_ADDRSTRLEN];
     uint16_t port;
+    char target[128];
+    (void)descriptor_target(sockfd, target, sizeof(target));
     if (address->sa_family == AF_INET) {
         if (address_length < sizeof(struct sockaddr_in)) {
             return call(sockfd, address, address_length);
@@ -613,7 +657,7 @@ static int coordinated_bind(int sockfd, const struct sockaddr *address, socklen_
         return call(sockfd, address, address_length);
     }
     uint64_t lease;
-    if (reserve_listener(network, port, host, &lease) < 0) {
+    if (reserve_listener(network, port, host, target, &lease) < 0) {
         return -1;
     }
     if (call(sockfd, address, address_length) < 0) {

@@ -34,7 +34,10 @@ Provide `libwsl_win_relay_listen.so` and a `wsl-win-relay-run` launcher. The int
    existing process owner. A mapping is released only after every process
    owner has gone away.
 8. Releases abandoned mappings through the control daemon's process-identity
-   lease reaper when an owner exits without callbacks.
+   lease reaper when an owner exits without callbacks. `RESERVE` and `ADOPT`
+   optionally carry the Linux `/proc/<pid>/fd` socket identity (`socket:[inode]`)
+   so the reaper can also reclaim a descriptor that disappeared across a
+   successful `execve()`; older clients may omit this field.
 9. Retries only transient control-socket availability and response-timeout
    errors for a bounded two-second startup/recovery window by default; the
    `WSL_WIN_RELAY_CONTROL_RETRY_SECONDS` environment variable can extend it to

@@ -122,6 +122,10 @@
 - [x] Dynamic raw `clone()` and `clone3()` paths fail closed for non-thread
       `CLONE_FILES`; `clone3()` flags are read with `process_vm_readv` so an
       invalid caller pointer cannot crash the interposer.
+- [x] Dynamic `RESERVE`/`ADOPT` requests carry an optional Linux socket inode
+      identity, allowing the control daemon to reclaim a lease when the
+      descriptor disappears across successful `execve()` without requiring
+      post-exec code in the replaced image; legacy requests remain accepted.
 - [x] ptrace register access is isolated for amd64 and aarch64 in
       `native/strict_supervisor_regs.h`; unsupported architectures fail at
       compile time until a dedicated adapter is added.

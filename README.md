@@ -444,8 +444,10 @@ UDP `bind()`, `dup()`, `dup2()`, `dup3()`, `fcntl(F_DUPFD*)`, `close_range()`,
 ordinary `fork()` descriptor inheritance, process-style `clone()` without
 `CLONE_FILES`, and parent-side `vfork()` adoption. The kernel adapter additionally
 tracks `SOCK_CLOEXEC`/`FD_CLOEXEC` through `PTRACE_EVENT_EXEC`; the dynamic
-interposer cannot run post-exec cleanup in the replaced image and relies on
-process-owner reaping for that boundary. The dynamic interposer rejects process-style
+interposer cannot run post-exec cleanup in the replaced image, so it includes
+the socket inode identity in `RESERVE`/`ADOPT` and lets the control daemon's
+reaper reclaim leases whose descriptor disappeared at that boundary. The
+dynamic interposer rejects process-style
 `CLONE_FILES` in the raw/libc `clone()` paths because its tracking table is
 process-local. It applies the same check to `clone3()` by safely reading the
 caller's flags; malformed or unreadable clone arguments fail closed with

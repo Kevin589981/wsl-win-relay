@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -422,6 +423,35 @@ func TestReaperKeepsLeaseWhileAnotherOwnerLives(t *testing.T) {
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestReaperDropsOwnerWhenSocketDescriptorDisappears(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("requires Linux procfs descriptor inspection")
+	}
+	reservation := &fakeReservation{}
+	pid := os.Getpid()
+	server := &Server{
+		ProcessIdentity: func(got int) (string, error) {
+			if got != pid {
+				t.Fatalf("identity requested for pid %d, want %d", got, pid)
+			}
+			return "start", nil
+		},
+		leases: map[uint64]*lease{
+			1: {
+				reservation:  reservation,
+				owners:       map[int]string{pid: "start"},
+				ownerTargets: map[int]string{pid: "socket:[descriptor-that-does-not-exist]"},
+			},
+		},
+	}
+
+	server.reapDeadProcesses()
+	_, closed := reservation.values()
+	if !closed {
+		t.Fatal("reaper kept lease after its socket descriptor disappeared")
 	}
 }
 

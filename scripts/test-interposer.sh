@@ -34,8 +34,12 @@ reserve_count=$(awk '$1 == "RESERVE" { count++ } END { print count + 0 }' "$requ
 commit_count=$(awk '$1 == "COMMIT" { count++ } END { print count + 0 }' "$request_log")
 adopt_count=$(awk '$1 == "ADOPT" { count++ } END { print count + 0 }' "$request_log")
 release_count=$(awk '$1 == "RELEASE" { count++ } END { print count + 0 }' "$request_log")
+missing_reserve_targets=$(awk '$1 == "RESERVE" && NF < 6 { count++ } END { print count + 0 }' "$request_log")
+missing_adopt_targets=$(awk '$1 == "ADOPT" && NF < 4 { count++ } END { print count + 0 }' "$request_log")
 [ "$reserve_count" -eq 9 ] || { echo "expected nine RESERVE requests including the delayed retry, raw syscall, pthread, and rejection paths, got $reserve_count" >&2; exit 1; }
 [ "$commit_count" -eq 5 ] || { echo "expected five COMMIT requests including the delayed retry, raw, pthread, and delayed listen, got $commit_count" >&2; exit 1; }
 [ "$adopt_count" -ge 2 ] || { echo "expected fork and clone ADOPT, got $adopt_count" >&2; exit 1; }
 [ "$release_count" -ge 9 ] && [ "$release_count" -le 10 ] || { echo "expected all TCP/UDP leases including delayed retry, clone, and pthread owners to RELEASE, got $release_count" >&2; exit 1; }
+[ "$missing_reserve_targets" -eq 0 ] || { echo "expected every dynamic RESERVE to carry a socket inode target, got $missing_reserve_targets missing" >&2; exit 1; }
+[ "$missing_adopt_targets" -eq 0 ] || { echo "expected every dynamic ADOPT to carry a socket inode target, got $missing_adopt_targets missing" >&2; exit 1; }
 echo "native interposer TCP/UDP, raw syscall, clone, clone3, optional vfork, and pthread lifecycle passed"
