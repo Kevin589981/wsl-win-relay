@@ -13,6 +13,9 @@ server_pid=
 relay_pid=
 
 cleanup() {
+	if [ -z "$relay_pid" ] && [ -n "$proxy_pid" ]; then
+		relay_pid=$(pgrep -P "$proxy_pid" -f 'wsl-win-relay\.exe' | head -n 1 || true)
+	fi
 	if [ -n "$relay_pid" ]; then
 		kill "$relay_pid" 2>/dev/null || true
 	fi
@@ -48,7 +51,7 @@ proxy_pid=$!
 
 probe_windows_port() {
 	"$windows_shell" -NoProfile -NonInteractive -Command \
-		"try { [System.Net.Sockets.TcpClient]::new('127.0.0.1',$port).Close(); exit 0 } catch { exit 1 }" \
+		"\$client = [System.Net.Sockets.TcpClient]::new(); \$task = \$client.ConnectAsync('127.0.0.1',$port); if (\$task.Wait(1000) -and \$client.Connected) { \$client.Close(); exit 0 }; \$client.Close(); exit 1" \
 		>/dev/null 2>&1
 }
 

@@ -415,6 +415,10 @@ that an allowlisted Windows mapping becomes reachable again after the relay
 child is terminated. Set `WWR_WINDOWS_SHELL` to an absolute mounted path when
 the shell is not in `PATH`, for example
 `WWR_WINDOWS_SHELL=/mnt/d/AppGallery/Downloads/PowerShell/7/pwsh.exe`.
+The direct stdio smoke requires a topology with separate WSL and Windows port
+namespaces; mirrored mode can reject same-port binds at the operating-system
+layer. The broker interop smoke above uses an isolated address strategy and
+covers mirrored-mode recovery instead.
 
 IPv4 and IPv6 Windows bind hosts are configured independently. The defaults are
 `127.0.0.1` and `::1`; set `-strict-listen-host6` and/or `-auto-forward-host6`
