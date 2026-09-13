@@ -17,6 +17,9 @@
 #ifndef CLOSE_RANGE_CLOEXEC
 #define CLOSE_RANGE_CLOEXEC (1U << 2)
 #endif
+#ifndef CLOSE_RANGE_UNSHARE
+#define CLOSE_RANGE_UNSHARE (1U << 1)
+#endif
 
 static int clone_child(void *argument) {
     int fd = *(int *)argument;
@@ -280,6 +283,11 @@ int main(int argc, char **argv) {
         return 21;
     }
 #endif
+    errno = 0;
+    if (close_range((unsigned int)fd, (unsigned int)fd, CLOSE_RANGE_UNSHARE) != -1 || errno != ENOTSUP) {
+        close(fd);
+        return 32;
+    }
     int thread_result = -1;
     pthread_t thread;
     if (pthread_create(&thread, NULL, thread_child, &thread_result) != 0 ||

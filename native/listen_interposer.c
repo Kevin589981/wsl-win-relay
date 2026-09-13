@@ -1109,11 +1109,20 @@ int clone(int (*function)(void *), void *stack, int flags, void *argument, ...) 
 #ifndef CLOSE_RANGE_CLOEXEC
 #define CLOSE_RANGE_CLOEXEC (1U << 2)
 #endif
+#ifndef CLOSE_RANGE_UNSHARE
+#define CLOSE_RANGE_UNSHARE (1U << 1)
+#endif
 
 int close_range(unsigned int first, unsigned int last, int flags) {
     pthread_once(&init_once, initialize);
     if (real_close_range == NULL) {
         errno = ENOSYS;
+        return -1;
+    }
+    if ((flags & CLOSE_RANGE_UNSHARE) != 0 && relay_control_enabled() && tracked_any()) {
+        /* Unsharing the descriptor table would invalidate process-local
+         * lease ownership. Reject it while strict tracking is active. */
+        errno = ENOTSUP;
         return -1;
     }
     int result = real_close_range(first, last, flags);
