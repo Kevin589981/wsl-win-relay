@@ -5,8 +5,8 @@ repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 proxy_bin=${WWR_PROXY_BIN:-"$repo_dir/bin/wsl-proxy-linux"}
 broker_exe=${WWR_BROKER_EXE:-"$repo_dir/bin/wsl-win-broker.exe"}
 connector_exe=${WWR_CONNECTOR_EXE:-"$repo_dir/bin/wsl-win-connector.exe"}
-socks_listen=${WWR_BROKER_INTEROP_LISTEN:-127.0.0.1:11087}
-reverse_port=${WWR_BROKER_INTEROP_REVERSE_PORT:-$((18080 + ($$ % 1000)))}
+socks_listen=${WWR_BROKER_INTEROP_LISTEN:-}
+reverse_port=${WWR_BROKER_INTEROP_REVERSE_PORT:-}
 endpoint=${WWR_BROKER_INTEROP_ENDPOINT:-"wsl-win-relay-interop-$$"}
 upstream_proxy=${WWR_WINDOWS_UPSTREAM_PROXY:-}
 windows_shell=${WWR_WINDOWS_SHELL:-powershell.exe}
@@ -53,6 +53,15 @@ fi
 if ! command -v python3 >/dev/null 2>&1; then
 	echo "python3 is required for the reverse forwarding interop smoke" >&2
 	exit 1
+fi
+pick_free_port() {
+	python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()'
+}
+if [ -z "$socks_listen" ]; then
+	socks_listen="127.0.0.1:$(pick_free_port)"
+fi
+if [ -z "$reverse_port" ]; then
+	reverse_port=$(pick_free_port)
 fi
 if [ ! -x "$windows_shell" ] && ! command -v "$windows_shell" >/dev/null 2>&1; then
 	echo "Windows PowerShell is required for broker cleanup: $windows_shell (set WWR_WINDOWS_SHELL)" >&2
