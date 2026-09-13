@@ -39,6 +39,7 @@ printf '%s\n' \
     'static void *thread_close(void *argument) { usleep(1000000); close(*(int *)argument); return NULL; }' \
     'static void *thread_exit_group(void *argument) { (void)argument; usleep(100000); syscall(SYS_exit_group, 0); return NULL; }' \
     'static void *thread_listen_after_leader_exit(void *argument) { (void)argument; usleep(100000); int inherited = leader_listener_fd; leader_listener_fd = -1; if (inherited >= 0) close(inherited); int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0}; address.sin_family = AF_INET; address.sin_port = htons(47145); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK); if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return (void *)1; close(fd); return NULL; }' \
+    'static void *thread_exec(void *argument) { (void)argument; char *child_argv[] = { (char *)"static-target", (char *)"spawn-child", NULL }; execv("/proc/self/exe", child_argv); _exit(127); }' \
     'int main(int argc, char **argv) {' \
     '  if (argc > 1 && strcmp(argv[1], "env") == 0) return getenv("LD_PRELOAD") == NULL ? 0 : 8;' \
     '  if (argc > 1 && strcmp(argv[1], "fork") == 0) {' \
@@ -175,6 +176,13 @@ printf '%s\n' \
     '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 2;' \
     '    if (pthread_create(&thread, NULL, thread_close, &fd) != 0) return 4;' \
     '    return pthread_join(thread, NULL) == 0 ? 0 : 5;' \
+    '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "thread-exec") == 0) {' \
+    '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0}; pthread_t thread;' \
+    '    address.sin_family = AF_INET; address.sin_port = htons(47156); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
+    '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 2;' \
+    '    if (pthread_create(&thread, NULL, thread_exec, NULL) != 0) return 4;' \
+    '    pause(); return 6;' \
     '  }' \
     '  if (argc > 1 && strcmp(argv[1], "leader-sys-exit") == 0) {' \
     '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0}; pthread_t thread;' \
@@ -618,6 +626,28 @@ grep -q 'RESERVE .* tcp4 47142' "$tmp_dir/thread-exit-group.log"
 thread_exit_group_cleanup=$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/thread-exit-group.log")
 test "$thread_exit_group_cleanup" -ge 1
 test "$thread_exit_group_cleanup" -le 2
+stop_control
+
+start_control "$tmp_dir/thread-exec.sock" "$tmp_dir/thread-exec.log"
+set +e
+timeout 10s env WSL_WIN_RELAY_CONTROL="$tmp_dir/thread-exec.sock" \
+    "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" thread-exec
+thread_exec_status=$?
+set -e
+if [ "$thread_exec_status" -ne 0 ]; then
+    echo "thread exec target failed with status $thread_exec_status" >&2
+    exit 1
+fi
+grep -q 'RESERVE .* tcp4 47156' "$tmp_dir/thread-exec.log"
+grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/thread-exec.log"
+test "$(grep -Ec '^RESERVE ' "$tmp_dir/thread-exec.log")" -eq 2
+test "$(grep -Ec '^COMMIT ' "$tmp_dir/thread-exec.log")" -eq 2
+thread_exec_cleanup=$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/thread-exec.log")
+test "$thread_exec_cleanup" -ge 2
+test "$thread_exec_cleanup" -le 3
+for lease in $(sed -n 's/^COMMIT \([0-9][0-9]*\)$/\1/p' "$tmp_dir/thread-exec.log"); do
+    grep -Eq "^(CLOSE|RELEASE) .* $lease$|^CLOSE $lease$" "$tmp_dir/thread-exec.log"
+done
 stop_control
 
 start_control "$tmp_dir/env.sock" "$tmp_dir/env.log"

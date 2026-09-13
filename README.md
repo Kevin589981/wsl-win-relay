@@ -499,6 +499,11 @@ and cleanup protocol. The same shell path is exercised with a forced Windows
 bind rejection and must return a failure without committing the lease.
 It also pauses and resumes a traced listener with `SIGSTOP`/`SIGCONT`, keeping
 the lease alive across an ordinary service stop/continue cycle.
+The lifecycle smoke additionally execs from a non-leader pthread and checks
+that both the inherited listener and the replacement image's listener leases
+are tracked and released after Linux resets the thread-group identity. Cleanup
+is owner-scoped and idempotent, so the extra teardown notification Linux may
+emit at that boundary cannot leak a Windows reservation.
 The native interposer targets the Linux
 amd64 build produced by the WSL scripts. The daemon tracks multiple process
 owners and reaps leases from processes that exit without closing their

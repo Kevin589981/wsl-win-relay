@@ -110,6 +110,10 @@
 - [x] The static lifecycle smoke pauses and resumes a traced listener with
       `SIGSTOP`/`SIGCONT`, confirming that ordinary service stop/continue
       signals preserve the lease until the listener exits.
+- [x] The static lifecycle smoke execs from a non-leader pthread and verifies
+      that Linux thread-group identity reset preserves both inherited and
+      replacement-image listener leases through final cleanup; duplicate
+      owner-scoped teardown notifications remain bounded and idempotent.
 - [ ] Kernel-level coverage for non-direct vfork libc interactions remains
       open for implementations beyond the `system()`, `popen()`, `posix_spawn`,
       and `posix_spawnp`
