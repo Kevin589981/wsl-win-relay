@@ -26,6 +26,9 @@
 - [x] UDP endpoint resolution is context-aware on WSL and Windows; per-object
       cancellation interrupts in-flight DNS when an association or reverse
       mapping closes instead of leaking blocked resolver goroutines.
+- [x] SOCKS5 upstream UDP destination resolution uses an association-owned
+      context plus a 30-second ceiling; closing the association cancels a
+      blocked local DNS lookup immediately.
 - [x] JSON configuration uses the accurate `http_proxy_listen` name for the
       HTTP frontend while normalizing the legacy `http_connect_listen` alias
       and rejecting conflicting values.

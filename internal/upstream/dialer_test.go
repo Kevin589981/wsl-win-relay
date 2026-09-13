@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"strings"
@@ -336,6 +337,52 @@ func TestSOCKS5PacketDialer(t *testing.T) {
 		if err := <-serverErr; err != nil && !strings.Contains(err.Error(), "closed") {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestSOCKS5PacketCloseCancelsTargetResolution(t *testing.T) {
+	udp, err := net.ListenUDP("udp", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, controlPeer := net.Pipe()
+	defer controlPeer.Close()
+	lifetime, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	packet := &socks5PacketConn{
+		control:        control,
+		udp:            udp,
+		relay:          &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9},
+		resolveDomains: true,
+		ctx:            lifetime,
+		cancel:         cancel,
+		done:           make(chan struct{}),
+		resolveTarget: func(ctx context.Context, _ string) (string, error) {
+			close(started)
+			<-ctx.Done()
+			return "", ctx.Err()
+		},
+	}
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := packet.WriteToTarget([]byte("payload"), "blocked.test:53")
+		writeDone <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("target resolution did not start")
+	}
+	if err := packet.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-writeDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("write error=%v, want context cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("packet close did not cancel target resolution")
 	}
 }
 

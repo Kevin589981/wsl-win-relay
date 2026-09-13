@@ -382,7 +382,9 @@ remotely: TCP hostnames are sent through the relay rather than resolved by WSL.
 The `socks5` form resolves TCP and UDP names on Windows before sending IP
 addresses to the upstream. SOCKS5 UDP ASSOCIATE is supported; SOCKS5H UDP
 destinations can remain domain names for upstream resolution, while native UDP
-uses Windows resolution. SOCKS fragmentation
+uses Windows resolution. For `socks5://`, local destination DNS is bounded to
+30 seconds and canceled immediately when the UDP association closes, so a
+stalled resolver cannot retain an otherwise closed association. SOCKS fragmentation
 (`FRAG != 0`) is rejected because there is no interoperable fragmentation
 standard in common clients.
 

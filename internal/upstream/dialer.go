@@ -172,7 +172,8 @@ func (d *Dialer) OpenPacketContext(ctx context.Context) (net.PacketConn, error) 
 		_ = control.Close()
 		return nil, err
 	}
-	packet := &socks5PacketConn{control: control, udp: udp, relay: relayAddr, resolveDomains: strings.EqualFold(d.proxy.Scheme, "socks5"), done: make(chan struct{})}
+	packetCtx, packetCancel := context.WithCancel(context.Background())
+	packet := &socks5PacketConn{control: control, udp: udp, relay: relayAddr, resolveDomains: strings.EqualFold(d.proxy.Scheme, "socks5"), resolveTarget: resolveTarget, ctx: packetCtx, cancel: packetCancel, done: make(chan struct{})}
 	close(finished)
 	go func() {
 		select {
@@ -401,6 +402,9 @@ type socks5PacketConn struct {
 	udp            *net.UDPConn
 	relay          *net.UDPAddr
 	resolveDomains bool
+	resolveTarget  func(context.Context, string) (string, error)
+	ctx            context.Context
+	cancel         context.CancelFunc
 	done           chan struct{}
 	closed         bool
 }
@@ -438,8 +442,16 @@ func (p *socks5PacketConn) WriteTo(data []byte, address net.Addr) (int, error) {
 
 func (p *socks5PacketConn) WriteToTarget(data []byte, target string) (int, error) {
 	if p.resolveDomains {
-		resolveCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		resolved, err := resolveTarget(resolveCtx, target)
+		lifetime := p.ctx
+		if lifetime == nil {
+			lifetime = context.Background()
+		}
+		resolver := p.resolveTarget
+		if resolver == nil {
+			resolver = resolveTarget
+		}
+		resolveCtx, cancel := context.WithTimeout(lifetime, 30*time.Second)
+		resolved, err := resolver(resolveCtx, target)
 		cancel()
 		if err != nil {
 			return 0, err
@@ -467,9 +479,12 @@ func (p *socks5PacketConn) Close() error {
 		return nil
 	}
 	p.closed = true
-	control, udp := p.control, p.udp
+	control, udp, cancel := p.control, p.udp, p.cancel
 	close(p.done)
 	p.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 	_ = control.Close()
 	return udp.Close()
 }
