@@ -470,9 +470,10 @@ The kernel supervisor also recovers the initial unclassified child stop seen
 with nested libc `vfork()` launches when the parent relationship and pending
 create syscall are both unambiguous; static `system()` and `popen()` smoke
 cases cover this path, while ambiguous variants remain fail-closed.
-The native lifecycle smoke also exercises `posix_spawnp()` PATH lookup and a
-direct `vfork()` followed by `execl()`; these paths retain the same bounded
-ownership and cleanup guarantees.
+The native lifecycle smoke also exercises `posix_spawnp()` PATH lookup and
+direct `vfork()` followed by `execl()` or `execvp()`; these paths retain the
+same bounded ownership and cleanup guarantees. The kernel adapter does not
+promise arbitrary child-side work between `vfork()` and `exec`/`_exit`.
 The native interposer targets the Linux
 amd64 build produced by the WSL scripts. The daemon tracks multiple process
 owners and reaps leases from processes that exit without closing their
