@@ -5,7 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"unicode/utf8"
+
+	"github.com/Kevin589981/wsl-win-relay/internal/diagnostic"
 )
 
 const (
@@ -132,14 +133,7 @@ func ErrorPayload(err error) []byte {
 	if err == nil {
 		return nil
 	}
-	payload := []byte(err.Error())
-	if len(payload) > MaxErrorSize {
-		payload = payload[:MaxErrorSize]
-		for !utf8.Valid(payload) {
-			payload = payload[:len(payload)-1]
-		}
-	}
-	return payload
+	return []byte(diagnostic.UTF8(err.Error(), MaxErrorSize))
 }
 
 func Write(w io.Writer, f Frame) error {

@@ -15,7 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
+
+	"github.com/Kevin589981/wsl-win-relay/internal/diagnostic"
 )
 
 type Scanner interface{ Scan() ([]Listener, error) }
@@ -575,15 +576,7 @@ func boundedStatusError(err error) string {
 	if err == nil {
 		return ""
 	}
-	message := err.Error()
-	if len(message) <= maxStatusError {
-		return message
-	}
-	message = message[:maxStatusError]
-	for !utf8.ValidString(message) {
-		message = message[:len(message)-1]
-	}
-	return message
+	return diagnostic.UTF8(err.Error(), maxStatusError)
 }
 
 func (w *Watcher) mappingAddresses(listener Listener) (string, string) {

@@ -15,8 +15,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
-	"unicode/utf8"
 
+	"github.com/Kevin589981/wsl-win-relay/internal/diagnostic"
 	"github.com/Kevin589981/wsl-win-relay/internal/transport/localipc"
 )
 
@@ -768,18 +768,8 @@ func (s *Server) ensureLeases() {
 }
 func writeError(w io.Writer, errno int, message string) {
 	prefix := fmt.Sprintf("ERR %d ", errno)
-	message = strings.NewReplacer("\r", " ", "\n", " ").Replace(message)
-	message = strings.ToValidUTF8(message, "\uFFFD")
 	maximum := MaxControlResponseBytes - len(prefix) - 1
-	if maximum < 0 {
-		maximum = 0
-	}
-	if len(message) > maximum {
-		message = message[:maximum]
-		for len(message) > 0 && !utf8.ValidString(message) {
-			message = message[:len(message)-1]
-		}
-	}
+	message = diagnostic.SingleLine(message, maximum)
 	_, _ = io.WriteString(w, prefix+message+"\n")
 }
 func errnoFor(error) int { return 98 }

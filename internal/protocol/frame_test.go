@@ -154,4 +154,8 @@ func TestErrorPayloadIsBounded(t *testing.T) {
 	if len(unicodePayload) > MaxErrorSize || !utf8.Valid(unicodePayload) {
 		t.Fatalf("Unicode payload length=%d valid=%v", len(unicodePayload), utf8.Valid(unicodePayload))
 	}
+	invalidPayload := ErrorPayload(fmt.Errorf("%s", string([]byte{'x', 0xff, 'y'})))
+	if !utf8.Valid(invalidPayload) {
+		t.Fatalf("invalid input remained invalid UTF-8: %q", invalidPayload)
+	}
 }

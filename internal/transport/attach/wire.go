@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+
+	"github.com/Kevin589981/wsl-win-relay/internal/diagnostic"
 )
 
 const (
@@ -537,11 +539,7 @@ func completeServerHandshakeWithInstance(rw io.Writer, registry *Registry, capab
 	}
 	attachment, err := registry.Attach(request.Token)
 	if err != nil {
-		message := err.Error()
-		if len(message) > maxWireError {
-			message = message[:maxWireError]
-		}
-		_ = Write(rw, Message{Type: MessageAttachError, Payload: []byte(message)})
+		_ = Write(rw, Message{Type: MessageAttachError, Payload: attachErrorPayload(err)})
 		return nil, request.PeerCapabilities, request.LastEpoch, 0, err
 	}
 	if err := Write(rw, Message{Type: MessageAttachOK, Payload: EncodeAttachOKWithInstance(attachment.Epoch(), capabilities, registry.InstanceID())}); err != nil {
@@ -549,6 +547,13 @@ func completeServerHandshakeWithInstance(rw io.Writer, registry *Registry, capab
 		return nil, request.PeerCapabilities, request.LastEpoch, 0, err
 	}
 	return attachment, request.PeerCapabilities, request.LastEpoch, registry.InstanceID(), nil
+}
+
+func attachErrorPayload(err error) []byte {
+	if err == nil {
+		return nil
+	}
+	return []byte(diagnostic.SingleLine(err.Error(), maxWireError))
 }
 
 func writeFull(w io.Writer, p []byte) error {

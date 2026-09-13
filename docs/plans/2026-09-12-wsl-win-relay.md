@@ -15,9 +15,10 @@
 - [x] Frame type, stream ID, and type-specific payload length are validated
       from the header before any payload allocation/read, preventing malformed
       peers from using invalid frames for memory or I/O amplification.
-- [x] Control error frames and persisted automatic-mapping errors are bounded
-      at 4 KiB so a malformed peer cannot amplify diagnostic text into large
-      logs or status snapshots.
+- [x] Control error frames and persisted automatic-mapping errors are valid
+      UTF-8 bounded at 4 KiB, so malformed diagnostics cannot amplify storage
+      or leave corrupt status text; attach rejections use the same shared
+      rune-safe encoder and additionally remain single-line.
 - [x] Every executable exposes consistent version, commit, and build-time
       metadata; the WSL build and CI paths inject and verify matching values.
 - [x] SOCKS5 TCP CONNECT and UDP ASSOCIATE, plus optional HTTP CONNECT and

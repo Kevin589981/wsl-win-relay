@@ -458,6 +458,10 @@ func TestBoundedStatusError(t *testing.T) {
 	if len(unicodeError) > maxStatusError || !utf8.ValidString(unicodeError) {
 		t.Fatalf("Unicode error length=%d valid=%v", len(unicodeError), utf8.ValidString(unicodeError))
 	}
+	invalidError := boundedStatusError(errors.New(string([]byte{'x', 0xff, 'y'})))
+	if !utf8.ValidString(invalidError) {
+		t.Fatalf("invalid input remained invalid UTF-8: %q", invalidError)
+	}
 }
 
 func TestWatcherBacksOffRejectedMapping(t *testing.T) {

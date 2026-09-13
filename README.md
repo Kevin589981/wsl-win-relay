@@ -10,6 +10,9 @@ The repository remains under active maintenance. The current TCP/UDP relay is
 usable and tested:
 
 - Versioned, bounded multiplexed protocol with explicit stream lifecycle.
+- Shared diagnostic normalization keeps relay errors, attach rejections,
+  strict-control responses, and mapping status valid UTF-8 within their
+  protocol-specific byte limits; line protocols also normalize CR/LF.
 - Stdio transport for WSL-to-Windows process interop.
 - Windows-side WinSock TCP dialing, including Windows-side DNS for domain targets.
 - Loopback SOCKS5 no-auth proxy with IPv4, IPv6, and domain CONNECT.

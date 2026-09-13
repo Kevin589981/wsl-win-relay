@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestWireRoundTripAndPartialWrites(t *testing.T) {
@@ -282,6 +285,19 @@ func TestServerHandshakeDetachesWhenResponseWriteFails(t *testing.T) {
 	}
 	if registry.CurrentEpoch() != 0 {
 		t.Fatal("failed handshake left an attached generation")
+	}
+}
+
+func TestAttachErrorPayloadIsSingleLineBoundedUTF8(t *testing.T) {
+	payload := attachErrorPayload(fmt.Errorf("first\r\n%s", strings.Repeat("\u754c", maxWireError)))
+	if len(payload) > maxWireError || !utf8.Valid(payload) {
+		t.Fatalf("payload length=%d valid=%v", len(payload), utf8.Valid(payload))
+	}
+	if bytes.ContainsAny(payload, "\r\n") || !bytes.HasPrefix(payload, []byte("first  ")) {
+		t.Fatalf("payload framing=%q", payload)
+	}
+	if attachErrorPayload(nil) != nil {
+		t.Fatal("nil error produced an attach error payload")
 	}
 }
 
