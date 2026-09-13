@@ -300,9 +300,10 @@ HTTP_PROXY=http://127.0.0.1:8080 curl http://example.com
 ```
 
 HTTPS requests use CONNECT and cleartext `http://` requests use absolute-form
-HTTP forwarding. Each cleartext request is forwarded over one origin connection
-with proxy-only headers removed and `Connection: close` enforced. HTTPS URLs
-must still use CONNECT; the listener is loopback-only by default.
+HTTP forwarding. Multiple sequential cleartext requests can reuse one client
+connection; each request uses a fresh origin connection with proxy-only and
+hop-by-hop headers removed, while the origin side is closed after the response.
+HTTPS URLs must still use CONNECT; the listener is loopback-only by default.
 
 To expose a WSL service on a Windows port, add an explicit reverse mapping:
 

@@ -14,8 +14,7 @@ connection.
 
 ## Decision
 
-Keep CONNECT as a byte tunnel and add one-request absolute-form forwarding for
-plain HTTP:
+Keep CONNECT as a byte tunnel and add absolute-form forwarding for plain HTTP:
 
 - CONNECT requires the existing `host:port` target and preserves buffered bytes
   after the handshake.
@@ -24,9 +23,10 @@ plain HTTP:
   sends the request in origin form through the relay dialer.
 - Proxy-only headers and all hop-by-hop headers named by `Connection` (plus the
   standard `Keep-Alive`, `TE`, `Trailer`, and `Upgrade` headers) are removed.
-  The request is marked `Connection: close`, so one client connection carries
-  one origin request and response. This bounds lifecycle state without adding a
-  second HTTP session multiplexer.
+  Each request is sent with `Connection: close` to a fresh origin connection,
+  while sequential requests may reuse the client-side proxy connection. Origin
+  responses are parsed, have hop-by-hop headers removed, and are written back
+  with the client's close semantics.
 - The frontend does not send a relay half-close after writing the request. The
   complete HTTP message framing is sufficient for the origin, while avoiding
   intermediaries that interpret a FIN as termination of the entire tunnel.
@@ -39,6 +39,7 @@ plain HTTP:
 ## Consequences
 
 HTTP clients can use the same listener for both `HTTP_PROXY` and
-`HTTPS_PROXY`. The implementation remains loopback-oriented, does not expose a
-general-purpose unauthenticated LAN proxy, and leaves HTTP keep-alive and
-multi-request pooling to a future explicitly designed session layer.
+`HTTPS_PROXY`. The implementation remains loopback-oriented and does not
+expose a general-purpose unauthenticated LAN proxy. It deliberately avoids
+pooling origin connections, so one slow origin request cannot mix state with
+another client request.

@@ -17,6 +17,9 @@
 - [x] SOCKS5/HTTP client handshakes are bounded by a shared configurable
       timeout; HTTP CONNECT headers are capped at 64 KiB and proxy shutdown
       closes accepted clients and drains their handlers.
+- [x] Plain HTTP proxy clients can send sequential absolute-form requests on
+      one connection; each request uses a fresh origin connection and response
+      hop-by-hop headers are removed before returning it to the client.
 - [x] Windows-side HTTP CONNECT and SOCKS5/SOCKS5H upstream support.
 - [x] Explicit TCP and UDP reverse forwarding with bind-error propagation.
 - [x] Reverse UDP source flows use connected WSL sockets, preventing an

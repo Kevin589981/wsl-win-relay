@@ -133,16 +133,73 @@ func TestForwardsAbsoluteHTTPURL(t *testing.T) {
 		t.Fatalf("forwarded body %q, err=%v", body, err)
 	}
 	close(bodyReady)
-	response, err := io.ReadAll(client)
+	response, err := http.ReadResponse(bufio.NewReader(client), forwarded)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(response) != "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok" {
-		t.Fatalf("response %q", response)
+	body, err = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil || string(body) != "ok" || response.Header.Get("Connection") != "" {
+		t.Fatalf("response body %q, headers %v, err=%v", body, response.Header, err)
 	}
+	_ = client.Close()
 	if err := <-done; err != nil {
 		t.Fatalf("serve: %v", err)
 	}
+}
+
+func TestForwardsMultipleHTTPRequestsOnOneClientConnection(t *testing.T) {
+	dialer := &sequenceHTTPDialer{}
+	client, server := net.Pipe()
+	done := make(chan error, 1)
+	go func() { done <- (&Server{Dialer: dialer}).ServeConn(context.Background(), server) }()
+	_ = client.SetDeadline(time.Now().Add(2 * time.Second))
+	reader := bufio.NewReader(client)
+	for _, path := range []string{"/one", "/two"} {
+		request := fmt.Sprintf("GET http://example.com%s HTTP/1.1\r\nHost: example.com\r\nConnection: keep-alive\r\n\r\n", path)
+		if _, err := io.WriteString(client, request); err != nil {
+			t.Fatal(err)
+		}
+		response, err := http.ReadResponse(reader, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if err != nil || string(body) != strings.TrimPrefix(path, "/") {
+			t.Fatalf("response body %q, err=%v", body, err)
+		}
+		if response.Header.Get("Connection") != "" {
+			t.Fatalf("hop-by-hop response header leaked: %v", response.Header)
+		}
+	}
+	if got := dialer.calls(); got != 2 {
+		t.Fatalf("origin dial count %d, want 2", got)
+	}
+	_ = client.Close()
+	if err := <-done; err != nil {
+		t.Fatalf("serve: %v", err)
+	}
+}
+
+type sequenceHTTPDialer struct {
+	count int
+}
+
+func (d *sequenceHTTPDialer) calls() int { return d.count }
+
+func (d *sequenceHTTPDialer) DialContext(_ context.Context, _ string) (net.Conn, error) {
+	d.count++
+	local, remote := net.Pipe()
+	go func() {
+		request, err := http.ReadRequest(bufio.NewReader(remote))
+		if err == nil {
+			path := strings.TrimPrefix(request.URL.Path, "/")
+			_, _ = fmt.Fprintf(remote, "HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s", len(path), path)
+		}
+		_ = remote.Close()
+	}()
+	return local, nil
 }
 
 type recordingHTTPDialer struct {

@@ -66,11 +66,8 @@ func (s *Server) ServeConn(ctx context.Context, client net.Conn) error {
 	if err := client.SetDeadline(time.Time{}); err != nil {
 		return err
 	}
-	if request.Body != nil {
-		defer request.Body.Close()
-	}
 	if request.Method != http.MethodConnect {
-		return s.forwardHTTP(ctx, client, request)
+		return s.serveHTTP(ctx, client, reader, request, timeout)
 	}
 	target := request.Host
 	if target == "" {
@@ -92,6 +89,46 @@ func (s *Server) ServeConn(ctx context.Context, client net.Conn) error {
 		return err
 	}
 	return bridge(&bufferedConn{Conn: client, reader: reader}, remote)
+}
+
+func (s *Server) serveHTTP(ctx context.Context, client net.Conn, reader *bufio.Reader, request *http.Request, timeout time.Duration) error {
+	for {
+		if err := s.forwardHTTP(ctx, client, request); err != nil {
+			return err
+		}
+		if request.Close {
+			return nil
+		}
+		if err := client.SetDeadline(time.Now().Add(timeout)); err != nil {
+			if isClientDisconnect(err) {
+				return nil
+			}
+			return err
+		}
+		next, err := http.ReadRequest(reader)
+		if isClientDisconnect(err) {
+			return nil
+		}
+		if err != nil {
+			writeError(client, http.StatusBadRequest)
+			return err
+		}
+		if err := client.SetDeadline(time.Time{}); err != nil {
+			return err
+		}
+		if next.Method == http.MethodConnect {
+			writeError(client, http.StatusBadRequest)
+			return errors.New("CONNECT cannot follow a plain HTTP proxy request")
+		}
+		request = next
+	}
+}
+
+func isClientDisconnect(err error) bool {
+	if err == nil {
+		return false
+	}
+	return err == io.EOF || errors.Is(err, io.ErrClosedPipe) || errors.Is(err, net.ErrClosed) || strings.Contains(err.Error(), "closed pipe")
 }
 
 func (s *Server) forwardHTTP(ctx context.Context, client net.Conn, request *http.Request) error {
@@ -117,20 +154,31 @@ func (s *Server) forwardHTTP(ctx context.Context, client net.Conn, request *http
 		return err
 	}
 	defer remote.Close()
+	if request.Body != nil {
+		defer request.Body.Close()
+	}
 
-	// Forward one request per connection. Removing proxy-only headers and
-	// forcing close avoids forwarding hop-by-hop state into the origin server.
+	// Each request uses a fresh origin connection. Removing proxy-only headers
+	// and forcing close avoids forwarding hop-by-hop state into the origin.
 	request.RequestURI = ""
 	request.URL.Scheme = ""
 	request.URL.Host = ""
 	stripHopByHopHeaders(request.Header)
 	request.Header.Set("Connection", "close")
-	request.Close = true
 	if err := request.Write(remote); err != nil {
 		return err
 	}
-	_, err = io.Copy(client, remote)
-	return err
+	response, err := http.ReadResponse(bufio.NewReader(remote), request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	stripHopByHopHeaders(response.Header)
+	response.Close = request.Close
+	if response.Close {
+		response.Header.Set("Connection", "close")
+	}
+	return response.Write(client)
 }
 
 func stripHopByHopHeaders(header http.Header) {
