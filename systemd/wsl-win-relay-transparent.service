@@ -1,0 +1,16 @@
+[Unit]
+Description=Transparent WSL routing through the Windows relay
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/wsl-win-relay/transparent.env
+ExecStart=/usr/local/libexec/wsl-win-relay/transparent-relay.sh
+Restart=on-failure
+RestartSec=2s
+KillMode=control-group
+TimeoutStopSec=15s
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

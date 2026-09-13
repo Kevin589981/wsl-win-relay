@@ -707,6 +707,24 @@ The same test also passed with the Windows relay configured for
 path: WSL only reaches its local relay, while Windows resolves and connects to
 the upstream proxy.
 
+For an opt-in boot-persistent transparent route, install tun2socks first and
+then install the root system service:
+
+```bash
+./scripts/install-tun2socks.sh
+sudo env WWR_TUN2SOCKS_BIN="$(go env GOPATH)/bin/tun2socks" \
+  ./scripts/install-transparent-service.sh
+```
+
+The installer copies tun2socks and the route wrapper into
+`/usr/local/libexec/wsl-win-relay`, creates the private
+`/etc/wsl-win-relay/transparent.env` only once, and enables
+`wsl-win-relay-transparent.service`. Re-running it updates executables and the
+unit without overwriting DNS/uplink choices. The system service is deliberately
+separate from the unprivileged relay user service because route, resolver, and
+TUN changes require root. Review the environment file before enabling DNS
+replacement; disable the unit before making manual route changes.
+
 ## Long-running service
 
 With WSL systemd enabled, install the user service:

@@ -100,6 +100,7 @@ jobs:
       - run: ./scripts/test-kernel-supervisor.sh
       - run: ./scripts/test-interposer.sh
       - run: ./scripts/test-transparent-relay.sh
+      - run: ./scripts/test-transparent-installer.sh
       - run: GOPROXY=off ./scripts/test-broker-connector.sh
       - run: GOPROXY=off ./scripts/test-broker-reconnect.sh
       - run: GOPROXY=off ./scripts/test-broker-auto-rebind.sh

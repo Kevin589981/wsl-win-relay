@@ -44,6 +44,9 @@
       transports.
 - [x] Opt-in TUN/tun2socks transparent TCP/UDP routing, including real WSL
       verification while HNS had removed the default route.
+- [x] Optional root systemd service installation makes transparent routing
+      boot-persistent, deploys the pinned adapter to a stable path, and
+      preserves private operator configuration across idempotent upgrades.
 - [x] Transparent relay shutdown handles `HUP`/`QUIT` and bounds tun2socks
       termination before route, DNS, and TUN rollback; a mock fault-injection
       smoke runs this path without requiring root or a real TUN device.
