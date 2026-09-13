@@ -615,6 +615,8 @@ combinations, plus
 `RESETIDS` attributes, plus
 GNU `posix_spawn_file_actions_addchdir_np()` and `addfchdir_np()` actions when
 available, and `addclosefrom_np()` bulk descriptor cleanup when available, plus
+one combined `posix_spawnp(POSIX_SPAWN_USEVFORK)` lifecycle applying dup/close,
+open, chdir/fchdir, and closefrom actions together, plus
 direct `vfork()` followed by `execl()`, `execv()`, `execve()`, `execle()`, `execvp()`, or
 descriptor-based `fexecve()`, plus `execvpe()` with an explicit child environment; these paths
 retain the same bounded ownership and cleanup guarantees. The kernel adapter does not

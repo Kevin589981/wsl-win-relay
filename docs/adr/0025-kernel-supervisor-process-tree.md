@@ -57,6 +57,10 @@ work follows the same model:
   `vfork()`/`execvp()` and descriptor-based `vfork()`/`fexecve()` children are
   covered by the static smoke test. The same smoke covers `daemon()` root-leader
   detachment before a child listener binds.
+  A combined `posix_spawnp(POSIX_SPAWN_USEVFORK)` case applies `adddup2`,
+  `addclose`, `addopen`, `addchdir_np`, `addfchdir_np`, and `addclosefrom_np`
+  in one child lifecycle, closing the supported glibc file-action interaction
+  matrix rather than treating isolated actions as sufficient evidence.
 - Lease teardown will use owner-scoped `RELEASE pid lease`; a lease is closed
   by the control server only after its final owner disappears. `CLOSE` remains
   reserved for a lease with no child owner.

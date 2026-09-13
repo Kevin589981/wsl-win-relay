@@ -236,6 +236,31 @@ printf '%s\n' \
     '    return 77;' \
     '#endif' \
     '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "posix-spawnp-vfork-all-actions") == 0) {' \
+    '#if defined(POSIX_SPAWN_USEVFORK) && defined(__GLIBC__) && defined(__GLIBC_PREREQ) && __GLIBC_PREREQ(2, 34)' \
+    '    char executable[PATH_MAX]; if (realpath(argv[0], executable) == NULL) return 4;' \
+    '    char *slash = strrchr(executable, '\''/'\''); if (slash == NULL) return 4; *slash = '\''\0'\'';' \
+    '    if (setenv("PATH", executable, 1) != 0) return 4;' \
+    '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0};' \
+    '    address.sin_family = AF_INET; address.sin_port = htons(47164); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
+    '    int directory = open("/tmp", O_RDONLY | O_DIRECTORY | O_CLOEXEC);' \
+    '    if (fd < 0 || directory < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) { if (fd >= 0) close(fd); if (directory >= 0) close(directory); return 2; }' \
+    '    posix_spawnattr_t attributes; if (posix_spawnattr_init(&attributes) != 0) { close(fd); close(directory); return 4; }' \
+    '    if (posix_spawnattr_setflags(&attributes, POSIX_SPAWN_USEVFORK) != 0) { posix_spawnattr_destroy(&attributes); close(fd); close(directory); return 4; }' \
+    '    posix_spawn_file_actions_t actions; if (posix_spawn_file_actions_init(&actions) != 0) { posix_spawnattr_destroy(&attributes); close(fd); close(directory); return 4; }' \
+    '    if (posix_spawn_file_actions_adddup2(&actions, fd, 9) != 0 || posix_spawn_file_actions_addclose(&actions, fd) != 0 ||' \
+    '        posix_spawn_file_actions_addopen(&actions, 12, "/dev/null", O_RDONLY, 0) != 0 || posix_spawn_file_actions_addchdir_np(&actions, "/tmp") != 0 ||' \
+    '        posix_spawn_file_actions_addfchdir_np(&actions, directory) != 0 || posix_spawn_file_actions_addclosefrom_np(&actions, 3) != 0) {' \
+    '      posix_spawn_file_actions_destroy(&actions); posix_spawnattr_destroy(&attributes); close(fd); close(directory); return 77;' \
+    '    }' \
+    '    pid_t child = -1; char *spawn_argv[] = { (char *)"static-target", (char *)"spawn-child", NULL };' \
+    '    int spawn_error = posix_spawnp(&child, "static-target", &actions, &attributes, spawn_argv, environ);' \
+    '    posix_spawn_file_actions_destroy(&actions); posix_spawnattr_destroy(&attributes); close(directory); if (spawn_error != 0) { close(fd); return spawn_error; }' \
+    '    int result = waitpid(child, NULL, 0) == child ? 0 : 6; close(fd); return result;' \
+    '#else' \
+    '    return 77;' \
+    '#endif' \
+    '  }' \
     '  if (argc > 1 && strcmp(argv[1], "posix-spawn-attrs") == 0) {' \
     '    posix_spawnattr_t attributes; sigset_t empty, defaults; if (posix_spawnattr_init(&attributes) != 0) return 4;' \
     '    if (sigemptyset(&empty) != 0 || sigemptyset(&defaults) != 0 || sigaddset(&defaults, SIGPIPE) != 0 ||' \
@@ -770,6 +795,23 @@ if [ "$posix_spawn_vfork_dupclose_status" -eq 0 ]; then
 fi
 stop_control
 
+start_control "$tmp_dir/posix-spawnp-vfork-all-actions.sock" "$tmp_dir/posix-spawnp-vfork-all-actions.log"
+set +e
+WSL_WIN_RELAY_CONTROL="$tmp_dir/posix-spawnp-vfork-all-actions.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" posix-spawnp-vfork-all-actions
+posix_spawnp_vfork_all_actions_status=$?
+set -e
+if [ "$posix_spawnp_vfork_all_actions_status" -ne 0 ] && [ "$posix_spawnp_vfork_all_actions_status" -ne 77 ]; then
+    echo "posix_spawnp(POSIX_SPAWN_USEVFORK + combined actions) target failed with status $posix_spawnp_vfork_all_actions_status" >&2
+    exit 1
+fi
+if [ "$posix_spawnp_vfork_all_actions_status" -eq 0 ]; then
+    grep -q 'RESERVE .* tcp4 47164' "$tmp_dir/posix-spawnp-vfork-all-actions.log"
+    grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/posix-spawnp-vfork-all-actions.log"
+    grep -q '^ADOPT ' "$tmp_dir/posix-spawnp-vfork-all-actions.log"
+    test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/posix-spawnp-vfork-all-actions.log")" -ge 2
+fi
+stop_control
+
 start_control "$tmp_dir/posix-spawnp.sock" "$tmp_dir/posix-spawnp.log"
 WSL_WIN_RELAY_CONTROL="$tmp_dir/posix-spawnp.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" posix-spawnp
 grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/posix-spawnp.log"
@@ -1176,4 +1218,4 @@ fi
 grep -q 'RESERVE .* tcp4 47154' "$tmp_dir/shell-reject.log"
 ! grep -q '^COMMIT ' "$tmp_dir/shell-reject.log"
 stop_control
-echo "kernel supervisor coordinated static TCP/UDP, forkpty/vfork exec variants, POSIX_SPAWN_USEVFORK/attributes/SETSID/RESETIDS/file-actions/closefrom/dupclose and posix_spawnp PATH actions/chdir/vfork-actions, and propagated rejection"
+echo "kernel supervisor coordinated static TCP/UDP, forkpty/vfork exec variants, POSIX_SPAWN_USEVFORK/attributes/SETSID/RESETIDS and combined posix_spawnp PATH file actions, and propagated rejection"

@@ -218,16 +218,15 @@
       that Linux thread-group identity reset preserves both inherited and
       replacement-image listener leases through final cleanup; duplicate
       owner-scoped teardown notifications remain bounded and idempotent.
-- [ ] Kernel-level coverage for non-direct vfork libc interactions remains
-      open for implementations beyond the `system()`, `popen()`, `posix_spawn`,
-      and `posix_spawnp`
-      and pre-exec file-action paths; `forkpty()` process creation is now also
-      covered by the native smoke test together with
-      leader-exit/sibling-listener ownership. Setuid/setgid binaries remain
-      intentionally rejected because neither launcher path can preserve their
-      semantics.
-      The aarch64 register adapter remains buildable, but aarch64 runtime
-      validation is intentionally outside this project's acceptance target.
+- [x] Kernel-level coverage for the supported non-direct libc process creation
+      matrix includes `system()`, `popen()`, `wordexp()`, `forkpty()`,
+      `posix_spawn()`/`posix_spawnp()`, `POSIX_SPAWN_USEVFORK`, attributes, and
+      individual plus combined pre-exec file actions. Arbitrary child-side work
+      between `vfork()` and `exec`/`_exit` remains intentionally outside the
+      contract, and setuid/setgid binaries remain rejected because ptrace cannot
+      preserve their privilege semantics. The aarch64 register adapter remains
+      buildable, but aarch64 runtime validation is intentionally outside this
+      project's acceptance target.
 - [x] Phase-one opt-in ptrace supervisor (`wsl-win-relay-run --kernel`) now
       coordinates direct single-process static amd64 TCP/UDP `bind/listen`
       syscalls through the existing lease protocol; process-tree ownership is
