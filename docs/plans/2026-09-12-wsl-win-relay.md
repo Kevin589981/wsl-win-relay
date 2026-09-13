@@ -139,6 +139,9 @@
 - [x] The static lifecycle smoke covers direct `vfork()` followed by
       `execve()` and `execle()`, extending post-exec cleanup coverage to
       explicit environment and variadic environment-passing entry points.
+- [x] The static lifecycle smoke covers direct `vfork()` followed by
+      `execv()`, extending vector-argument post-exec cleanup coverage beyond
+      the variadic `execl()` path.
 - [x] The static lifecycle smoke covers `daemon()` detaching the root leader
       before a child listener binds, validating lease tracking across the
       long-running service daemonization boundary.
