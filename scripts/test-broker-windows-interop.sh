@@ -18,10 +18,12 @@ broker_pid=
 proxy_pid=
 http_pid=
 auto_http_pid=
+connector_pid=
 
 cleanup() {
 	stop_windows_roles || true
 	[ -z "${proxy_pid:-}" ] || kill "$proxy_pid" 2>/dev/null || true
+	[ -z "${connector_pid:-}" ] || kill "$connector_pid" 2>/dev/null || true
 	[ -z "${http_pid:-}" ] || kill "$http_pid" 2>/dev/null || true
 	[ -z "${auto_http_pid:-}" ] || kill "$auto_http_pid" 2>/dev/null || true
 	[ -z "${broker_pid:-}" ] || kill "$broker_pid" 2>/dev/null || true
@@ -162,6 +164,29 @@ if ! curl --noproxy "" --proxy "http://$http_listen" --connect-timeout 5 --max-t
 	exit 1
 fi
 grep -qi "Example Domain" "$work/http-response.html"
+
+connector_pid=$(pgrep -P "$proxy_pid" -f 'wsl-win-connector\.exe' | head -n 1 || true)
+if [ -z "$connector_pid" ]; then
+	echo "could not locate the Windows broker connector child" >&2
+	cat "$work/broker.log" "$work/proxy.log" >&2 || true
+	exit 1
+fi
+ready_before=$(grep -c "Windows broker connector ready" "$work/proxy.log" || true)
+kill -9 "$connector_pid" 2>/dev/null || true
+connector_pid=
+for _ in $(seq 1 60); do
+	ready_after=$(grep -c "Windows broker connector ready" "$work/proxy.log" || true)
+	if [ "$ready_after" -gt "$ready_before" ]; then
+		break
+	fi
+	sleep 0.5
+done
+if [ "${ready_after:-0}" -le "$ready_before" ]; then
+	echo "Windows broker connector did not reattach after restart" >&2
+	cat "$work/broker.log" "$work/proxy.log" >&2 || true
+	exit 1
+fi
+
 for _ in $(seq 1 60); do
 	if grep -q "auto-forward added 127.0.0.1:$auto_port" "$work/proxy.log"; then
 		break

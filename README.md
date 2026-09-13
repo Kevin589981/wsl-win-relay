@@ -153,6 +153,10 @@ address and port would test the host's address collision rather than the relay.
 Override `WWR_BROKER_INTEROP_WSL_HOST` only when the environment has separate
 loopback namespaces and the default alias is unavailable.
 
+The same smoke terminates the broker connector once after initial success and
+checks that the connector reattaches and both automatic and explicit reverse
+listeners remain usable through the replacement.
+
 On mirrored WSL networking, Windows and WSL can share the host's TCP port
 namespace. A WSL listener may therefore make the same Windows port unavailable
 even when no separate Windows process owns it; this is an operating-system
