@@ -331,7 +331,10 @@ The startup capability handshake has its own `relay_handshake_timeout`
 Windows child is slow after recovery.
 SOCKS5 and HTTP proxy clients must finish their local proxy handshake within
 `proxy_handshake_timeout` (default `15s`, also available as
-`-proxy-handshake-timeout`). Every HTTP proxy request header block is limited
+`-proxy-handshake-timeout`). Each local proxy listener accepts at most
+`max_proxy_connections` active clients (default `256`, also available as
+`-max-proxy-connections`); excess connections are closed without displacing
+existing sessions. Every HTTP proxy request header block is limited
 to 64 KiB, including sequential requests on a keep-alive client connection.
 Once negotiation succeeds, the deadline is cleared for the lifetime of the
 tunnel. Proxy shutdown closes accepted clients and waits for their handlers.

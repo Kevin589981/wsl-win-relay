@@ -24,6 +24,7 @@ type File struct {
 	RelayDialTimeout      string            `json:"relay_dial_timeout"`
 	UDPAssociateIdle      string            `json:"udp_associate_idle_timeout"`
 	ProxyHandshakeTimeout string            `json:"proxy_handshake_timeout"`
+	MaxProxyConnections   int               `json:"max_proxy_connections"`
 	Reverse               []string          `json:"reverse"`
 	ReverseUDP            []string          `json:"reverse_udp"`
 	AutoForward           AutoForwardConfig `json:"auto_forward"`
@@ -56,6 +57,7 @@ func Default() File {
 		RelayDialTimeout:      "30s",
 		UDPAssociateIdle:      "5m",
 		ProxyHandshakeTimeout: "15s",
+		MaxProxyConnections:   256,
 		AutoForward:           AutoForwardConfig{WindowsHost: "127.0.0.1", WindowsHost6: "::1", Interval: "1s", RetryMin: "1s", RetryMax: "30s"},
 	}
 }
@@ -95,6 +97,9 @@ func Load(path string) (File, error) {
 	}
 	if _, err := result.ProxyHandshakeDuration(); err != nil {
 		return File{}, err
+	}
+	if result.MaxProxyConnections <= 0 || result.MaxProxyConnections > 65535 {
+		return File{}, errors.New("max_proxy_connections must be between 1 and 65535")
 	}
 	if _, err := result.RelayDialDuration(); err != nil {
 		return File{}, err

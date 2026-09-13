@@ -9,7 +9,7 @@ import (
 
 func TestLoadMergesDefaultsAndRejectsUnknownFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	content := `{"relay_exe":"/mnt/c/relay.exe","broker_mode":true,"upstream_proxy":"socks5h://127.0.0.1:7890","proxy_handshake_timeout":"3s","reverse":["127.0.0.1:80=127.0.0.1:8080"],"reverse_udp":["127.0.0.1:5353=127.0.0.1:5353"],"strict_listen_host6":"::1","auto_forward":{"enabled":true,"windows_host":"127.0.0.1","windows_host6":"::1","windows_port_offset":10000,"status_file":"/tmp/mappings.json","interval":"250ms","include":[8000]}}`
+	content := `{"relay_exe":"/mnt/c/relay.exe","broker_mode":true,"upstream_proxy":"socks5h://127.0.0.1:7890","proxy_handshake_timeout":"3s","max_proxy_connections":123,"reverse":["127.0.0.1:80=127.0.0.1:8080"],"reverse_udp":["127.0.0.1:5353=127.0.0.1:5353"],"strict_listen_host6":"::1","auto_forward":{"enabled":true,"windows_host":"127.0.0.1","windows_host6":"::1","windows_port_offset":10000,"status_file":"/tmp/mappings.json","interval":"250ms","include":[8000]}}`
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -17,7 +17,7 @@ func TestLoadMergesDefaultsAndRejectsUnknownFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.SOCKS5Listen != "127.0.0.1:1080" || got.RelayExecutable != "/mnt/c/relay.exe" || !got.BrokerMode || got.UpstreamProxy != "socks5h://127.0.0.1:7890" || got.StrictListenHost6 != "::1" || got.RelayHandshakeTimeout != "5s" || got.RelayDialTimeout != "30s" || got.ProxyHandshakeTimeout != "3s" || got.AutoForward.WindowsHost6 != "::1" || got.AutoForward.WindowsPortOffset != 10000 || got.AutoForward.StatusFile != "/tmp/mappings.json" || len(got.ReverseUDP) != 1 || !got.AutoForward.Enabled {
+	if got.SOCKS5Listen != "127.0.0.1:1080" || got.RelayExecutable != "/mnt/c/relay.exe" || !got.BrokerMode || got.UpstreamProxy != "socks5h://127.0.0.1:7890" || got.StrictListenHost6 != "::1" || got.RelayHandshakeTimeout != "5s" || got.RelayDialTimeout != "30s" || got.ProxyHandshakeTimeout != "3s" || got.MaxProxyConnections != 123 || got.AutoForward.WindowsHost6 != "::1" || got.AutoForward.WindowsPortOffset != 10000 || got.AutoForward.StatusFile != "/tmp/mappings.json" || len(got.ReverseUDP) != 1 || !got.AutoForward.Enabled {
 		t.Fatalf("config: %#v", got)
 	}
 	if duration, _ := got.AutoForwardDuration(); duration != 250*time.Millisecond {
@@ -43,6 +43,18 @@ func TestLoadMergesDefaultsAndRejectsUnknownFields(t *testing.T) {
 	}
 	if _, err := Load(path); err == nil {
 		t.Fatal("expected unknown-field error")
+	}
+}
+
+func TestLoadRejectsInvalidMaximumProxyConnections(t *testing.T) {
+	for _, value := range []string{"0", "-1", "65536"} {
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(path, []byte(`{"max_proxy_connections":`+value+`}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil {
+			t.Fatalf("accepted max_proxy_connections=%s", value)
+		}
 	}
 }
 

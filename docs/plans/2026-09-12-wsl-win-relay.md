@@ -31,6 +31,9 @@
 - [x] SOCKS5/HTTP client handshakes are bounded by a shared configurable
       timeout; HTTP CONNECT headers are capped at 64 KiB and proxy shutdown
       closes accepted clients and drains their handlers.
+- [x] SOCKS5 and HTTP accept loops enforce a configurable per-listener client
+      cap before starting handlers; saturation closes only excess connections
+      and capacity returns automatically when existing handlers exit.
 - [x] Plain HTTP proxy clients can send sequential absolute-form requests on
       one connection; each request uses a fresh origin connection and response
       hop-by-hop headers are removed before returning it to the client. Every

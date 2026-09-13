@@ -226,6 +226,7 @@ type Server struct {
 	UDPAssociateIdleTimeout time.Duration
 	DialTimeout             time.Duration
 	HandshakeTimeout        time.Duration
+	MaxConnections          int
 }
 
 const defaultHandshakeTimeout = 15 * time.Second
@@ -240,7 +241,11 @@ func (s *Server) Serve(ctx context.Context) error {
 	if s.Logger == nil {
 		s.Logger = log.New(io.Discard, "", 0)
 	}
-	return netserve.Serve(ctx, s.Listener, func(serveCtx context.Context, conn net.Conn) {
+	maxConnections := s.MaxConnections
+	if maxConnections <= 0 {
+		maxConnections = netserve.DefaultMaxConnections
+	}
+	return netserve.ServeWithLimit(ctx, s.Listener, maxConnections, func(serveCtx context.Context, conn net.Conn) {
 		if err := s.ServeConn(serveCtx, conn); err != nil {
 			s.Logger.Printf("connection: %v", err)
 		}

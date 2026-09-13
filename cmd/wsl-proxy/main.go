@@ -58,6 +58,7 @@ type options struct {
 	relayHandshakeTimeout time.Duration
 	relayDialTimeout      time.Duration
 	proxyHandshakeTimeout time.Duration
+	maxProxyConnections   int
 }
 
 var errRelayExited = errors.New("Windows relay exited")
@@ -188,6 +189,7 @@ func parseOptions(args []string) (options, error) {
 		relayHandshakeTimeout: relayHandshakeTimeout,
 		relayDialTimeout:      relayDialTimeout,
 		proxyHandshakeTimeout: proxyHandshakeTimeout,
+		maxProxyConnections:   fileConfig.MaxProxyConnections,
 	}
 	for _, mapping := range fileConfig.Reverse {
 		if err := opts.reverse.Set(mapping); err != nil {
@@ -232,6 +234,7 @@ func parseOptions(args []string) (options, error) {
 	set.DurationVar(&opts.relayHandshakeTimeout, "relay-handshake-timeout", opts.relayHandshakeTimeout, "maximum time to wait for the Windows relay handshake")
 	set.DurationVar(&opts.relayDialTimeout, "relay-dial-timeout", opts.relayDialTimeout, "maximum time to wait for a relay session to open a connection")
 	set.DurationVar(&opts.proxyHandshakeTimeout, "proxy-handshake-timeout", opts.proxyHandshakeTimeout, "maximum time for a SOCKS5 or HTTP CONNECT client handshake")
+	set.IntVar(&opts.maxProxyConnections, "max-proxy-connections", opts.maxProxyConnections, "maximum concurrent clients per local proxy listener")
 	if err := set.Parse(args); err != nil {
 		return options{}, err
 	}
@@ -264,6 +267,9 @@ func parseOptions(args []string) (options, error) {
 	}
 	if opts.proxyHandshakeTimeout <= 0 {
 		return options{}, errors.New("proxy-handshake-timeout must be positive")
+	}
+	if opts.maxProxyConnections <= 0 || opts.maxProxyConnections > 65535 {
+		return options{}, errors.New("max-proxy-connections must be between 1 and 65535")
 	}
 	if set.NArg() != 0 {
 		return options{}, fmt.Errorf("unexpected arguments: %s", strings.Join(set.Args(), " "))
@@ -383,12 +389,12 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 		go retryMissingLeases(ctx, opts.relayDialTimeout, logger, dialer, control)
 	}
 	socksDone := make(chan error, 1)
-	proxy := &socks5.Server{Listener: socksListener, Dialer: dialer, Logger: logger, UDPAssociateIdleTimeout: opts.udpAssociateIdle, DialTimeout: opts.relayDialTimeout, HandshakeTimeout: opts.proxyHandshakeTimeout}
+	proxy := &socks5.Server{Listener: socksListener, Dialer: dialer, Logger: logger, UDPAssociateIdleTimeout: opts.udpAssociateIdle, DialTimeout: opts.relayDialTimeout, HandshakeTimeout: opts.proxyHandshakeTimeout, MaxConnections: opts.maxProxyConnections}
 	go func() { socksDone <- proxy.Serve(ctx) }()
 	var httpDone chan error
 	if httpListener != nil {
 		httpDone = make(chan error, 1)
-		httpProxy := &httpproxy.Server{Listener: httpListener, Dialer: dialer, Logger: logger, DialTimeout: opts.relayDialTimeout, HandshakeTimeout: opts.proxyHandshakeTimeout}
+		httpProxy := &httpproxy.Server{Listener: httpListener, Dialer: dialer, Logger: logger, DialTimeout: opts.relayDialTimeout, HandshakeTimeout: opts.proxyHandshakeTimeout, MaxConnections: opts.maxProxyConnections}
 		go func() { httpDone <- httpProxy.Serve(ctx) }()
 		logger.Printf("HTTP proxy listening on %s (CONNECT and plain HTTP)", httpListener.Addr())
 	}
