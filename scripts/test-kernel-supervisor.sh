@@ -197,6 +197,15 @@ printf '%s\n' \
     '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 2;' \
     '    kill(getpid(), SIGTERM); pause(); return 6;' \
     '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "stop-continue") == 0) {' \
+    '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0};' \
+    '    address.sin_family = AF_INET; address.sin_port = htons(47155); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
+    '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 2;' \
+    '    pid_t helper = fork(); if (helper < 0) return 4;' \
+    '    if (helper == 0) { usleep(100000); kill(getppid(), SIGCONT); _exit(0); }' \
+    '    raise(SIGSTOP);' \
+    '    int result = waitpid(helper, NULL, 0) == helper ? 0 : 6; close(fd); return result;' \
+    '  }' \
     '  if (argc > 1 && strcmp(argv[1], "thread-exit-group") == 0) {' \
     '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0}; pthread_t thread;' \
     '    address.sin_family = AF_INET; address.sin_port = htons(47142); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
@@ -586,6 +595,21 @@ if [ "$signal_status" -ne 143 ]; then
 fi
 grep -q 'RESERVE .* tcp4 47141' "$tmp_dir/signal.log"
 test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/signal.log")" -eq 1
+stop_control
+
+start_control "$tmp_dir/stop-continue.sock" "$tmp_dir/stop-continue.log"
+set +e
+timeout 10s env WSL_WIN_RELAY_CONTROL="$tmp_dir/stop-continue.sock" \
+    "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" stop-continue
+stop_continue_status=$?
+set -e
+if [ "$stop_continue_status" -ne 0 ]; then
+    echo "stop/continue target failed with status $stop_continue_status" >&2
+    exit 1
+fi
+grep -q 'RESERVE .* tcp4 47155' "$tmp_dir/stop-continue.log"
+grep -q '^COMMIT ' "$tmp_dir/stop-continue.log"
+grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/stop-continue.log"
 stop_control
 
 start_control "$tmp_dir/thread-exit-group.sock" "$tmp_dir/thread-exit-group.log"

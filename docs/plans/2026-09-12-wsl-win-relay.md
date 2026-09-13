@@ -107,6 +107,9 @@
       releases its Windows lease through the same traced process tree; a forced
       Windows bind rejection is propagated back through the shell command
       without committing the lease.
+- [x] The static lifecycle smoke pauses and resumes a traced listener with
+      `SIGSTOP`/`SIGCONT`, confirming that ordinary service stop/continue
+      signals preserve the lease until the listener exits.
 - [ ] Kernel-level coverage for non-direct vfork libc interactions remains
       open for implementations beyond the `system()`, `popen()`, `posix_spawn`,
       and `posix_spawnp`

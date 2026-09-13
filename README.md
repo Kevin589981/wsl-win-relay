@@ -497,6 +497,8 @@ long-running services. It also launches a static listener from the installed
 strict-shell wrapper, verifying that shell descendants use the same reservation
 and cleanup protocol. The same shell path is exercised with a forced Windows
 bind rejection and must return a failure without committing the lease.
+It also pauses and resumes a traced listener with `SIGSTOP`/`SIGCONT`, keeping
+the lease alive across an ordinary service stop/continue cycle.
 The native interposer targets the Linux
 amd64 build produced by the WSL scripts. The daemon tracks multiple process
 owners and reaps leases from processes that exit without closing their
