@@ -181,6 +181,28 @@ if ! "$windows_shell" -NoProfile -NonInteractive -Command \
 	exit 1
 fi
 grep -q "wsl-win-relay automatic interop $endpoint" "$work/auto-response.html"
+kill "$auto_http_pid" 2>/dev/null || true
+wait "$auto_http_pid" 2>/dev/null || true
+auto_http_pid=
+for _ in $(seq 1 60); do
+	if grep -q "auto-forward removed Windows port $auto_port (tcp4)" "$work/proxy.log"; then
+		break
+	fi
+	sleep 0.5
+done
+if ! grep -q "auto-forward removed Windows port $auto_port (tcp4)" "$work/proxy.log"; then
+	echo "Windows automatic mapping was not removed" >&2
+	cat "$work/broker.log" "$work/proxy.log" "$work/auto-http.log" >&2 || true
+	exit 1
+fi
+if "$windows_shell" -NoProfile -NonInteractive -Command \
+	"try { Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:$auto_port' -TimeoutSec 3 | Out-Null; exit 1 } catch { exit 0 }"; then
+	:
+else
+	echo "Windows automatic mapping removal probe failed" >&2
+	cat "$work/broker.log" "$work/proxy.log" >&2 || true
+	exit 1
+fi
 if ! "$windows_shell" -NoProfile -NonInteractive -Command \
 	"\$response = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:$reverse_port' -TimeoutSec 10; if (\$response.StatusCode -ne 200) { exit 1 }; [Console]::Out.Write(\$response.Content)" \
 	>"$work/reverse-response.html" 2>"$work/reverse.err"; then

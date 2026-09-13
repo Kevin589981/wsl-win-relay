@@ -91,7 +91,8 @@
       an explicit reverse mapping and a procfs-discovered automatic mapping
       into temporary WSL HTTP services. The smoke uses a distinct WSL loopback
       alias so mirrored networking does not turn the verification into an
-      intentional same-address bind conflict.
+      intentional same-address bind conflict, and verifies that the automatic
+      Windows listener is removed when its WSL service exits.
 - [x] Frame-aware replaceable Link and `relay.Server.ServeAttached` keep the
       broker server lifecycle alive across connector transport replacement.
 - [x] Relay client `RunAttached`/`Rehandshake` reuse the same stream registry,
