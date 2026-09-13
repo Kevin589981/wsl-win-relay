@@ -144,6 +144,13 @@ for connector children. The token remains out of command-line arguments. See
 rule that preserves unrelated entries while forcing these two names to be
 single, flag-free entries.
 
+The reverse smoke binds its temporary WSL service to `127.0.0.2` and the
+Windows listener to `127.0.0.1`. This is intentional: mirrored WSL networking
+can share the loopback namespace, so binding both sides to the same loopback
+address and port would test the host's address collision rather than the relay.
+Override `WWR_BROKER_INTEROP_WSL_HOST` only when the environment has separate
+loopback namespaces and the default alias is unavailable.
+
 The Windows broker also accepts `-token-file` for host-service deployments.
 The file must be a private regular file containing the hexadecimal token; on
 Unix it must not be group/world accessible. The supervisor and its internal

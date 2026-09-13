@@ -88,7 +88,9 @@
       exports broker credentials through `WSLENV`, attaches over named pipes,
       reaches external HTTPS and plain HTTP endpoints through SOCKS5/HTTP
       proxy frontends, and verifies a Windows PowerShell request through a
-      reverse mapping into a temporary WSL HTTP service.
+      reverse mapping into a temporary WSL HTTP service. The smoke uses a
+      distinct WSL loopback alias so mirrored networking does not turn the
+      verification into an intentional same-address bind conflict.
 - [x] Frame-aware replaceable Link and `relay.Server.ServeAttached` keep the
       broker server lifecycle alive across connector transport replacement.
 - [x] Relay client `RunAttached`/`Rehandshake` reuse the same stream registry,

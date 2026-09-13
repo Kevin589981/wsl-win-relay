@@ -8,6 +8,7 @@ connector_exe=${WWR_CONNECTOR_EXE:-"$repo_dir/bin/wsl-win-connector.exe"}
 socks_listen=${WWR_BROKER_INTEROP_LISTEN:-}
 http_listen=${WWR_BROKER_INTEROP_HTTP_LISTEN:-}
 reverse_port=${WWR_BROKER_INTEROP_REVERSE_PORT:-}
+reverse_wsl_host=${WWR_BROKER_INTEROP_WSL_HOST:-127.0.0.2}
 endpoint=${WWR_BROKER_INTEROP_ENDPOINT:-"wsl-win-relay-interop-$$"}
 upstream_proxy=${WWR_WINDOWS_UPSTREAM_PROXY:-}
 windows_shell=${WWR_WINDOWS_SHELL:-powershell.exe}
@@ -67,7 +68,7 @@ pick_windows_free_port() {
 		"\$listener = [System.Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); \$listener.Start(); [Console]::Out.Write((\$listener.LocalEndpoint).Port); \$listener.Stop()" | tr -d '\r'
 }
 port_available_in_wsl() {
-	python3 -c 'import socket, sys; s = socket.socket(); s.bind(("127.0.0.1", int(sys.argv[1]))); s.close()' "$1" >/dev/null 2>&1
+	python3 -c 'import socket, sys; s = socket.socket(); s.bind((sys.argv[1], int(sys.argv[2]))); s.close()' "$reverse_wsl_host" "$1" >/dev/null 2>&1
 }
 pick_shared_free_port() {
 	for _ in $(seq 1 20); do
@@ -106,7 +107,7 @@ broker_pid=$!
 sleep 1
 
 printf '%s\n' "wsl-win-relay reverse interop $endpoint" >"$work/index.html"
-python3 -m http.server "$reverse_port" --bind 127.0.0.1 --directory "$work" >"$work/http.log" 2>&1 &
+python3 -m http.server "$reverse_port" --bind "$reverse_wsl_host" --directory "$work" >"$work/http.log" 2>&1 &
 http_pid=$!
 sleep 0.5
 
@@ -122,7 +123,7 @@ WSL_WIN_RELAY_BROKER_ENDPOINT="$endpoint" \
 WSL_WIN_RELAY_ATTACH_TOKEN="$token" \
 	"$proxy_bin" -broker-mode -relay-exe "$connector_exe" -listen "$socks_listen" \
 		-http-listen "$http_listen" \
-		-reverse "127.0.0.1:$reverse_port=127.0.0.1:$reverse_port" >"$work/proxy.log" 2>&1 &
+		-reverse "127.0.0.1:$reverse_port=$reverse_wsl_host:$reverse_port" >"$work/proxy.log" 2>&1 &
 proxy_pid=$!
 
 for _ in $(seq 1 60); do
