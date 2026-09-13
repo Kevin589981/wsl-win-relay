@@ -32,7 +32,8 @@ printf '%s\n' \
     '  "link show"*) [ "$3" = "$WWR_TUN_DEVICE" ] && [ -f "$WWR_TEST_TUN_FILE" ] && exit 0 || exit 1 ;;' \
     '  "link del"*) rm -f "$WWR_TEST_TUN_FILE"; exit 0 ;;' \
     '  "tuntap add"*) : >"$WWR_TEST_TUN_FILE"; exit 0 ;;' \
-    '  "-6 route add ::/1"*) exit 1 ;;' \
+    '  "-6 route add ::/1"*) [ "${WWR_TEST_IPV6_MODE:-unsupported}" = partial ] && exit 0 || exit 1 ;;' \
+    '  "-6 route add 8000::/1"*) [ "${WWR_TEST_IPV6_MODE:-unsupported}" = partial ] && exit 1 || exit 0 ;;' \
     '  *) exit 0 ;;' \
     'esac' \
     >"$fake_bin/ip"
@@ -89,4 +90,22 @@ grep -qx 'nameserver 192.0.2.53' "$WWR_RESOLV_CONF"
 grep -q 'route del 0.0.0.0/1' "$log_file"
 grep -q 'route del 128.0.0.0/1' "$log_file"
 grep -q 'link del' "$log_file"
-echo "transparent relay bounded shutdown and rollback passed"
+
+# A failure after the first IPv6 split route is installed must still remove
+# that route before returning the startup error.
+: >"$log_file"
+rm -f "$active_file"
+export WWR_TEST_IPV6_MODE=partial
+set +e
+"$repo_dir/scripts/transparent-relay.sh" >"$tmp_dir/partial.log" 2>&1
+partial_status=$?
+set -e
+[ "$partial_status" -ne 0 ] || { cat "$tmp_dir/partial.log" >&2; echo "partial IPv6 route failure unexpectedly succeeded" >&2; exit 1; }
+grep -q 'route del ::/1' "$log_file"
+[ ! -f "$WWR_TEST_TUN_FILE" ] || { echo "TUN device survived partial IPv6 rollback" >&2; exit 1; }
+if [ "$(readlink "$WWR_RESOLV_CONF")" != "$(basename "$resolv_target")" ]; then
+    echo "resolv.conf symlink was not restored after partial IPv6 rollback" >&2
+    exit 1
+fi
+grep -qx 'nameserver 192.0.2.53' "$WWR_RESOLV_CONF"
+echo "transparent relay bounded shutdown and partial IPv6 rollback passed"

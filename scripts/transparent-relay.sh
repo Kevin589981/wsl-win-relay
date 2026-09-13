@@ -31,7 +31,8 @@ dns=${WWR_DNS:-}
 resolv_conf=${WWR_RESOLV_CONF:-/etc/resolv.conf}
 uplink_fallback=0
 route_added=0
-route6_added=0
+route6_first_added=0
+route6_second_added=0
 tun_added=0
 dns_backup=
 dns_was_present=0
@@ -59,8 +60,10 @@ cleanup() {
         ip route del 0.0.0.0/1 dev "$device" 2>/dev/null || true
         ip route del 128.0.0.0/1 dev "$device" 2>/dev/null || true
     fi
-    if [ "$route6_added" -eq 1 ]; then
+    if [ "$route6_first_added" -eq 1 ]; then
         ip -6 route del ::/1 dev "$device" 2>/dev/null || true
+    fi
+    if [ "$route6_second_added" -eq 1 ]; then
         ip -6 route del 8000::/1 dev "$device" 2>/dev/null || true
     fi
     if [ -n "${proxy_route_file:-}" ] && [ -f "$proxy_route_file" ]; then
@@ -212,8 +215,9 @@ ip route add 0.0.0.0/1 dev "$device" metric 1
 route_added=1
 ip route add 128.0.0.0/1 dev "$device" metric 1
 if ip -6 route add ::/1 dev "$device" metric 1 2>/dev/null; then
-    route6_added=1
+    route6_first_added=1
     ip -6 route add 8000::/1 dev "$device" metric 1
+    route6_second_added=1
 fi
 
 if [ "$uplink_fallback" -eq 1 ]; then
