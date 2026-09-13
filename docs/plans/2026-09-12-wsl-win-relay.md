@@ -86,6 +86,9 @@
       WSL listener port while avoiding mirrored shared-namespace collisions.
 - [x] Optional atomic JSON status publication for automatic mappings, including
       the actual Windows-facing address when a port offset is configured.
+- [x] Automatic mapping status has a low-frequency liveness heartbeat and a
+      shared bounded schema reader, so consumers can reject stale crash residue
+      using both publisher PID and timestamp without adding a network endpoint.
 - [x] Mapping status includes active/rejected state, last bind error, and retry
       time; rejected-only state and backoff are cleared when a listener
       disappears or changes identity.

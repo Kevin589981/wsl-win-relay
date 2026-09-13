@@ -38,7 +38,7 @@ type MappingStatus struct {
 	RetryAt        string `json:"retry_at,omitempty"`
 }
 
-type mappingStatusDocument struct {
+type StatusDocument struct {
 	Version   int             `json:"version"`
 	ProcessID int             `json:"process_id"`
 	UpdatedAt string          `json:"updated_at"`
@@ -54,10 +54,12 @@ type StatusStore struct {
 	owners    map[string][]MappingStatus
 	last      []MappingStatus
 	hasLast   bool
+	lastWrite time.Time
+	now       func() time.Time
 }
 
 func NewStatusStore(path string) *StatusStore {
-	return &StatusStore{path: path, processID: os.Getpid(), owners: make(map[string][]MappingStatus)}
+	return &StatusStore{path: path, processID: os.Getpid(), owners: make(map[string][]MappingStatus), now: time.Now}
 }
 
 func (s *StatusStore) Publish(owner string, mappings []MappingStatus) error {
@@ -86,6 +88,7 @@ func (s *StatusStore) Clear(owner string) error {
 		}
 		s.last = nil
 		s.hasLast = false
+		s.lastWrite = time.Time{}
 		return nil
 	}
 	return s.writeLocked()
@@ -108,14 +111,23 @@ func (s *StatusStore) writeLocked() error {
 		}
 		return mappings[i].State < mappings[j].State
 	})
-	if s.hasLast && equalMappingStatuses(s.last, mappings) {
+	for index, mapping := range mappings {
+		if err := validateMappingStatus(mapping); err != nil {
+			return fmt.Errorf("mapping %d: %w", index, err)
+		}
+	}
+	now := time.Now()
+	if s.now != nil {
+		now = s.now()
+	}
+	if s.hasLast && equalMappingStatuses(s.last, mappings) && !now.Before(s.lastWrite) && now.Sub(s.lastWrite) < StatusHeartbeatInterval {
 		if _, err := os.Stat(s.path); err == nil {
 			return nil
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}
-	data, err := json.MarshalIndent(mappingStatusDocument{Version: 1, ProcessID: s.processID, UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano), Mappings: mappings}, "", "  ")
+	data, err := json.MarshalIndent(StatusDocument{Version: StatusVersion, ProcessID: s.processID, UpdatedAt: now.UTC().Format(time.RFC3339Nano), Mappings: mappings}, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -124,6 +136,7 @@ func (s *StatusStore) writeLocked() error {
 	}
 	s.last = append(s.last[:0], mappings...)
 	s.hasLast = true
+	s.lastWrite = now
 	return nil
 }
 

@@ -485,15 +485,19 @@ fall outside `1..65535`.
 
 Set `-auto-forward-status` (or `auto_forward.status_file` in JSON) when an
 operator or another local tool needs to discover the actual Windows-facing
-ports. The file is updated atomically only when the mapping set changes (or
-when the file was removed), has mode `0600` and version `1`, and
+ports. The file is updated atomically when the mapping set changes, when the
+file was removed, or for a 30-second liveness heartbeat; it has mode `0600`
+and version `1`, and
 contains `process_id`, an RFC3339 `updated_at`, and the active network family
 plus `windows_address`, `wsl_address`, and `state` for each desired mapping.
 Rejected entries include the last `error` and `retry_at`; active entries omit
 those fields. It is removed when
 the last watcher exits normally. A file left after a crash is advisory only;
-consumers should verify `process_id` and `updated_at` before acting on it. The
-status file is optional and does not alter the relay protocol.
+consumers should require both a live `process_id` and a recent `updated_at`
+before acting on it. The supported reader uses a two-minute freshness window.
+The status file is optional and does not alter the relay protocol; see
+[ADR-0032](docs/adr/0032-automatic-mapping-status-liveness.md) for its liveness
+contract.
 
 For collision-free allocation instead of a fixed offset, enable
 `-auto-forward-port-auto` (or `auto_forward.windows_port_auto`). Windows binds

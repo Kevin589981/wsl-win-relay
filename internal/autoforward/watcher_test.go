@@ -149,8 +149,8 @@ func TestWatcherPublishesAndRemovesStatusFile(t *testing.T) {
 func TestStatusStoreMergesTCPAndUDPOwners(t *testing.T) {
 	path := t.TempDir() + "/mappings.json"
 	store := NewStatusStore(path)
-	tcp := MappingStatus{Network: "tcp4", WindowsAddress: "127.0.0.1:18000", WSLAddress: "127.0.0.1:8000"}
-	udp := MappingStatus{Network: "udp4", WindowsAddress: "127.0.0.1:15353", WSLAddress: "127.0.0.1:5353"}
+	tcp := MappingStatus{Network: "tcp4", WindowsAddress: "127.0.0.1:18000", WSLAddress: "127.0.0.1:8000", State: "active"}
+	udp := MappingStatus{Network: "udp4", WindowsAddress: "127.0.0.1:15353", WSLAddress: "127.0.0.1:5353", State: "active"}
 	if err := store.Publish("tcp", []MappingStatus{tcp}); err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestStatusStoreMergesTCPAndUDPOwners(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var document mappingStatusDocument
+	var document StatusDocument
 	if err := json.Unmarshal(data, &document); err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestStatusStoreMergesTCPAndUDPOwners(t *testing.T) {
 func TestStatusStoreDoesNotRewriteUnchangedSnapshot(t *testing.T) {
 	path := t.TempDir() + "/mappings.json"
 	store := NewStatusStore(path)
-	mapping := MappingStatus{Network: "tcp4", WindowsAddress: "127.0.0.1:18000", WSLAddress: "127.0.0.1:8000"}
+	mapping := MappingStatus{Network: "tcp4", WindowsAddress: "127.0.0.1:18000", WSLAddress: "127.0.0.1:8000", State: "active"}
 	if err := store.Publish("tcp", []MappingStatus{mapping}); err != nil {
 		t.Fatal(err)
 	}
@@ -387,12 +387,12 @@ func TestWatcherPublishesRejectedThenActiveState(t *testing.T) {
 	if err := w.sync(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	readDocument := func() mappingStatusDocument {
+	readDocument := func() StatusDocument {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		var document mappingStatusDocument
+		var document StatusDocument
 		if err := json.Unmarshal(data, &document); err != nil {
 			t.Fatal(err)
 		}
