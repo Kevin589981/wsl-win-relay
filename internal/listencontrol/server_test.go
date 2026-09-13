@@ -595,6 +595,48 @@ func TestCleanupSocketPathRemovesStaleSocket(t *testing.T) {
 	}
 }
 
+func TestServePreservesReplacedControlPathOnShutdown(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("strict control sockets are a WSL-only feature")
+	}
+	path := filepath.Join(t.TempDir(), "control.sock")
+	server := &Server{
+		Path:            path,
+		ProcessIdentity: func(int) (string, error) { return "start", nil },
+		Reserve: func(context.Context, string, string) (Reservation, error) {
+			return &fakeReservation{}, nil
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(ctx) }()
+	waitForSocket(t, path)
+	oldPath := path + ".old"
+	if err := os.Rename(path, oldPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("control server did not stop")
+	}
+	_ = os.Remove(oldPath)
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "replacement" {
+		t.Fatalf("replacement content=%q", content)
+	}
+}
+
 type fakeReservation struct {
 	mu         sync.Mutex
 	committed  bool

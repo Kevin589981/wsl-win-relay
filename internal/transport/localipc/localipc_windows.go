@@ -35,6 +35,15 @@ func Dial(ctx context.Context, name string) (net.Conn, error) {
 	return winio.DialPipeContext(ctx, path)
 }
 
+// ProtectUnixPath is a no-op on Windows. The helper exists so WSL-only users
+// of Unix listeners can share cleanup code without changing Windows builds.
+func ProtectUnixPath(listener net.Listener, _ string) (net.Listener, error) {
+	if listener == nil {
+		return nil, errors.New("listener is required")
+	}
+	return listener, nil
+}
+
 func normalize(name string) (string, error) {
 	if name == "" {
 		return "", errors.New("local IPC endpoint must not be empty")

@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/Kevin589981/wsl-win-relay/internal/transport/localipc"
 )
 
 type Reservation interface {
@@ -80,10 +82,17 @@ func (s *Server) Serve(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", s.Path, err)
 	}
-	defer func() { _ = listener.Close(); cleanupSocketPath(s.Path); s.closeAll() }()
+	protectedListener, err := localipc.ProtectUnixPath(listener, s.Path)
+	if err != nil {
+		_ = listener.Close()
+		return fmt.Errorf("protect control socket: %w", err)
+	}
+	listener = protectedListener
 	if err := os.Chmod(s.Path, 0o600); err != nil {
+		_ = listener.Close()
 		return fmt.Errorf("secure control socket: %w", err)
 	}
+	defer func() { _ = listener.Close(); cleanupSocketPath(s.Path); s.closeAll() }()
 	go func() { <-ctx.Done(); _ = listener.Close() }()
 	go s.reapLoop(ctx)
 	for {

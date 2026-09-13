@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -42,19 +43,16 @@ func Listen(name string) (net.Listener, error) {
 	if err != nil {
 		return nil, err
 	}
-	info, err := os.Lstat(name)
+	protected, err := ProtectUnixPath(listener, name)
 	if err != nil {
 		_ = listener.Close()
-		return nil, fmt.Errorf("stat local IPC socket: %w", err)
+		return nil, err
 	}
 	if err := os.Chmod(name, 0o600); err != nil {
-		_ = listener.Close()
-		if current, statErr := os.Lstat(name); statErr == nil && current.Mode()&os.ModeSocket != 0 && os.SameFile(info, current) {
-			_ = os.Remove(name)
-		}
+		_ = protected.Close()
 		return nil, fmt.Errorf("restrict local IPC socket: %w", err)
 	}
-	return &listenerWithCleanup{Listener: listener, path: name, fileInfo: info}, nil
+	return protected, nil
 }
 
 func Dial(ctx context.Context, name string) (net.Conn, error) {
@@ -66,11 +64,35 @@ func Dial(ctx context.Context, name string) (net.Conn, error) {
 
 type listenerWithCleanup struct {
 	net.Listener
-	path     string
-	fileInfo os.FileInfo
+	path      string
+	fileInfo  os.FileInfo
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func (l *listenerWithCleanup) Close() error {
+	l.closeOnce.Do(func() { l.closeErr = l.close() })
+	return l.closeErr
+}
+
+// ProtectUnixPath wraps a Unix listener so Close only removes the socket path
+// originally owned by that listener. It also preserves a replacement object
+// while the standard library performs its own unlink-on-close behavior.
+func ProtectUnixPath(listener net.Listener, path string) (net.Listener, error) {
+	if listener == nil || path == "" {
+		return nil, errors.New("Unix listener and path are required")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, fmt.Errorf("stat Unix socket: %w", err)
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return nil, fmt.Errorf("Unix listener path is not a socket: %s", path)
+	}
+	return &listenerWithCleanup{Listener: listener, path: path, fileInfo: info}, nil
+}
+
+func (l *listenerWithCleanup) close() error {
 	// Go's UnixListener may unlink its address while closing. Move a path that
 	// no longer belongs to this listener aside first, so a replacement created
 	// by another owner cannot be removed as a side effect of closing our fd.
