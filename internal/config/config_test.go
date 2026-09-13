@@ -46,6 +46,36 @@ func TestLoadMergesDefaultsAndRejectsUnknownFields(t *testing.T) {
 	}
 }
 
+func TestLoadNormalizesHTTPProxyListenName(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	for _, content := range []string{
+		`{"http_proxy_listen":"127.0.0.1:8081"}`,
+		`{"http_connect_listen":"127.0.0.1:8081"}`,
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		got, err := Load(path)
+		if err != nil {
+			t.Fatalf("load %s: %v", content, err)
+		}
+		if got.HTTPProxyListen != "127.0.0.1:8081" || got.HTTPConnectListen != "127.0.0.1:8081" {
+			t.Fatalf("normalized config for %s: %#v", content, got)
+		}
+	}
+}
+
+func TestLoadRejectsConflictingHTTPProxyListenNames(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	content := `{"http_connect_listen":"127.0.0.1:8080","http_proxy_listen":"127.0.0.1:8081"}`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected conflicting HTTP listener names to be rejected")
+	}
+}
+
 func TestAutoForwardRetryDurationsRejectInvalidValues(t *testing.T) {
 	for _, values := range [][2]string{{"", "30s"}, {"0", "30s"}, {"-1s", "30s"}, {"1s", ""}, {"1s", "0"}, {"1s", "not-a-duration"}, {"30s", "1s"}} {
 		file := Default()

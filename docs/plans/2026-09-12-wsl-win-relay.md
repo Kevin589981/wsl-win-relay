@@ -11,6 +11,9 @@
 - [x] Framed stdio relay with bounded streams and capability negotiation.
 - [x] SOCKS5 TCP CONNECT and UDP ASSOCIATE, plus optional HTTP CONNECT and
       absolute-form cleartext HTTP forwarding.
+- [x] JSON configuration uses the accurate `http_proxy_listen` name for the
+      HTTP frontend while normalizing the legacy `http_connect_listen` alias
+      and rejecting conflicting values.
 - [x] SOCKS5/HTTP client handshakes are bounded by a shared configurable
       timeout; HTTP CONNECT headers are capped at 64 KiB and proxy shutdown
       closes accepted clients and drains their handlers.

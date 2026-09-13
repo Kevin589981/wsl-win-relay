@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ type File struct {
 	UpstreamProxy         string            `json:"upstream_proxy"`
 	SOCKS5Listen          string            `json:"socks5_listen"`
 	HTTPConnectListen     string            `json:"http_connect_listen"`
+	HTTPProxyListen       string            `json:"http_proxy_listen"`
 	ControlSocket         string            `json:"control_socket"`
 	StrictListenHost      string            `json:"strict_listen_host"`
 	StrictListenHost6     string            `json:"strict_listen_host6"`
@@ -56,13 +58,12 @@ func Default() File {
 }
 
 func Load(path string) (File, error) {
-	file, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return File{}, err
 	}
-	defer file.Close()
 	result := Default()
-	decoder := json.NewDecoder(file)
+	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&result); err != nil {
 		return File{}, fmt.Errorf("decode configuration: %w", err)
@@ -70,6 +71,9 @@ func Load(path string) (File, error) {
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		return File{}, errors.New("configuration must contain exactly one JSON object")
+	}
+	if err := normalizeHTTPProxyListen(data, &result); err != nil {
+		return File{}, err
 	}
 	if _, err := result.AutoForwardDuration(); err != nil {
 		return File{}, err
@@ -93,6 +97,40 @@ func Load(path string) (File, error) {
 		return File{}, err
 	}
 	return result, nil
+}
+
+func normalizeHTTPProxyListen(data []byte, result *File) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return fmt.Errorf("decode configuration fields: %w", err)
+	}
+	oldValue, oldSet := "", false
+	newValue, newSet := "", false
+	if raw, ok := fields["http_connect_listen"]; ok {
+		oldSet = true
+		if err := json.Unmarshal(raw, &oldValue); err != nil {
+			return fmt.Errorf("http_connect_listen must be a string: %w", err)
+		}
+	}
+	if raw, ok := fields["http_proxy_listen"]; ok {
+		newSet = true
+		if err := json.Unmarshal(raw, &newValue); err != nil {
+			return fmt.Errorf("http_proxy_listen must be a string: %w", err)
+		}
+	}
+	if oldSet && newSet && oldValue != newValue {
+		return errors.New("http_connect_listen and http_proxy_listen must match when both are set")
+	}
+	switch {
+	case newSet:
+		result.HTTPProxyListen = newValue
+		result.HTTPConnectListen = newValue
+	case oldSet:
+		result.HTTPProxyListen = oldValue
+	default:
+		result.HTTPProxyListen = result.HTTPConnectListen
+	}
+	return nil
 }
 
 func validatePortLists(config AutoForwardConfig) error {

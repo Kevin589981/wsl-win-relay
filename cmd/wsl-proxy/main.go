@@ -163,7 +163,7 @@ func parseOptions(args []string) (options, error) {
 		return options{}, err
 	}
 	opts := options{
-		socksListen: fileConfig.SOCKS5Listen, httpListen: fileConfig.HTTPConnectListen, brokerMode: fileConfig.BrokerMode,
+		socksListen: fileConfig.SOCKS5Listen, httpListen: fileConfig.HTTPProxyListen, brokerMode: fileConfig.BrokerMode,
 		relayExe: fileConfig.RelayExecutable, upstreamProxy: fileConfig.UpstreamProxy, autoForward: fileConfig.AutoForward.Enabled,
 		autoForwardHost: fileConfig.AutoForward.WindowsHost, autoForwardHost6: fileConfig.AutoForward.WindowsHost6, autoForwardInterval: interval,
 		autoRetryMin: autoRetryMin, autoRetryMax: autoRetryMax,

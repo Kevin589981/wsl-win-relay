@@ -260,6 +260,11 @@ Broker attach authentication is separately bounded to 15 seconds on both the
 broker and connector sides; once the session is authenticated, that deadline
 is cleared so long-lived relay streams are not interrupted.
 
+Use `http_proxy_listen` for the optional HTTP proxy listener in JSON
+configuration. The older `http_connect_listen` name remains accepted for
+backward compatibility; specifying both names with different addresses is
+rejected.
+
 Set `upstream_proxy` or `-upstream-proxy` when Windows itself should use an
 upstream proxy, for example `socks5h://matebookxpro.local:7890`. The default
 is direct Windows WinSock egress. SOCKS5/SOCKS5H upstreams proxy both relay
