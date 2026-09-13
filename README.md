@@ -250,6 +250,11 @@ recovery window is required.
 The startup capability handshake has its own `relay_handshake_timeout`
 (default `5s`), configurable with `-relay-handshake-timeout` when launching the
 Windows child is slow after recovery.
+SOCKS5 and HTTP CONNECT clients must finish their local proxy handshake within
+`proxy_handshake_timeout` (default `15s`, also available as
+`-proxy-handshake-timeout`). HTTP CONNECT request headers are limited to 64 KiB.
+Once negotiation succeeds, the deadline is cleared for the lifetime of the
+tunnel. Proxy shutdown closes accepted clients and waits for their handlers.
 Broker attach authentication is separately bounded to 15 seconds on both the
 broker and connector sides; once the session is authenticated, that deadline
 is cleared so long-lived relay streams are not interrupted.

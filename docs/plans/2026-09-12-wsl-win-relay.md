@@ -10,6 +10,9 @@
 
 - [x] Framed stdio relay with bounded streams and capability negotiation.
 - [x] SOCKS5 TCP CONNECT and UDP ASSOCIATE, plus optional HTTP CONNECT.
+- [x] SOCKS5/HTTP client handshakes are bounded by a shared configurable
+      timeout; HTTP CONNECT headers are capped at 64 KiB and proxy shutdown
+      closes accepted clients and drains their handlers.
 - [x] Windows-side HTTP CONNECT and SOCKS5/SOCKS5H upstream support.
 - [x] Explicit TCP and UDP reverse forwarding with bind-error propagation.
 - [x] Reverse UDP source flows use connected WSL sockets, preventing an
