@@ -40,9 +40,18 @@ tun_pid=
 proxy_route_file=
 
 cleanup() {
-    trap - EXIT INT TERM
+    trap - EXIT INT TERM HUP QUIT
     if [ -n "${tun_pid:-}" ]; then
         kill "$tun_pid" 2>/dev/null || true
+        for _ in 1 2 3 4 5; do
+            if ! kill -0 "$tun_pid" 2>/dev/null; then
+                break
+            fi
+            sleep 0.1
+        done
+        if kill -0 "$tun_pid" 2>/dev/null; then
+            kill -KILL "$tun_pid" 2>/dev/null || true
+        fi
         wait "$tun_pid" 2>/dev/null || true
     fi
     if [ "$route_added" -eq 1 ]; then
@@ -79,7 +88,7 @@ cleanup() {
         ip link del "$device" 2>/dev/null || true
     fi
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT INT TERM HUP QUIT
 
 if [ -z "$uplink" ]; then
     uplink=$(ip route show default | awk 'NR==1 {print $5}')
