@@ -153,6 +153,9 @@ The broker connector keeps its stdio service alive across the bounded endpoint
 outage created by a supervised frontend replacement. It retries transport-level
 dial and handshake failures for up to 30 seconds with capped backoff, while a
 rejected token or invalid connector configuration fails immediately.
+The broker bounds each individual attach handshake at 15 seconds so a half-open
+same-user IPC connection cannot consume a service goroutine forever; the
+deadline is cleared once the session is authenticated.
 
 To exercise the same path while keeping an upstream proxy on the Windows side,
 set `WWR_WINDOWS_UPSTREAM_PROXY` when running the smoke. WSL still sends only
