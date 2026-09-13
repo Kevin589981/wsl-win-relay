@@ -121,6 +121,8 @@
 - [x] The static lifecycle smoke covers `posix_spawn` signal-mask,
       signal-default, and process-group attributes, extending non-direct libc
       vfork coverage to common pre-exec process state setup.
+- [x] The static lifecycle smoke covers the GNU `POSIX_SPAWN_SETSID` session
+      attribute when provided by the host libc, with an explicit skip otherwise.
 - [x] The static lifecycle smoke covers GNU `posix_spawn` `addchdir_np` and
       `addfchdir_np` file actions when the host glibc provides them, with an
       explicit skip on older libc versions.
