@@ -84,7 +84,8 @@ func TestListenerCloseDoesNotRemoveReplacedPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(path); err != nil {
+	oldPath := path + ".old"
+	if err := os.Rename(path, oldPath); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte("replacement"), 0o600); err != nil {
@@ -93,6 +94,7 @@ func TestListenerCloseDoesNotRemoveReplacedPath(t *testing.T) {
 	if err := listener.Close(); err != nil {
 		t.Fatal(err)
 	}
+	_ = os.Remove(oldPath)
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
