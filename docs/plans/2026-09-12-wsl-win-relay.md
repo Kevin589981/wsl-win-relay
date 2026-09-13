@@ -65,6 +65,9 @@
 - [x] Capability-negotiated TCP and UDP listener acknowledgements can return
       the address actually allocated by Windows while retaining empty-payload
       compatibility with older peers.
+- [x] Automatic TCP and allowlisted UDP mappings can request collision-free
+      Windows-allocated ports; actual addresses are retained through mapping
+      lifecycle state and exposed through logs/status publication.
 - [x] Session-independent local SOCKS5/HTTP listeners with a reconnecting
       dialer for new requests during relay restarts.
 - [x] Strict control socket and live listener leases survive relay child

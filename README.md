@@ -410,6 +410,7 @@ Useful controls:
 -auto-forward-host 127.0.0.1       Windows bind host; use 0.0.0.0 deliberately for LAN access
 -auto-forward-host6 ::1             Windows IPv6 bind host; use :: deliberately for LAN access
 -auto-forward-port-offset 10000    Optional offset added to Windows ports; 0 preserves same-port mapping
+-auto-forward-port-auto           Let Windows allocate free automatic mapping ports
 -auto-forward-status /run/user/... Optional atomic JSON status file for active mappings
 -auto-forward-include 8000,9000    Optional allowlist; empty means all discovered ports
 -auto-forward-exclude 22,53        Ports that must never be mirrored
@@ -452,6 +453,15 @@ plus `windows_address` and `wsl_address` for each mapping. It is removed when
 the last watcher exits normally. A file left after a crash is advisory only;
 consumers should verify `process_id` and `updated_at` before acting on it. The
 status file is optional and does not alter the relay protocol.
+
+For collision-free allocation instead of a fixed offset, enable
+`-auto-forward-port-auto` (or `auto_forward.windows_port_auto`). Windows binds
+port zero and atomically chooses each TCP or allowlisted UDP port; the actual
+address is reported through the negotiated relay capability, logged, and
+published in the optional status file. Automatic allocation and a fixed offset
+are mutually exclusive. Because the Windows port is intentionally not
+predictable, enable the status file when another tool needs to consume these
+mappings programmatically.
 
 To run the real WSL/Windows recovery check after building both binaries, use
 `./scripts/test-auto-rebind.sh`. It requires WSL Windows interop and verifies

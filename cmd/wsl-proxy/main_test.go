@@ -266,6 +266,23 @@ func TestRequiredRelayCapabilitiesRemainCompatibleByDefault(t *testing.T) {
 	}
 }
 
+func TestAutomaticPortAllocationRequiresBoundAddressCapability(t *testing.T) {
+	opts, err := parseOptions([]string{"-auto-forward", "-auto-forward-port-auto"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opts.autoForwardPortAuto {
+		t.Fatalf("options: %#v", opts)
+	}
+	want := protocol.CoreCapabilities | protocol.CapabilityListenBoundAddress
+	if got := requiredRelayCapabilities(opts); got != want {
+		t.Fatalf("capabilities=0x%x, want 0x%x", got, want)
+	}
+	if _, err := parseOptions([]string{"-auto-forward-port-auto", "-auto-forward-port-offset", "10000"}); err == nil {
+		t.Fatal("expected automatic allocation and offset conflict")
+	}
+}
+
 func TestRelayArgumentsHasNoSyntheticSubcommand(t *testing.T) {
 	if got := relayArguments(options{}); len(got) != 0 {
 		t.Fatalf("unexpected arguments: %v", got)

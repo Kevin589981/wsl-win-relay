@@ -235,6 +235,42 @@ func TestWatcherRejectsOutOfRangeWindowsPortOffset(t *testing.T) {
 	}
 }
 
+func TestWatcherUsesWindowsAllocatedPort(t *testing.T) {
+	statusPath := t.TempDir() + "/mappings.json"
+	scanner := &sequenceScanner{values: [][]Listener{{{Network: "tcp4", Host: "127.0.0.1", Port: 8000}}, {}}}
+	opener := &allocatedOpener{boundAddress: "127.0.0.1:49152", closed: make(chan string, 1)}
+	var logs bytes.Buffer
+	w := &Watcher{Scanner: scanner, Opener: opener, WindowsPortAuto: true, Status: NewStatusStore(statusPath), Interval: time.Millisecond, Logger: log.New(&logs, "", 0)}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := w.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(opener.opened) != 1 || opener.opened[0] != "127.0.0.1:0=127.0.0.1:8000" {
+		t.Fatalf("opened: %v", opener.opened)
+	}
+	if !strings.Contains(logs.String(), "removed Windows port 49152") {
+		t.Fatalf("removal log did not use allocated port: %q", logs.String())
+	}
+}
+
+func TestWatcherRejectsAutoPortWithoutBoundAddress(t *testing.T) {
+	scanner := &sequenceScanner{values: [][]Listener{{{Network: "tcp4", Port: 8000}}}}
+	opener := &recordingOpener{closed: make(chan string, 1)}
+	w := &Watcher{Scanner: scanner, Opener: opener, WindowsPortAuto: true, Logger: log.New(io.Discard, "", 0), active: make(map[listenerKey]activeMapping)}
+	if err := w.sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.active) != 0 {
+		t.Fatalf("mapping without allocated address became active: %#v", w.active)
+	}
+	select {
+	case <-opener.closed:
+	default:
+		t.Fatal("mapping without allocated address was not closed")
+	}
+}
+
 func TestWatcherMapsBothFamiliesOnSamePort(t *testing.T) {
 	scanner := &sequenceScanner{values: [][]Listener{
 		{{Network: "tcp4", Host: "127.0.0.1", Port: 8000}, {Network: "tcp6", Host: "::1", Port: 8000}},
@@ -277,6 +313,20 @@ func TestDatagramWatcherUsesUDPMappingLifecycle(t *testing.T) {
 		}
 	default:
 		t.Fatal("UDP mapping was not closed")
+	}
+}
+
+func TestDatagramWatcherUsesIPv6WindowsHost(t *testing.T) {
+	scanner := &sequenceDatagramScanner{values: [][]Listener{{{Network: "udp6", Host: "::", Port: 5353}}, {}}}
+	opener := &recordingDatagramOpener{closed: make(chan string, 1)}
+	w := &DatagramWatcher{Scanner: scanner, Opener: opener, WindowsHost: "127.0.0.1", WindowsHost6: "::1", Interval: time.Millisecond, Included: map[uint16]bool{5353: true}}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := w.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(opener.opened) != 1 || opener.opened[0] != "[::1]:5353=[::1]:5353" {
+		t.Fatalf("opened: %v", opener.opened)
 	}
 }
 
@@ -537,6 +587,25 @@ type recordingOpener struct {
 	closed   chan string
 	failures int
 	err      error
+}
+
+type allocatedOpener struct {
+	boundAddress string
+	opened       []string
+	closed       chan string
+}
+
+type allocatedCloser struct {
+	address string
+	closeRecorder
+}
+
+func (c allocatedCloser) BoundAddress() string { return c.address }
+
+func (o *allocatedOpener) ReverseForward(_ context.Context, windows, wsl string) (io.Closer, error) {
+	value := windows + "=" + wsl
+	o.opened = append(o.opened, value)
+	return allocatedCloser{address: o.boundAddress, closeRecorder: closeRecorder{value: value, out: o.closed}}, nil
 }
 
 type partialFailureOpener struct{ closed chan string }

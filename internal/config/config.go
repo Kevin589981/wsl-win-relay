@@ -35,6 +35,7 @@ type AutoForwardConfig struct {
 	WindowsHost       string   `json:"windows_host"`
 	WindowsHost6      string   `json:"windows_host6"`
 	WindowsPortOffset int      `json:"windows_port_offset"`
+	WindowsPortAuto   bool     `json:"windows_port_auto"`
 	StatusFile        string   `json:"status_file"`
 	Interval          string   `json:"interval"`
 	RetryMin          string   `json:"retry_min"`
@@ -85,6 +86,9 @@ func Load(path string) (File, error) {
 	}
 	if err := validateAutoForwardPortOffset(result.AutoForward.WindowsPortOffset); err != nil {
 		return File{}, err
+	}
+	if result.AutoForward.WindowsPortAuto && result.AutoForward.WindowsPortOffset != 0 {
+		return File{}, errors.New("auto_forward.windows_port_auto and auto_forward.windows_port_offset cannot be used together")
 	}
 	if _, err := result.UDPAssociateIdleDuration(); err != nil {
 		return File{}, err

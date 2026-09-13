@@ -41,6 +41,7 @@ type options struct {
 	autoForwardHost       string
 	autoForwardHost6      string
 	autoForwardPortOffset int
+	autoForwardPortAuto   bool
 	autoForwardStatus     string
 	autoForwardInterval   time.Duration
 	autoRetryMin          time.Duration
@@ -169,6 +170,7 @@ func parseOptions(args []string) (options, error) {
 		relayExe: fileConfig.RelayExecutable, upstreamProxy: fileConfig.UpstreamProxy, autoForward: fileConfig.AutoForward.Enabled,
 		autoForwardHost: fileConfig.AutoForward.WindowsHost, autoForwardHost6: fileConfig.AutoForward.WindowsHost6, autoForwardInterval: interval,
 		autoForwardPortOffset: fileConfig.AutoForward.WindowsPortOffset,
+		autoForwardPortAuto:   fileConfig.AutoForward.WindowsPortAuto,
 		autoForwardStatus:     fileConfig.AutoForward.StatusFile,
 		autoRetryMin:          autoRetryMin, autoRetryMax: autoRetryMax,
 		controlSocket: fileConfig.ControlSocket, strictListenHost: fileConfig.StrictListenHost, strictListenHost6: fileConfig.StrictListenHost6,
@@ -204,6 +206,7 @@ func parseOptions(args []string) (options, error) {
 	set.StringVar(&opts.autoForwardHost, "auto-forward-host", opts.autoForwardHost, "Windows bind host for automatic mappings")
 	set.StringVar(&opts.autoForwardHost6, "auto-forward-host6", opts.autoForwardHost6, "Windows IPv6 bind host for automatic mappings")
 	set.IntVar(&opts.autoForwardPortOffset, "auto-forward-port-offset", opts.autoForwardPortOffset, "add this offset to Windows ports for automatic mappings")
+	set.BoolVar(&opts.autoForwardPortAuto, "auto-forward-port-auto", opts.autoForwardPortAuto, "let Windows allocate ports for automatic mappings")
 	set.StringVar(&opts.autoForwardStatus, "auto-forward-status", opts.autoForwardStatus, "optional JSON status file for active automatic mappings")
 	set.DurationVar(&opts.autoForwardInterval, "auto-forward-interval", opts.autoForwardInterval, "automatic listener scan interval")
 	set.DurationVar(&opts.autoRetryMin, "auto-forward-retry-min", opts.autoRetryMin, "minimum delay after an automatic mapping refusal")
@@ -235,6 +238,9 @@ func parseOptions(args []string) (options, error) {
 	}
 	if opts.autoForwardPortOffset < -65534 || opts.autoForwardPortOffset > 65534 {
 		return options{}, errors.New("auto-forward-port-offset must be between -65534 and 65534")
+	}
+	if opts.autoForwardPortAuto && opts.autoForwardPortOffset != 0 {
+		return options{}, errors.New("auto-forward-port-auto and auto-forward-port-offset cannot be used together")
 	}
 	if opts.udpAssociateIdle <= 0 {
 		return options{}, errors.New("udp-associate-idle-timeout must be positive")
@@ -397,13 +403,17 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 			addAutomaticMappedPort(excluded, mapping.Windows, opts.autoForwardPortOffset)
 			addAddressPort(excluded, mapping.WSL)
 		}
-		watcher := &autoforward.Watcher{Scanner: autoforward.DefaultProcScanner(), Opener: dialer, WindowsHost: opts.autoForwardHost, WindowsHost6: opts.autoForwardHost6, WindowsPortOffset: opts.autoForwardPortOffset, Status: autoStatus, StatusOwner: "tcp", Interval: opts.autoForwardInterval, OpenTimeout: opts.relayDialTimeout, RetryMin: opts.autoRetryMin, RetryMax: opts.autoRetryMax, Included: opts.autoInclude, Excluded: excluded, Logger: logger}
+		watcher := &autoforward.Watcher{Scanner: autoforward.DefaultProcScanner(), Opener: dialer, WindowsHost: opts.autoForwardHost, WindowsHost6: opts.autoForwardHost6, WindowsPortOffset: opts.autoForwardPortOffset, WindowsPortAuto: opts.autoForwardPortAuto, Status: autoStatus, StatusOwner: "tcp", Interval: opts.autoForwardInterval, OpenTimeout: opts.relayDialTimeout, RetryMin: opts.autoRetryMin, RetryMax: opts.autoRetryMax, Included: opts.autoInclude, Excluded: excluded, Logger: logger}
 		autoDone = make(chan error, 1)
 		go func() { autoDone <- watcher.Run(ctx) }()
-		logger.Printf("automatic forwarding enabled on Windows hosts %s (IPv4), %s (IPv6), port offset %d", opts.autoForwardHost, opts.autoForwardHost6, opts.autoForwardPortOffset)
+		if opts.autoForwardPortAuto {
+			logger.Printf("automatic forwarding enabled on Windows hosts %s (IPv4), %s (IPv6), Windows-allocated ports", opts.autoForwardHost, opts.autoForwardHost6)
+		} else {
+			logger.Printf("automatic forwarding enabled on Windows hosts %s (IPv4), %s (IPv6), port offset %d", opts.autoForwardHost, opts.autoForwardHost6, opts.autoForwardPortOffset)
+		}
 		var udpWatcher *autoforward.DatagramWatcher
 		if opts.autoForwardUDP {
-			udpWatcher = &autoforward.DatagramWatcher{Scanner: autoforward.DefaultProcScanner(), Opener: dialer, WindowsHost: opts.autoForwardHost, WindowsHost6: opts.autoForwardHost6, WindowsPortOffset: opts.autoForwardPortOffset, Status: autoStatus, Interval: opts.autoForwardInterval, OpenTimeout: opts.relayDialTimeout, RetryMin: opts.autoRetryMin, RetryMax: opts.autoRetryMax, Included: opts.autoUDPInclude, Excluded: excluded, Logger: logger}
+			udpWatcher = &autoforward.DatagramWatcher{Scanner: autoforward.DefaultProcScanner(), Opener: dialer, WindowsHost: opts.autoForwardHost, WindowsHost6: opts.autoForwardHost6, WindowsPortOffset: opts.autoForwardPortOffset, WindowsPortAuto: opts.autoForwardPortAuto, Status: autoStatus, Interval: opts.autoForwardInterval, OpenTimeout: opts.relayDialTimeout, RetryMin: opts.autoRetryMin, RetryMax: opts.autoRetryMax, Included: opts.autoUDPInclude, Excluded: excluded, Logger: logger}
 			autoUDPDone = make(chan error, 1)
 			go func() { autoUDPDone <- udpWatcher.Run(ctx) }()
 			logger.Printf("automatic UDP forwarding enabled for allowlisted ports %s", formatPorts(portsFromSet(opts.autoUDPInclude)))
@@ -568,6 +578,9 @@ func runSession(parent context.Context, opts options, logger *log.Logger, dialer
 
 func requiredRelayCapabilities(opts options) uint64 {
 	capabilities := protocol.CoreCapabilities
+	if opts.autoForwardPortAuto {
+		capabilities |= protocol.CapabilityListenBoundAddress
+	}
 	return capabilities
 }
 

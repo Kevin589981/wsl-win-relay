@@ -139,6 +139,7 @@ type DatagramWatcher struct {
 	WindowsHost       string
 	WindowsHost6      string
 	WindowsPortOffset int
+	WindowsPortAuto   bool
 	Status            *StatusStore
 	StatusOwner       string
 	Interval          time.Duration
@@ -168,7 +169,7 @@ func (w *DatagramWatcher) Run(ctx context.Context) error {
 	}
 	runner := &Watcher{
 		Scanner: w.datagramScanner(), Opener: w.datagramOpener(), WindowsHost: w.WindowsHost,
-		WindowsHost6: w.WindowsHost6, WindowsPortOffset: w.WindowsPortOffset, Status: w.Status, StatusOwner: "udp", Interval: w.Interval, OpenTimeout: w.OpenTimeout,
+		WindowsHost6: w.WindowsHost6, WindowsPortOffset: w.WindowsPortOffset, WindowsPortAuto: w.WindowsPortAuto, Status: w.Status, StatusOwner: "udp", Interval: w.Interval, OpenTimeout: w.OpenTimeout,
 		RetryMin: w.RetryMin, RetryMax: w.RetryMax, Included: w.Included,
 		Excluded: w.Excluded, Logger: w.Logger, Label: "auto-forward UDP",
 	}
@@ -205,6 +206,7 @@ type Watcher struct {
 	WindowsHost       string
 	WindowsHost6      string
 	WindowsPortOffset int
+	WindowsPortAuto   bool
 	Status            *StatusStore
 	StatusOwner       string
 	Interval          time.Duration
@@ -233,8 +235,10 @@ type listenerKey struct {
 }
 
 type activeMapping struct {
-	listener Listener
-	closer   io.Closer
+	listener       Listener
+	windowsAddress string
+	wslAddress     string
+	closer         io.Closer
 }
 
 // Bound concurrent Windows bind/relay requests so a large procfs scan cannot
@@ -349,7 +353,8 @@ func (w *Watcher) sync(ctx context.Context) error {
 			delete(w.rejected, key)
 			delete(w.retryAfter, key)
 			delete(w.retryFailures, key)
-			w.Logger.Printf("%s removed Windows port %d (%s)", w.Label, w.windowsPort(mapping.listener), mapping.listener.Network)
+			_, rawPort, _ := net.SplitHostPort(mapping.windowsAddress)
+			w.Logger.Printf("%s removed Windows port %s (%s)", w.Label, rawPort, mapping.listener.Network)
 		}
 	}
 	w.mu.Unlock()
@@ -427,10 +432,20 @@ func (w *Watcher) openOne(ctx context.Context, key listenerKey, listener Listene
 	mappedPort := w.windowsPort(listener)
 	var closer io.Closer
 	var openErr error
-	if mappedPort < 1 || mappedPort > 65535 {
+	if !w.WindowsPortAuto && (mappedPort < 1 || mappedPort > 65535) {
 		openErr = fmt.Errorf("WSL port %d plus Windows port offset %d is outside 1..65535", listener.Port, w.WindowsPortOffset)
 	} else {
 		closer, openErr = w.Opener.ReverseForward(openCtx, windowsAddr, wslTarget)
+		if openErr == nil && w.WindowsPortAuto {
+			bound, ok := closer.(interface{ BoundAddress() string })
+			if !ok {
+				openErr = errors.New("relay did not report the Windows-allocated port")
+			} else if addressErr := validateAllocatedAddress(bound.BoundAddress()); addressErr != nil {
+				openErr = addressErr
+			} else {
+				windowsAddr = bound.BoundAddress()
+			}
+		}
 	}
 	cancelOpen()
 	w.mu.Lock()
@@ -489,7 +504,7 @@ func (w *Watcher) openOne(ctx context.Context, key listenerKey, listener Listene
 	w.mu.Lock()
 	desiredListener, stillDesired := desired[key]
 	if generation == w.generation && stillDesired && desiredListener == listener {
-		w.active[key] = activeMapping{listener: listener, closer: closer}
+		w.active[key] = activeMapping{listener: listener, windowsAddress: windowsAddr, wslAddress: wslTarget, closer: closer}
 	} else {
 		closeAfterUnlock = closer
 	}
@@ -518,7 +533,22 @@ func (w *Watcher) mappingAddresses(listener Listener) (string, string) {
 }
 
 func (w *Watcher) windowsPort(listener Listener) int {
+	if w.WindowsPortAuto {
+		return 0
+	}
 	return int(listener.Port) + w.WindowsPortOffset
+}
+
+func validateAllocatedAddress(address string) error {
+	_, rawPort, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("relay returned invalid Windows bound address %q: %w", address, err)
+	}
+	port, err := strconv.ParseUint(rawPort, 10, 16)
+	if err != nil || port == 0 {
+		return fmt.Errorf("relay returned invalid Windows bound address %q", address)
+	}
+	return nil
 }
 
 func (w *Watcher) publishStatus() {
@@ -528,8 +558,7 @@ func (w *Watcher) publishStatus() {
 	w.mu.Lock()
 	mappings := make([]MappingStatus, 0, len(w.active))
 	for _, mapping := range w.active {
-		windowsAddr, wslAddr := w.mappingAddresses(mapping.listener)
-		mappings = append(mappings, MappingStatus{Network: mapping.listener.Network, WindowsAddress: windowsAddr, WSLAddress: wslAddr})
+		mappings = append(mappings, MappingStatus{Network: mapping.listener.Network, WindowsAddress: mapping.windowsAddress, WSLAddress: mapping.wslAddress})
 	}
 	w.mu.Unlock()
 	err := w.Status.Publish(w.StatusOwner, mappings)

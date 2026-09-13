@@ -146,3 +146,13 @@ func TestLoadRejectsOutOfRangeAutomaticForwardPortOffset(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadRejectsAutomaticPortAllocationWithOffset(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"auto_forward":{"windows_port_auto":true,"windows_port_offset":10000}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected automatic allocation and offset conflict")
+	}
+}

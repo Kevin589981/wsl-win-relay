@@ -10,6 +10,7 @@ http_listen=${WWR_BROKER_INTEROP_HTTP_LISTEN:-}
 reverse_port=${WWR_BROKER_INTEROP_REVERSE_PORT:-}
 auto_port=${WWR_BROKER_INTEROP_AUTO_PORT:-}
 auto_forward_offset=${WWR_BROKER_INTEROP_AUTO_FORWARD_OFFSET:-0}
+windows_port_auto=${WWR_BROKER_INTEROP_WINDOWS_PORT_AUTO:-0}
 reverse_wsl_host=${WWR_BROKER_INTEROP_WSL_HOST:-127.0.0.2}
 endpoint=${WWR_BROKER_INTEROP_ENDPOINT:-"wsl-win-relay-interop-$$"}
 upstream_proxy=${WWR_WINDOWS_UPSTREAM_PROXY:-}
@@ -19,6 +20,14 @@ case "$auto_forward_offset" in
 	-[0-9]*|[0-9]*) ;;
 	*) echo "WWR_BROKER_INTEROP_AUTO_FORWARD_OFFSET must be an integer" >&2; exit 1 ;;
 esac
+case "$windows_port_auto" in
+	0|1) ;;
+	*) echo "WWR_BROKER_INTEROP_WINDOWS_PORT_AUTO must be 0 or 1" >&2; exit 1 ;;
+esac
+if [ "$windows_port_auto" -eq 1 ] && [ "$auto_forward_offset" -ne 0 ]; then
+	echo "Windows automatic port allocation cannot be combined with an offset" >&2
+	exit 1
+fi
 work=$(mktemp -d "${TMPDIR:-/tmp}/wsl-win-relay-broker-interop.XXXXXX")
 broker_pid=
 proxy_pid=
@@ -102,6 +111,10 @@ port_available_in_windows() {
 		>/dev/null 2>&1
 }
 pick_auto_port() {
+	if [ "$windows_port_auto" -eq 1 ]; then
+		pick_free_port
+		return
+	fi
 	if [ "$auto_forward_offset" -eq 0 ]; then
 		pick_shared_free_port
 		return
@@ -132,10 +145,13 @@ fi
 if [ -z "$auto_port" ]; then
 	auto_port=$(pick_auto_port)
 fi
-auto_windows_port=$((auto_port + auto_forward_offset))
-if [ "$auto_windows_port" -lt 1 ] || [ "$auto_windows_port" -gt 65535 ]; then
-	echo "automatic Windows port $auto_windows_port is outside 1..65535" >&2
-	exit 1
+auto_windows_port=
+if [ "$windows_port_auto" -eq 0 ]; then
+	auto_windows_port=$((auto_port + auto_forward_offset))
+	if [ "$auto_windows_port" -lt 1 ] || [ "$auto_windows_port" -gt 65535 ]; then
+		echo "automatic Windows port $auto_windows_port is outside 1..65535" >&2
+		exit 1
+	fi
 fi
 
 token=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
@@ -184,10 +200,11 @@ done
 WSLENV="$wslenv" \
 WSL_WIN_RELAY_BROKER_ENDPOINT="$endpoint" \
 WSL_WIN_RELAY_ATTACH_TOKEN="$token" \
+	sh -c 'auto=$1; offset=$2; shift 2; if [ "$auto" -eq 1 ]; then exec "$@" -auto-forward-port-auto; fi; exec "$@" -auto-forward-port-offset "$offset"' sh "$windows_port_auto" "$auto_forward_offset" \
 	"$proxy_bin" -broker-mode -relay-exe "$connector_exe" -listen "$socks_listen" \
 		-http-listen "$http_listen" \
 		-reverse "127.0.0.1:$reverse_port=$reverse_wsl_host:$reverse_port" \
-		-auto-forward -auto-forward-port-offset "$auto_forward_offset" -auto-forward-status "$work/auto-mappings.json" -auto-forward-include "$auto_port" >"$work/proxy.log" 2>&1 &
+		-auto-forward -auto-forward-status "$work/auto-mappings.json" -auto-forward-include "$auto_port" >"$work/proxy.log" 2>&1 &
 proxy_pid=$!
 
 for _ in $(seq 1 60); do
@@ -235,6 +252,19 @@ if [ "${ready_after:-0}" -le "$ready_before" ]; then
 	echo "Windows broker connector did not reattach after restart" >&2
 	cat "$work/broker.log" "$work/proxy.log" >&2 || true
 	exit 1
+fi
+
+if [ "$windows_port_auto" -eq 1 ]; then
+	for _ in $(seq 1 60); do
+		auto_windows_port=$(sed -n 's/.*"windows_address": "127\.0\.0\.1:\([0-9][0-9]*\)".*/\1/p' "$work/auto-mappings.json" 2>/dev/null | head -n 1)
+		[ -z "$auto_windows_port" ] || break
+		sleep 0.5
+	done
+	if [ -z "$auto_windows_port" ]; then
+		echo "Windows did not report an automatically allocated port" >&2
+		cat "$work/auto-mappings.json" "$work/proxy.log" >&2 || true
+		exit 1
+	fi
 fi
 
 for _ in $(seq 1 60); do
