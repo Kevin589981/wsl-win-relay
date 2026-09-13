@@ -188,6 +188,39 @@ func TestStatusStoreMergesTCPAndUDPOwners(t *testing.T) {
 	}
 }
 
+func TestStatusStoreDoesNotRewriteUnchangedSnapshot(t *testing.T) {
+	path := t.TempDir() + "/mappings.json"
+	store := NewStatusStore(path)
+	mapping := MappingStatus{Network: "tcp4", WindowsAddress: "127.0.0.1:18000", WSLAddress: "127.0.0.1:8000"}
+	if err := store.Publish("tcp", []MappingStatus{mapping}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(time.Millisecond)
+	if err := store.Publish("tcp", []MappingStatus{mapping}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first, second) {
+		t.Fatal("unchanged status snapshot was rewritten")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Publish("tcp", []MappingStatus{mapping}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("externally removed status file was not recreated: %v", err)
+	}
+}
+
 func TestWatcherRejectsOutOfRangeWindowsPortOffset(t *testing.T) {
 	scanner := &sequenceScanner{values: [][]Listener{{{Network: "tcp4", Host: "127.0.0.1", Port: 8000}}, {}}}
 	opener := &recordingOpener{closed: make(chan string, 1)}

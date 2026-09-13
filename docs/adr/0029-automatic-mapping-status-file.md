@@ -18,9 +18,10 @@ Add an optional `auto_forward.status_file` configuration field and
 the publishing process ID, an RFC3339 update timestamp, active network family,
 Windows address, and WSL address. Updates use a
 same-directory temporary file, mode `0600`, `fsync`, and rename so readers
-never observe a partial document. The watcher serializes status writes and
-removes the file during shutdown. A failed status write is logged but does not
-stop forwarding.
+never observe a partial document. Unchanged snapshots are not rewritten during
+the procfs polling loop, while an externally removed file is recreated. The
+watcher serializes status writes and removes the file during shutdown. A
+failed status write is logged but does not stop forwarding.
 
 ## Consequences
 

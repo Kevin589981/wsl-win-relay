@@ -49,6 +49,8 @@ type StatusStore struct {
 	processID int
 	mu        sync.Mutex
 	owners    map[string][]MappingStatus
+	last      []MappingStatus
+	hasLast   bool
 }
 
 func NewStatusStore(path string) *StatusStore {
@@ -79,6 +81,8 @@ func (s *StatusStore) Clear(owner string) error {
 		if err := os.Remove(s.path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
+		s.last = nil
+		s.hasLast = false
 		return nil
 	}
 	return s.writeLocked()
@@ -95,11 +99,35 @@ func (s *StatusStore) writeLocked() error {
 		}
 		return mappings[i].WindowsAddress < mappings[j].WindowsAddress
 	})
+	if s.hasLast && equalMappingStatuses(s.last, mappings) {
+		if _, err := os.Stat(s.path); err == nil {
+			return nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
 	data, err := json.MarshalIndent(mappingStatusDocument{Version: 1, ProcessID: s.processID, UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano), Mappings: mappings}, "", "  ")
 	if err != nil {
 		return err
 	}
-	return writeStatusFile(s.path, append(data, '\n'))
+	if err := writeStatusFile(s.path, append(data, '\n')); err != nil {
+		return err
+	}
+	s.last = append(s.last[:0], mappings...)
+	s.hasLast = true
+	return nil
+}
+
+func equalMappingStatuses(left, right []MappingStatus) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 // DatagramWatcher reuses the TCP mapping lifecycle with a UDP-specific procfs

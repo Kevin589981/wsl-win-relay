@@ -445,7 +445,8 @@ fall outside `1..65535`.
 
 Set `-auto-forward-status` (or `auto_forward.status_file` in JSON) when an
 operator or another local tool needs to discover the actual Windows-facing
-ports. The file is updated atomically with mode `0600`, has version `1`, and
+ports. The file is updated atomically only when the mapping set changes (or
+when the file was removed), has mode `0600` and version `1`, and
 contains `process_id`, an RFC3339 `updated_at`, and the active network family
 plus `windows_address` and `wsl_address` for each mapping. It is removed when
 the last watcher exits normally. A file left after a crash is advisory only;
