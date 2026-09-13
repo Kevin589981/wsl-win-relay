@@ -48,6 +48,9 @@
 - [x] Strict control socket and live listener leases survive relay child
       replacement; Windows reservations are rebound and recommitted for the
       replacement session.
+- [x] Strict control requests have a bounded initial read, and service shutdown
+      closes accepted connections, drains handlers, and preserves a replaced
+      Unix socket path.
 - [x] Automatic TCP and allowlisted UDP mappings are process-scoped and
       rebound through the session-aware dialer after relay child replacement.
 - [x] Generation-safe attach registry with per-instance token authentication

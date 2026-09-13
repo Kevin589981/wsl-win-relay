@@ -458,6 +458,10 @@ uses the same value while waiting for the control socket.
 The relay refuses to replace an active control socket from another instance.
 Only a socket that no longer has a listener is removed during startup, which
 prevents two supervisors from silently publishing different reservation state.
+The control service bounds the initial request line at 15 seconds and closes
+all accepted connections before shutdown completes. A client that connects but
+does not send a request therefore cannot retain a handler across service
+restart. Socket cleanup also preserves a path replaced by another owner.
 
 This propagates bind/listen errors, not later firewall policy. A Windows
 firewall rule that drops or rejects clients after the socket is bound does not
