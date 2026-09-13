@@ -30,13 +30,20 @@ uplink=${WWR_UPLINK_INTERFACE:-}
 dns=${WWR_DNS:-}
 resolv_conf=${WWR_RESOLV_CONF:-/etc/resolv.conf}
 proxy_wait_seconds=${WWR_TUN_PROXY_WAIT_SECONDS:-30}
+proxy_loss_seconds=${WWR_TUN_PROXY_LOSS_SECONDS:-15}
 proc_net_tcp=${WWR_PROC_NET_TCP:-/proc/net/tcp}
 proc_net_tcp6=${WWR_PROC_NET_TCP6:-/proc/net/tcp6}
 case "$proxy_wait_seconds" in
     ''|*[!0-9]*) echo "WWR_TUN_PROXY_WAIT_SECONDS must be an integer" >&2; exit 1 ;;
 esac
+case "$proxy_loss_seconds" in
+    ''|*[!0-9]*) echo "WWR_TUN_PROXY_LOSS_SECONDS must be an integer" >&2; exit 1 ;;
+esac
 if [ "$proxy_wait_seconds" -gt 300 ]; then
     proxy_wait_seconds=300
+fi
+if [ "$proxy_loss_seconds" -gt 300 ]; then
+    proxy_loss_seconds=300
 fi
 uplink_fallback=0
 route_added=0
@@ -136,11 +143,19 @@ case "$proxy_authority" in
     *) proxy_host=$proxy_authority ;;
 esac
 
+local_proxy=0
+case "$proxy_host" in
+    localhost|127.*|0.0.0.0|::1|::) local_proxy=1 ;;
+esac
+
+local_proxy_listening() {
+    [ "$local_proxy" -eq 1 ] || return 0
+    { [ -r "$proc_net_tcp" ] && awk -v suffix=":$port_hex" '$4 == "0A" && substr($2, length($2) - length(suffix) + 1) == suffix { found=1 } END { exit !found }' "$proc_net_tcp"; } ||
+    { [ -r "$proc_net_tcp6" ] && awk -v suffix=":$port_hex" '$4 == "0A" && substr($2, length($2) - length(suffix) + 1) == suffix { found=1 } END { exit !found }' "$proc_net_tcp6"; }
+}
+
 wait_for_local_proxy() {
-    case "$proxy_host" in
-        localhost|127.*|0.0.0.0|::1|::) ;;
-        *) return 0 ;;
-    esac
+    [ "$local_proxy" -eq 1 ] || return 0
     case "$proxy_port" in
         ''|*[!0-9]*) echo "local TUN proxy must include a numeric port: $proxy" >&2; return 1 ;;
     esac
@@ -151,8 +166,7 @@ wait_for_local_proxy() {
     port_hex=$(printf '%04X' "$proxy_port")
     attempts=$((proxy_wait_seconds * 10 + 1))
     for _ in $(seq 1 "$attempts"); do
-        if { [ -r "$proc_net_tcp" ] && awk -v suffix=":$port_hex" '$4 == "0A" && substr($2, length($2) - length(suffix) + 1) == suffix { found=1 } END { exit !found }' "$proc_net_tcp"; } ||
-           { [ -r "$proc_net_tcp6" ] && awk -v suffix=":$port_hex" '$4 == "0A" && substr($2, length($2) - length(suffix) + 1) == suffix { found=1 } END { exit !found }' "$proc_net_tcp6"; }; then
+        if local_proxy_listening; then
             return 0
         fi
         [ "$proxy_wait_seconds" -gt 0 ] || break
@@ -264,4 +278,19 @@ fi
 echo "transparent relay active: $device -> $proxy via $uplink"
 "$tun2socks_bin" --device "$device" --proxy "$proxy" --interface "$uplink" &
 tun_pid=$!
+proxy_lost_at=
+while kill -0 "$tun_pid" 2>/dev/null; do
+    if [ "$local_proxy" -eq 1 ] && [ "$proxy_loss_seconds" -gt 0 ] && ! local_proxy_listening; then
+        now=$(date +%s)
+        if [ -z "$proxy_lost_at" ]; then
+            proxy_lost_at=$now
+        elif [ $((now - proxy_lost_at)) -ge "$proxy_loss_seconds" ]; then
+            echo "local TUN proxy disappeared for ${proxy_loss_seconds}s; rolling back transparent routing" >&2
+            exit 1
+        fi
+    else
+        proxy_lost_at=
+    fi
+    sleep 1
+done
 wait "$tun_pid"

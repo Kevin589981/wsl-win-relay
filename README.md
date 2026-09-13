@@ -686,7 +686,10 @@ different tool path.
 For a loopback proxy, the script waits up to 30 seconds for its TCP listener
 before making any network-state change, preventing a boot-order race from
 installing blackhole routes. Set `WWR_TUN_PROXY_WAIT_SECONDS` between `0` and
-`300` to adjust that preflight.
+`300` to adjust that preflight. While routing is active, losing the listener
+for 15 seconds makes the wrapper exit and roll back TUN, routes, and DNS; set
+`WWR_TUN_PROXY_LOSS_SECONDS` between `1` and `300`, or `0` to disable this
+watchdog.
 
 When WSL has lost its default interface because of an HNS failure, the script
 automatically falls back to `lo` if `WWR_TUN_PROXY` points at a local loopback

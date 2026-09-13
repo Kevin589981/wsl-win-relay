@@ -53,6 +53,9 @@
 - [x] Transparent routing waits for a configured loopback SOCKS listener before
       any TUN, route, or DNS mutation, preventing service startup ordering from
       creating a temporary network blackhole.
+- [x] A runtime loopback-proxy watchdog tolerates short recovery windows but
+      exits through bounded tun2socks termination and full network rollback
+      after a configurable sustained listener outage.
 - [x] Transparent relay shutdown handles `HUP`/`QUIT` and bounds tun2socks
       termination before route, DNS, and TUN rollback; a mock fault-injection
       smoke runs this path without requiring root or a real TUN device.

@@ -98,10 +98,43 @@ grep -q 'route del 0.0.0.0/1' "$log_file"
 grep -q 'route del 128.0.0.0/1' "$log_file"
 grep -q 'link del' "$log_file"
 
+# Losing the loopback SOCKS listener beyond the configured grace period must
+# stop tun2socks and roll back routes instead of leaving a persistent blackhole.
+printf '%s\n' '  sl  local_address rem_address   st' '   0: 0100007F:0438 00000000:0000 0A' >"$proc_tcp"
+: >"$log_file"
+rm -f "$active_file"
+export WWR_TUN_PROXY_LOSS_SECONDS=1
+"$repo_dir/scripts/transparent-relay.sh" >"$tmp_dir/proxy-loss.log" 2>&1 &
+relay_pid=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [ -f "$active_file" ] && break
+    sleep 0.1
+done
+[ -f "$active_file" ] || { cat "$tmp_dir/proxy-loss.log" >&2; exit 1; }
+tun_process=$(cat "$active_file")
+: >"$proc_tcp"
+set +e
+wait "$relay_pid"
+proxy_loss_status=$?
+set -e
+relay_pid=
+[ "$proxy_loss_status" -ne 0 ] || { echo "lost local proxy unexpectedly reported success" >&2; exit 1; }
+grep -q 'local TUN proxy disappeared' "$tmp_dir/proxy-loss.log"
+if kill -0 "$tun_process" 2>/dev/null; then
+    echo "tun2socks survived local proxy loss rollback" >&2
+    exit 1
+fi
+[ ! -f "$WWR_TEST_TUN_FILE" ] || { echo "TUN device survived local proxy loss rollback" >&2; exit 1; }
+grep -q 'route del 0.0.0.0/1' "$log_file"
+grep -q 'route del 128.0.0.0/1' "$log_file"
+grep -qx 'nameserver 192.0.2.53' "$WWR_RESOLV_CONF"
+unset WWR_TUN_PROXY_LOSS_SECONDS
+
 # A failure after the first IPv6 split route is installed must still remove
 # that route before returning the startup error.
 : >"$log_file"
 rm -f "$active_file"
+printf '%s\n' '  sl  local_address rem_address   st' '   0: 0100007F:0438 00000000:0000 0A' >"$proc_tcp"
 export WWR_TEST_IPV6_MODE=partial
 set +e
 "$repo_dir/scripts/transparent-relay.sh" >"$tmp_dir/partial.log" 2>&1
