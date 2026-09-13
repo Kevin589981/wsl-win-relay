@@ -43,6 +43,43 @@ func TestBrokerAssignsStableSortedEntries(t *testing.T) {
 	}
 }
 
+func TestBrokerRegistryLimitRejectsOnlyNewEntries(t *testing.T) {
+	broker, err := New(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var first uint64
+	for index := 0; index < MaxRegistryEntries; index++ {
+		id, err := broker.Register(attach.EntryStream)
+		if err != nil {
+			t.Fatalf("register entry %d: %v", index, err)
+		}
+		if index == 0 {
+			first = id
+		}
+	}
+	if _, err := broker.Register(attach.EntryDatagram); !errors.Is(err, ErrRegistryFull) {
+		t.Fatalf("register beyond limit err=%v", err)
+	}
+	summary := broker.Summary()
+	if len(summary.Entries) != attach.MaxSummaryEntries {
+		t.Fatal("registry saturation changed established entries")
+	}
+	if _, err := attach.EncodeSummary(summary); err != nil {
+		t.Fatalf("encode saturated registry: %v", err)
+	}
+	if err := broker.Remove(first); err != nil {
+		t.Fatal(err)
+	}
+	id, err := broker.Register(attach.EntryDatagram)
+	if err != nil {
+		t.Fatalf("register after removal: %v", err)
+	}
+	if id <= first {
+		t.Fatalf("replacement entry id=%d, want greater than removed id=%d", id, first)
+	}
+}
+
 func TestBrokerAcceptsResumeSessionAndRejectsStaleClose(t *testing.T) {
 	broker, err := New(0x40)
 	if err != nil {

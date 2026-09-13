@@ -45,7 +45,9 @@ The persistent broker uses `internal/transport/attach` for per-instance tokens,
 generation-safe ownership, a bounded versioned
 attach handshake, and deterministic registry-summary/resume-ack messages. The
 transport-independent broker core in `internal/broker` now accepts those
-sessions and tracks stable entry IDs. The Windows broker/connector that owns
+sessions and tracks stable entry IDs. Its registry admits at most 4096 live
+entries, matching the attach-summary wire limit; saturation rejects only new
+registrations and removing an entry restores capacity. The Windows broker/connector that owns
 sockets across connector restarts is enabled by the broker user-service
 installer; manually launched proxies remain stdio by default. A broken stdio
 session still ends in-flight connections while new requests and mappings

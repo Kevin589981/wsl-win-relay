@@ -148,6 +148,9 @@
       enforcement and Windows named-pipe security descriptor.
 - [x] Transport-independent broker core with stable entry registration,
       summary snapshots, attach/resume acceptance, and stale-session isolation.
+- [x] Broker stable-entry registration is capped at the attach protocol's
+      4096-entry summary limit, so saturation cannot make all later connector
+      resumes unencodable; removing an entry restores capacity.
 - [x] Broker listener lifecycle with active connector tracking, cancellation
       teardown, and handler draining before service return.
 - [x] Replaceable broker-role data bridges and private control endpoints use

@@ -219,7 +219,9 @@ type Summary struct {
 }
 
 const (
-	maxSummaryEntries = 4096
+	// MaxSummaryEntries is the largest stable registry snapshot that can be
+	// exchanged during one attach/resume handshake.
+	MaxSummaryEntries = 4096
 	summaryHeaderSize = 10
 	summaryEntrySize  = 10
 )
@@ -249,7 +251,7 @@ func (e RegistryEntry) validate() error {
 // Entries must be supplied in ascending ID order; rejecting unsorted input
 // prevents peers from observing nondeterministic summaries.
 func EncodeSummary(summary Summary) ([]byte, error) {
-	if len(summary.Entries) > maxSummaryEntries || len(summary.Entries) > (maxWirePayload-summaryHeaderSize)/summaryEntrySize {
+	if len(summary.Entries) > MaxSummaryEntries || len(summary.Entries) > (maxWirePayload-summaryHeaderSize)/summaryEntrySize {
 		return nil, errors.New("registry summary contains too many entries")
 	}
 	payload := make([]byte, summaryHeaderSize+summaryEntrySize*len(summary.Entries))
@@ -277,7 +279,7 @@ func DecodeSummary(payload []byte) (Summary, error) {
 		return Summary{}, errors.New("registry summary has invalid length")
 	}
 	count := int(binary.BigEndian.Uint16(payload[8:]))
-	if count > maxSummaryEntries || len(payload) != summaryHeaderSize+summaryEntrySize*count {
+	if count > MaxSummaryEntries || len(payload) != summaryHeaderSize+summaryEntrySize*count {
 		return Summary{}, errors.New("registry summary has invalid entry count")
 	}
 	summary := Summary{Epoch: binary.BigEndian.Uint64(payload), Entries: make([]RegistryEntry, count)}
@@ -296,7 +298,7 @@ func DecodeSummary(payload []byte) (Summary, error) {
 }
 
 func EncodeResumeAck(epoch uint64, ids []uint64) ([]byte, error) {
-	if len(ids) > maxSummaryEntries || len(ids) > (maxWirePayload-10)/8 {
+	if len(ids) > MaxSummaryEntries || len(ids) > (maxWirePayload-10)/8 {
 		return nil, errors.New("resume acknowledgement contains too many entries")
 	}
 	payload := make([]byte, 10+8*len(ids))
@@ -318,7 +320,7 @@ func DecodeResumeAck(payload []byte) (uint64, []uint64, error) {
 		return 0, nil, errors.New("resume acknowledgement has invalid length")
 	}
 	count := int(binary.BigEndian.Uint16(payload[8:]))
-	if count > maxSummaryEntries || len(payload) != 10+8*count {
+	if count > MaxSummaryEntries || len(payload) != 10+8*count {
 		return 0, nil, errors.New("resume acknowledgement has invalid entry count")
 	}
 	ids := make([]uint64, count)

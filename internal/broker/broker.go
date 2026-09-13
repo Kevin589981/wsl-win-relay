@@ -18,6 +18,7 @@ import (
 
 var (
 	ErrBrokerClosed = errors.New("broker is closed")
+	ErrRegistryFull = errors.New("broker registry entry limit reached")
 	ErrUnknownEntry = errors.New("unknown broker entry")
 )
 
@@ -26,6 +27,7 @@ var brokerHandshakeTimeout = 15 * time.Second
 const (
 	MaxConcurrentConnections      = 32
 	MaxConcurrentAttachHandshakes = 16
+	MaxRegistryEntries            = attach.MaxSummaryEntries
 )
 
 type Broker struct {
@@ -64,6 +66,9 @@ func (b *Broker) Register(kind attach.EntryKind) (uint64, error) {
 	defer b.mu.Unlock()
 	if b.closed || b.registry == nil {
 		return 0, ErrBrokerClosed
+	}
+	if len(b.entries) >= MaxRegistryEntries {
+		return 0, ErrRegistryFull
 	}
 	for {
 		b.nextID++
