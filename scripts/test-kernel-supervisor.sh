@@ -92,6 +92,15 @@ printf '%s\n' \
     '    if (spawn_error != 0) return spawn_error;' \
     '    return waitpid(child, NULL, 0) == child ? 0 : 6;' \
     '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "posix-spawnp") == 0) {' \
+    '    char executable[PATH_MAX]; if (realpath(argv[0], executable) == NULL) return 4;' \
+    '    char *slash = strrchr(executable, '\''/'\''); if (slash == NULL) return 4; *slash = '\''\0'\'';' \
+    '    if (setenv("PATH", executable, 1) != 0) return 4;' \
+    '    pid_t child = -1; char *spawn_argv[] = { (char *)slash + 1, (char *)"spawn-child", NULL };' \
+    '    int spawn_error = posix_spawnp(&child, slash + 1, NULL, NULL, spawn_argv, environ);' \
+    '    if (spawn_error != 0) return spawn_error;' \
+    '    return waitpid(child, NULL, 0) == child ? 0 : 6;' \
+    '  }' \
     '  if (argc > 1 && strcmp(argv[1], "posix-spawn-close") == 0) {' \
     '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0};' \
     '    address.sin_family = AF_INET; address.sin_port = htons(47148); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
@@ -340,6 +349,13 @@ WSL_WIN_RELAY_CONTROL="$tmp_dir/posix-spawn.sock" "$repo_dir/scripts/wsl-win-rel
 grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/posix-spawn.log"
 grep -q '^COMMIT ' "$tmp_dir/posix-spawn.log"
 grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/posix-spawn.log"
+stop_control
+
+start_control "$tmp_dir/posix-spawnp.sock" "$tmp_dir/posix-spawnp.log"
+WSL_WIN_RELAY_CONTROL="$tmp_dir/posix-spawnp.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" posix-spawnp
+grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/posix-spawnp.log"
+grep -q '^COMMIT ' "$tmp_dir/posix-spawnp.log"
+grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/posix-spawnp.log"
 stop_control
 
 start_control "$tmp_dir/posix-spawn-dup.sock" "$tmp_dir/posix-spawn-dup.log"

@@ -77,8 +77,12 @@
 - [x] The kernel supervisor explicitly handles the `PTRACE_EVENT_VFORK_DONE`
       notification emitted for traced `vfork()` parents instead of treating it
       as an unknown event.
+- [x] The static lifecycle smoke covers `posix_spawnp()` PATH lookup in
+      addition to direct `posix_spawn()` and file-action variants, including
+      inherited listener lease adoption and cleanup.
 - [ ] Kernel-level coverage for non-direct vfork libc interactions remains
-      open for implementations beyond the `system()`, `popen()`, `posix_spawn`
+      open for implementations beyond the `system()`, `popen()`, `posix_spawn`,
+      and `posix_spawnp`
       and pre-exec file-action paths, which are covered by the native smoke test together with
       leader-exit/sibling-listener ownership. Setuid/setgid binaries remain
       intentionally rejected because neither launcher path can preserve their
