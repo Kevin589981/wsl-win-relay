@@ -2,11 +2,15 @@ package autoforward
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
+	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,6 +26,79 @@ type DatagramOpener interface {
 	ReverseDatagramForward(context.Context, string, string) (io.Closer, error)
 }
 
+// MappingStatus is the machine-readable representation of one active
+// automatic mapping. The WSL target remains the source listener's address;
+// WindowsAddress may differ when a port offset is configured.
+type MappingStatus struct {
+	Network        string `json:"network"`
+	WindowsAddress string `json:"windows_address"`
+	WSLAddress     string `json:"wsl_address"`
+}
+
+type mappingStatusDocument struct {
+	Version  int             `json:"version"`
+	Mappings []MappingStatus `json:"mappings"`
+}
+
+// StatusStore merges mapping snapshots from the TCP and UDP watchers before
+// publishing one atomic status document.
+type StatusStore struct {
+	path   string
+	mu     sync.Mutex
+	owners map[string][]MappingStatus
+}
+
+func NewStatusStore(path string) *StatusStore {
+	return &StatusStore{path: path, owners: make(map[string][]MappingStatus)}
+}
+
+func (s *StatusStore) Publish(owner string, mappings []MappingStatus) error {
+	if s == nil || s.path == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.owners == nil {
+		s.owners = make(map[string][]MappingStatus)
+	}
+	s.owners[owner] = append([]MappingStatus(nil), mappings...)
+	return s.writeLocked()
+}
+
+func (s *StatusStore) Clear(owner string) error {
+	if s == nil || s.path == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.owners, owner)
+	if len(s.owners) == 0 {
+		if err := os.Remove(s.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	return s.writeLocked()
+}
+
+func (s *StatusStore) writeLocked() error {
+	mappings := make([]MappingStatus, 0)
+	for _, ownerMappings := range s.owners {
+		mappings = append(mappings, ownerMappings...)
+	}
+	sort.Slice(mappings, func(i, j int) bool {
+		if mappings[i].Network != mappings[j].Network {
+			return mappings[i].Network < mappings[j].Network
+		}
+		return mappings[i].WindowsAddress < mappings[j].WindowsAddress
+	})
+	data, err := json.MarshalIndent(mappingStatusDocument{Version: 1, Mappings: mappings}, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeStatusFile(s.path, append(data, '\n'))
+}
+
 // DatagramWatcher reuses the TCP mapping lifecycle with a UDP-specific procfs
 // scanner and opener. It is intentionally a separate opt-in adapter because
 // procfs cannot prove that an unconnected UDP socket is a server.
@@ -31,6 +108,8 @@ type DatagramWatcher struct {
 	WindowsHost       string
 	WindowsHost6      string
 	WindowsPortOffset int
+	Status            *StatusStore
+	StatusOwner       string
 	Interval          time.Duration
 	OpenTimeout       time.Duration
 	RetryMin          time.Duration
@@ -58,7 +137,7 @@ func (w *DatagramWatcher) Run(ctx context.Context) error {
 	}
 	runner := &Watcher{
 		Scanner: w.datagramScanner(), Opener: w.datagramOpener(), WindowsHost: w.WindowsHost,
-		WindowsHost6: w.WindowsHost6, WindowsPortOffset: w.WindowsPortOffset, Interval: w.Interval, OpenTimeout: w.OpenTimeout,
+		WindowsHost6: w.WindowsHost6, WindowsPortOffset: w.WindowsPortOffset, Status: w.Status, StatusOwner: "udp", Interval: w.Interval, OpenTimeout: w.OpenTimeout,
 		RetryMin: w.RetryMin, RetryMax: w.RetryMax, Included: w.Included,
 		Excluded: w.Excluded, Logger: w.Logger, Label: "auto-forward UDP",
 	}
@@ -95,6 +174,8 @@ type Watcher struct {
 	WindowsHost       string
 	WindowsHost6      string
 	WindowsPortOffset int
+	Status            *StatusStore
+	StatusOwner       string
 	Interval          time.Duration
 	OpenTimeout       time.Duration
 	Included          map[uint16]bool
@@ -153,6 +234,9 @@ func (w *Watcher) Run(ctx context.Context) error {
 	if w.Label == "" {
 		w.Label = "auto-forward"
 	}
+	if w.StatusOwner == "" {
+		w.StatusOwner = w.Label
+	}
 	w.ensureRetryPolicy()
 	w.mu.Lock()
 	w.active = make(map[listenerKey]activeMapping)
@@ -160,7 +244,11 @@ func (w *Watcher) Run(ctx context.Context) error {
 	w.retryAfter = make(map[listenerKey]time.Time)
 	w.retryFailures = make(map[listenerKey]int)
 	w.mu.Unlock()
-	defer w.closeAll()
+	defer func() {
+		w.closeAll()
+		w.clearStatus()
+	}()
+	w.publishStatus()
 	ticker := time.NewTicker(w.Interval)
 	defer ticker.Stop()
 	for {
@@ -237,6 +325,9 @@ func (w *Watcher) sync(ctx context.Context) error {
 	for _, mapping := range removed {
 		w.closeMapping(mapping.closer)
 	}
+	if len(removed) > 0 {
+		w.publishStatus()
+	}
 	attemptCtx, cancelAttempt := context.WithCancel(ctx)
 	w.mu.Lock()
 	w.attemptID++
@@ -291,23 +382,12 @@ func (w *Watcher) sync(ctx context.Context) error {
 		}(attempt)
 	}
 	attemptsDone.Wait()
+	w.publishStatus()
 	return nil
 }
 
 func (w *Watcher) openOne(ctx context.Context, key listenerKey, listener Listener, generation uint64, desired map[listenerKey]Listener) {
-	windowsHost := w.WindowsHost
-	wslHost := listener.Host
-	if listener.Network == "tcp6" {
-		windowsHost = w.WindowsHost6
-	}
-	if listener.Network == "tcp4" && (wslHost == "" || wslHost == "0.0.0.0") {
-		wslHost = "127.0.0.1"
-	}
-	if listener.Network == "tcp6" && (wslHost == "" || wslHost == "::") {
-		wslHost = "::1"
-	}
-	windowsAddr := net.JoinHostPort(windowsHost, strconv.Itoa(int(listener.Port)))
-	wslTarget := net.JoinHostPort(wslHost, strconv.Itoa(int(listener.Port)))
+	windowsAddr, wslTarget := w.mappingAddresses(listener)
 	openCtx := ctx
 	cancelOpen := func() {}
 	if w.OpenTimeout > 0 {
@@ -319,7 +399,6 @@ func (w *Watcher) openOne(ctx context.Context, key listenerKey, listener Listene
 	if mappedPort < 1 || mappedPort > 65535 {
 		openErr = fmt.Errorf("WSL port %d plus Windows port offset %d is outside 1..65535", listener.Port, w.WindowsPortOffset)
 	} else {
-		windowsAddr = net.JoinHostPort(windowsHost, strconv.Itoa(mappedPort))
 		closer, openErr = w.Opener.ReverseForward(openCtx, windowsAddr, wslTarget)
 	}
 	cancelOpen()
@@ -391,8 +470,77 @@ func (w *Watcher) openOne(ctx context.Context, key listenerKey, listener Listene
 	w.Logger.Printf("%s added %s -> %s", w.Label, windowsAddr, wslTarget)
 }
 
+func (w *Watcher) mappingAddresses(listener Listener) (string, string) {
+	windowsHost := w.WindowsHost
+	wslHost := listener.Host
+	if strings.HasSuffix(listener.Network, "6") {
+		windowsHost = w.WindowsHost6
+		if wslHost == "" || wslHost == "::" {
+			wslHost = "::1"
+		}
+	} else if strings.HasSuffix(listener.Network, "4") && (wslHost == "" || wslHost == "0.0.0.0") {
+		wslHost = "127.0.0.1"
+	}
+	windowsAddr := net.JoinHostPort(windowsHost, strconv.Itoa(w.windowsPort(listener)))
+	wslTarget := net.JoinHostPort(wslHost, strconv.Itoa(int(listener.Port)))
+	return windowsAddr, wslTarget
+}
+
 func (w *Watcher) windowsPort(listener Listener) int {
 	return int(listener.Port) + w.WindowsPortOffset
+}
+
+func (w *Watcher) publishStatus() {
+	if w.Status == nil {
+		return
+	}
+	w.mu.Lock()
+	mappings := make([]MappingStatus, 0, len(w.active))
+	for _, mapping := range w.active {
+		windowsAddr, wslAddr := w.mappingAddresses(mapping.listener)
+		mappings = append(mappings, MappingStatus{Network: mapping.listener.Network, WindowsAddress: windowsAddr, WSLAddress: wslAddr})
+	}
+	w.mu.Unlock()
+	err := w.Status.Publish(w.StatusOwner, mappings)
+	if err != nil && w.Logger != nil {
+		w.Logger.Printf("%s status file: %v", w.Label, err)
+	}
+}
+
+func writeStatusFile(path string, data []byte) error {
+	directory := filepath.Dir(path)
+	base := filepath.Base(path)
+	temporary, err := os.CreateTemp(directory, "."+base+".tmp-")
+	if err != nil {
+		return err
+	}
+	temporaryName := temporary.Name()
+	defer os.Remove(temporaryName)
+	if err := temporary.Chmod(0o600); err != nil {
+		temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(data); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temporaryName, path)
+}
+
+func (w *Watcher) clearStatus() {
+	if w.Status == nil {
+		return
+	}
+	if err := w.Status.Clear(w.StatusOwner); err != nil && w.Logger != nil {
+		w.Logger.Printf("%s status file cleanup: %v", w.Label, err)
+	}
 }
 
 func formatMappingRejection(err error) string {
@@ -461,6 +609,7 @@ func (w *Watcher) Reset() {
 	for _, mapping := range active {
 		w.closeMapping(mapping.closer)
 	}
+	w.publishStatus()
 }
 
 func (w *Watcher) closeMapping(closer io.Closer) {

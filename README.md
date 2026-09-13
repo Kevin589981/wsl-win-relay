@@ -410,6 +410,7 @@ Useful controls:
 -auto-forward-host 127.0.0.1       Windows bind host; use 0.0.0.0 deliberately for LAN access
 -auto-forward-host6 ::1             Windows IPv6 bind host; use :: deliberately for LAN access
 -auto-forward-port-offset 10000    Optional offset added to Windows ports; 0 preserves same-port mapping
+-auto-forward-status /run/user/... Optional atomic JSON status file for active mappings
 -auto-forward-include 8000,9000    Optional allowlist; empty means all discovered ports
 -auto-forward-exclude 22,53        Ports that must never be mirrored
 -auto-forward-interval 1s          Discovery interval
@@ -441,6 +442,14 @@ Windows-facing listener changes. The default offset is `0`, so existing
 same-port behavior is unchanged. The offset must be between `-65534` and
 `65534`, and a discovered port is rejected if the resulting Windows port would
 fall outside `1..65535`.
+
+Set `-auto-forward-status` (or `auto_forward.status_file` in JSON) when an
+operator or another local tool needs to discover the actual Windows-facing
+ports. The file is updated atomically with mode `0600`, has version `1`, and
+contains the active network family plus `windows_address` and `wsl_address`
+for each mapping. It is removed when the watcher exits, so a missing file does
+not imply a stale mapping. The status file is optional and does not alter the
+relay protocol.
 
 To run the real WSL/Windows recovery check after building both binaries, use
 `./scripts/test-auto-rebind.sh`. It requires WSL Windows interop and verifies

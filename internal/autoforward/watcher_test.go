@@ -3,9 +3,11 @@ package autoforward
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -94,6 +96,93 @@ func TestWatcherAppliesWindowsPortOffset(t *testing.T) {
 	}
 	if len(opener.opened) != 1 || opener.opened[0] != "127.0.0.1:18000=127.0.0.1:8000" {
 		t.Fatalf("opened: %v", opener.opened)
+	}
+}
+
+func TestWatcherPublishesAndRemovesStatusFile(t *testing.T) {
+	statusPath := t.TempDir() + "/mappings.json"
+	scanner := &sequenceScanner{values: [][]Listener{{{Network: "tcp4", Host: "127.0.0.1", Port: 8000}}, {{Network: "tcp4", Host: "127.0.0.1", Port: 8000}}}}
+	opener := &recordingOpener{closed: make(chan string, 1)}
+	w := &Watcher{Scanner: scanner, Opener: opener, WindowsPortOffset: 10000, Status: NewStatusStore(statusPath), StatusOwner: "tcp", Interval: time.Millisecond}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx) }()
+	var data []byte
+	var document struct {
+		Version  int             `json:"version"`
+		Mappings []MappingStatus `json:"mappings"`
+	}
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
+		data, _ = os.ReadFile(statusPath)
+		if json.Unmarshal(data, &document) == nil && len(document.Mappings) == 1 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if len(data) == 0 {
+		cancel()
+		<-done
+		t.Fatal("status file was not published")
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		cancel()
+		<-done
+		t.Fatal(err)
+	}
+	if document.Version != 1 || len(document.Mappings) != 1 || document.Mappings[0].WindowsAddress != "127.0.0.1:18000" || document.Mappings[0].WSLAddress != "127.0.0.1:8000" {
+		cancel()
+		<-done
+		t.Fatalf("status document: %#v", document)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(statusPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("status file remains after shutdown: %v", err)
+	}
+}
+
+func TestStatusStoreMergesTCPAndUDPOwners(t *testing.T) {
+	path := t.TempDir() + "/mappings.json"
+	store := NewStatusStore(path)
+	tcp := MappingStatus{Network: "tcp4", WindowsAddress: "127.0.0.1:18000", WSLAddress: "127.0.0.1:8000"}
+	udp := MappingStatus{Network: "udp4", WindowsAddress: "127.0.0.1:15353", WSLAddress: "127.0.0.1:5353"}
+	if err := store.Publish("tcp", []MappingStatus{tcp}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Publish("udp", []MappingStatus{udp}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document mappingStatusDocument
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatal(err)
+	}
+	if len(document.Mappings) != 2 {
+		t.Fatalf("merged mappings: %#v", document.Mappings)
+	}
+	if err := store.Clear("tcp"); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatal(err)
+	}
+	if len(document.Mappings) != 1 || document.Mappings[0] != udp {
+		t.Fatalf("remaining UDP mapping: %#v", document.Mappings)
+	}
+	if err := store.Clear("udp"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("merged status file remains: %v", err)
 	}
 }
 

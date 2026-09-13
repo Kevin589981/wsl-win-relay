@@ -35,6 +35,7 @@ type AutoForwardConfig struct {
 	WindowsHost       string   `json:"windows_host"`
 	WindowsHost6      string   `json:"windows_host6"`
 	WindowsPortOffset int      `json:"windows_port_offset"`
+	StatusFile        string   `json:"status_file"`
 	Interval          string   `json:"interval"`
 	RetryMin          string   `json:"retry_min"`
 	RetryMax          string   `json:"retry_max"`

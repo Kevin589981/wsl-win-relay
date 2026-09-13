@@ -187,7 +187,7 @@ WSL_WIN_RELAY_ATTACH_TOKEN="$token" \
 	"$proxy_bin" -broker-mode -relay-exe "$connector_exe" -listen "$socks_listen" \
 		-http-listen "$http_listen" \
 		-reverse "127.0.0.1:$reverse_port=$reverse_wsl_host:$reverse_port" \
-		-auto-forward -auto-forward-port-offset "$auto_forward_offset" -auto-forward-include "$auto_port" >"$work/proxy.log" 2>&1 &
+		-auto-forward -auto-forward-port-offset "$auto_forward_offset" -auto-forward-status "$work/auto-mappings.json" -auto-forward-include "$auto_port" >"$work/proxy.log" 2>&1 &
 proxy_pid=$!
 
 for _ in $(seq 1 60); do
@@ -238,7 +238,9 @@ if [ "${ready_after:-0}" -le "$ready_before" ]; then
 fi
 
 for _ in $(seq 1 60); do
-	if grep -q "auto-forward added 127.0.0.1:$auto_windows_port" "$work/proxy.log"; then
+	if grep -q "auto-forward added 127.0.0.1:$auto_windows_port" "$work/proxy.log" && \
+		grep -q '"windows_address": "127.0.0.1:'"$auto_windows_port"'"' "$work/auto-mappings.json" && \
+		grep -q '"wsl_address": "127.0.0.2:'"$auto_port"'"' "$work/auto-mappings.json"; then
 		break
 	fi
 	sleep 0.5
@@ -246,6 +248,11 @@ done
 if ! grep -q "auto-forward added 127.0.0.1:$auto_windows_port" "$work/proxy.log"; then
 	echo "Windows automatic mapping was not created" >&2
 	cat "$work/broker.log" "$work/proxy.log" "$work/auto-http.log" >&2 || true
+	exit 1
+fi
+if ! grep -q '"windows_address": "127.0.0.1:'"$auto_windows_port"'"' "$work/auto-mappings.json" || ! grep -q '"wsl_address": "127.0.0.2:'"$auto_port"'"' "$work/auto-mappings.json"; then
+	echo "automatic mapping status file did not publish the expected addresses" >&2
+	cat "$work/auto-mappings.json" >&2 || true
 	exit 1
 fi
 if ! "$windows_shell" -NoProfile -NonInteractive -Command \
