@@ -40,6 +40,8 @@ printf '%s\n' \
     'static volatile int leader_listener_fd = -1;' \
     'static void *thread_close(void *argument) { usleep(1000000); close(*(int *)argument); return NULL; }' \
     'static void *thread_exit_group(void *argument) { (void)argument; usleep(100000); syscall(SYS_exit_group, 0); return NULL; }' \
+    'static pthread_barrier_t simultaneous_exit_barrier;' \
+    'static void *thread_simultaneous_exit(void *argument) { (void)argument; pthread_barrier_wait(&simultaneous_exit_barrier); syscall(SYS_exit, 0); return NULL; }' \
     'static void *thread_listen_after_leader_exit(void *argument) { (void)argument; usleep(100000); int inherited = leader_listener_fd; leader_listener_fd = -1; if (inherited >= 0) close(inherited); int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0}; address.sin_family = AF_INET; address.sin_port = htons(47145); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK); if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return (void *)1; close(fd); return NULL; }' \
     'static void *thread_exec(void *argument) { (void)argument; char *child_argv[] = { (char *)"static-target", (char *)"spawn-child", NULL }; execv("/proc/self/exe", child_argv); _exit(127); }' \
     'int main(int argc, char **argv) {' \
@@ -259,6 +261,14 @@ printf '%s\n' \
     '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 2;' \
     '    if (pthread_create(&thread, NULL, thread_exit_group, NULL) != 0) return 4;' \
     '    return pthread_join(thread, NULL) == 0 ? 0 : 5;' \
+    '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "simultaneous-exit") == 0) {' \
+    '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0}; pthread_t first, second;' \
+    '    address.sin_family = AF_INET; address.sin_port = htons(47158); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
+    '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 2;' \
+    '    if (pthread_barrier_init(&simultaneous_exit_barrier, NULL, 3) != 0) return 4;' \
+    '    if (pthread_create(&first, NULL, thread_simultaneous_exit, NULL) != 0 || pthread_create(&second, NULL, thread_simultaneous_exit, NULL) != 0) return 4;' \
+    '    pthread_barrier_wait(&simultaneous_exit_barrier); syscall(SYS_exit, 0); return 6;' \
     '  }' \
     '  if (argc > 1 && strcmp(argv[1], "fcntl-dup") == 0) {' \
     '    int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in address = {0};' \
@@ -712,6 +722,12 @@ grep -q 'RESERVE .* tcp4 47142' "$tmp_dir/thread-exit-group.log"
 thread_exit_group_cleanup=$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/thread-exit-group.log")
 test "$thread_exit_group_cleanup" -ge 1
 test "$thread_exit_group_cleanup" -le 2
+stop_control
+
+start_control "$tmp_dir/simultaneous-exit.sock" "$tmp_dir/simultaneous-exit.log"
+WSL_WIN_RELAY_CONTROL="$tmp_dir/simultaneous-exit.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" simultaneous-exit
+grep -q 'RESERVE .* tcp4 47158' "$tmp_dir/simultaneous-exit.log"
+test "$(grep -Ec '^(CLOSE|RELEASE) ' "$tmp_dir/simultaneous-exit.log")" -ge 1
 stop_control
 
 start_control "$tmp_dir/thread-exec.sock" "$tmp_dir/thread-exec.log"

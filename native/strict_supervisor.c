@@ -442,17 +442,26 @@ static void release_group_owner(struct task_group *group, pid_t owner) {
 }
 
 static void maybe_migrate_owner(struct task *task) {
-    struct task_group *group = task->group;
-    if (group == NULL || group->owner_pid != task->pid || group->refs <= 1) {
+    struct task_group *group = task == NULL ? NULL : task->group;
+    if (group == NULL || group->refs <= 1) {
+        return;
+    }
+    struct task *owner = find_task(group->owner_pid);
+    /* The owner can disappear before its siblings' exit notifications are
+     * reaped. Re-evaluate the group owner on every task removal so a stale
+     * PID cannot strand the lease until the procfs reaper runs. */
+    if (owner != NULL && !owner->exiting) {
         return;
     }
     for (struct task *candidate = tasks; candidate != NULL; candidate = candidate->next) {
-        if (candidate == task || candidate->exiting || candidate->group != group) {
+        if (candidate->exiting || candidate->group != group) {
             continue;
         }
         if (migrate_group_owner(group, candidate->pid) == 0) {
             group->owner_pid = candidate->pid;
-            release_group_owner(group, task->pid);
+            if (owner != NULL) {
+                release_group_owner(group, owner->pid);
+            }
         }
         return;
     }

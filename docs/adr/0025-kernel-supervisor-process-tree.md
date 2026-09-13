@@ -70,6 +70,9 @@ work follows the same model:
 - Owner migration and process-group cloning roll back previously successful
   `ADOPT` operations when a later owner update fails, so a partial control
   response cannot leave a child holding only part of the inherited lease set.
+- Owner selection is re-evaluated during every task removal. If an owner exits
+  before its sibling exit notifications are reaped, a surviving task can still
+  adopt the group's leases instead of leaving cleanup tied to a stale PID.
 - Unmatched or ambiguous `vfork()` child-side libc behavior remains outside the
   contract; direct syscall-safe operations through `_exit` are still the
   supported pattern for implementations that do not expose the recoverable
