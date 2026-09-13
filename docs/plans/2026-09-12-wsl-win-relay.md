@@ -116,7 +116,10 @@
       allowlisted UDP paths read the merged status document, exercise both
       protocols from PowerShell after connector recovery, and verify mapping
       removal. A service-wrapper mode covers the installed
-      `broker.env`/`-supervise` startup path and upstream proxy propagation.
+      `broker.env`/`-supervise` startup path and upstream proxy propagation;
+      the full combination has passed against
+      `socks5h://matebookxpro.local:7890` with Windows-allocated TCP/UDP
+      mappings and connector recovery enabled.
 - [x] Frame-aware replaceable Link and `relay.Server.ServeAttached` keep the
       broker server lifecycle alive across connector transport replacement.
 - [x] Relay client `RunAttached`/`Rehandshake` reuse the same stream registry,

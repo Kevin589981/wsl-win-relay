@@ -175,6 +175,10 @@ Set `WWR_BROKER_INTEROP_WINDOWS_PORT_AUTO=1` to exercise Windows-allocated TCP
 ports and status-file discovery. Add `WWR_BROKER_INTEROP_AUTO_UDP=1` to start a
 temporary WSL UDP echo service and verify an allowlisted, Windows-allocated UDP
 mapping from PowerShell, including connector recovery and mapping removal.
+The combined service-wrapper path has also been verified with
+`WWR_WINDOWS_UPSTREAM_PROXY=socks5h://matebookxpro.local:7890`, so proxy egress
+and dynamically allocated inbound TCP/UDP mappings coexist in the intended HNS
+failure topology.
 
 On mirrored WSL networking, Windows and WSL can share the host's TCP port
 namespace. A WSL listener may therefore make the same Windows port unavailable
