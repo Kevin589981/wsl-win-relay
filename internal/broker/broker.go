@@ -10,6 +10,7 @@ import (
 	"net"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/Kevin589981/wsl-win-relay/internal/transport/attach"
 	"github.com/Kevin589981/wsl-win-relay/internal/transport/framed"
@@ -19,6 +20,8 @@ var (
 	ErrBrokerClosed = errors.New("broker is closed")
 	ErrUnknownEntry = errors.New("unknown broker entry")
 )
+
+var brokerHandshakeTimeout = 15 * time.Second
 
 type Broker struct {
 	mu           sync.Mutex
@@ -126,6 +129,8 @@ func (b *Broker) Summary() attach.Summary {
 // start relay frame dispatch; the returned session is the ownership boundary
 // for that next layer.
 func (b *Broker) Accept(rw io.ReadWriter) (*Session, error) {
+	clearDeadline := setHandshakeDeadline(rw, brokerHandshakeTimeout)
+	defer clearDeadline()
 	b.mu.Lock()
 	if b.closed || b.registry == nil {
 		b.mu.Unlock()
@@ -151,6 +156,17 @@ func (b *Broker) Accept(rw io.ReadWriter) (*Session, error) {
 		return nil, ErrBrokerClosed
 	}
 	return &Session{broker: b, attachment: attachment, peerCapabilities: peerCapabilities, lastEpoch: lastEpoch, instanceID: instanceID}, nil
+}
+
+func setHandshakeDeadline(rw io.ReadWriter, timeout time.Duration) func() {
+	conn, ok := rw.(interface{ SetDeadline(time.Time) error })
+	if !ok || timeout <= 0 {
+		return func() {}
+	}
+	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+		return func() {}
+	}
+	return func() { _ = conn.SetDeadline(time.Time{}) }
 }
 
 // Serve accepts connector transports until ctx is canceled or the listener

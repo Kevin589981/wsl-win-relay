@@ -104,6 +104,35 @@ func TestBrokerAcceptsResumeSessionAndRejectsStaleClose(t *testing.T) {
 	}
 }
 
+func TestBrokerAcceptTimesOutStalledHandshake(t *testing.T) {
+	oldTimeout := brokerHandshakeTimeout
+	brokerHandshakeTimeout = 10 * time.Millisecond
+	defer func() { brokerHandshakeTimeout = oldTimeout }()
+	broker, err := New(0x40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+	done := make(chan error, 1)
+	go func() {
+		_, err := broker.Accept(right)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("stalled handshake unexpectedly succeeded")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stalled handshake did not time out")
+	}
+	if got := broker.registry.CurrentEpoch(); got != 0 {
+		t.Fatalf("stalled handshake left current epoch %d", got)
+	}
+}
+
 func TestBrokerCloseRejectsNewEntriesAndSessions(t *testing.T) {
 	broker, err := New(0)
 	if err != nil {
