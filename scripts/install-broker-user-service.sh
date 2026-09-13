@@ -82,6 +82,9 @@ if [ ! -e "$env_file" ]; then
         printf 'WSL_WIN_RELAY_ATTACH_TOKEN=%s\n' "$(quote_env_value "$token")"
         printf 'WSL_WIN_RELAY_ATTACH_TOKEN_FILE=%s\n' "$(quote_env_value "$token_file")"
         printf 'WSL_WIN_RELAY_BROKER_MODE=1\n'
+        if [ -n "${WSL_WIN_RELAY_UPSTREAM_PROXY:-}" ]; then
+            printf 'WSL_WIN_RELAY_UPSTREAM_PROXY=%s\n' "$(quote_env_value "$WSL_WIN_RELAY_UPSTREAM_PROXY")"
+        fi
     } >"$env_file"
 fi
 if ! grep -q '^WSL_WIN_RELAY_BROKER_MODE=' "$env_file"; then

@@ -112,6 +112,8 @@ To configure a Windows-side upstream proxy for the installed broker, add
 `broker.env`. The broker service wrapper adds this one variable to `WSLENV`
 before launching the Windows executable, so the URL is propagated without
 placing it in the broker command line.
+For a new installation, setting the same environment variable when running
+`install-broker-user-service.sh` writes it into `broker.env` automatically.
 
 If the broker must outlive the WSL VM or user service, install the optional
 Windows Task Scheduler boundary from PowerShell 7:
