@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 type Scanner interface{ Scan() ([]Listener, error) }
@@ -258,6 +259,7 @@ const maxConcurrentOpens = 8
 const (
 	defaultRetryMin = time.Second
 	defaultRetryMax = 30 * time.Second
+	maxStatusError  = 4096
 )
 
 func (w *Watcher) Run(ctx context.Context) error {
@@ -503,7 +505,7 @@ func (w *Watcher) openOne(ctx context.Context, key listenerKey, listener Listene
 		firstRejection := !w.rejected[key]
 		w.rejected[key] = true
 		w.rejectedAt[key] = listener
-		w.rejectedError[key] = openErr.Error()
+		w.rejectedError[key] = boundedStatusError(openErr)
 		w.retryFailures[key]++
 		failureCount := w.retryFailures[key]
 		w.retryAfter[key] = time.Now().Add(w.retryDelay(failureCount))
@@ -519,7 +521,7 @@ func (w *Watcher) openOne(ctx context.Context, key listenerKey, listener Listene
 		firstRejection := !w.rejected[key]
 		w.rejected[key] = true
 		w.rejectedAt[key] = listener
-		w.rejectedError[key] = openErr.Error()
+		w.rejectedError[key] = boundedStatusError(openErr)
 		w.retryFailures[key]++
 		failureCount := w.retryFailures[key]
 		w.retryAfter[key] = time.Now().Add(w.retryDelay(failureCount))
@@ -554,6 +556,21 @@ func (w *Watcher) openOne(ctx context.Context, key listenerKey, listener Listene
 		return
 	}
 	w.Logger.Printf("%s added %s -> %s", w.Label, windowsAddr, wslTarget)
+}
+
+func boundedStatusError(err error) string {
+	if err == nil {
+		return ""
+	}
+	message := err.Error()
+	if len(message) <= maxStatusError {
+		return message
+	}
+	message = message[:maxStatusError]
+	for !utf8.ValidString(message) {
+		message = message[:len(message)-1]
+	}
+	return message
 }
 
 func (w *Watcher) mappingAddresses(listener Listener) (string, string) {

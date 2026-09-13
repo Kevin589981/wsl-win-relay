@@ -9,6 +9,9 @@
 ## Current Completion Matrix
 
 - [x] Framed stdio relay with bounded streams and capability negotiation.
+- [x] Control error frames and persisted automatic-mapping errors are bounded
+      at 4 KiB so a malformed peer cannot amplify diagnostic text into large
+      logs or status snapshots.
 - [x] Every executable exposes consistent version, commit, and build-time
       metadata; the WSL build and CI paths inject and verify matching values.
 - [x] SOCKS5 TCP CONNECT and UDP ASSOCIATE, plus optional HTTP CONNECT and

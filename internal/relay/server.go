@@ -251,7 +251,7 @@ type serverDatagram struct {
 func (s *Server) openDatagram(id uint32) {
 	conn, err := s.packetDial(s.ctx)
 	if err != nil {
-		_ = s.send(protocol.Frame{Type: protocol.TypeDatagramError, StreamID: id, Payload: []byte(err.Error())})
+		_ = s.send(protocol.Frame{Type: protocol.TypeDatagramError, StreamID: id, Payload: protocol.ErrorPayload(err)})
 		return
 	}
 	s.mu.Lock()
@@ -335,11 +335,11 @@ func (s *Server) readDatagrams(id uint32, conn net.PacketConn) {
 }
 
 func (s *Server) datagramError(id uint32, err error) {
-	_ = s.send(protocol.Frame{Type: protocol.TypeDatagramError, StreamID: id, Payload: []byte(err.Error())})
+	_ = s.send(protocol.Frame{Type: protocol.TypeDatagramError, StreamID: id, Payload: protocol.ErrorPayload(err)})
 }
 
 func (s *Server) reverseDatagramError(id uint32, err error) {
-	_ = s.send(protocol.Frame{Type: protocol.TypeListenDatagramError, StreamID: id, Payload: []byte(err.Error())})
+	_ = s.send(protocol.Frame{Type: protocol.TypeListenDatagramError, StreamID: id, Payload: protocol.ErrorPayload(err)})
 }
 func (s *Server) removeDatagram(id uint32) {
 	s.mu.Lock()
@@ -365,12 +365,12 @@ func (s *Server) openReverseDatagram(id uint32, addr string) {
 	}
 	address, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
-		_ = s.send(protocol.Frame{Type: protocol.TypeListenDatagramError, StreamID: id, Payload: []byte(err.Error())})
+		_ = s.send(protocol.Frame{Type: protocol.TypeListenDatagramError, StreamID: id, Payload: protocol.ErrorPayload(err)})
 		return
 	}
 	conn, err := net.ListenUDP("udp", address)
 	if err != nil {
-		_ = s.send(protocol.Frame{Type: protocol.TypeListenDatagramError, StreamID: id, Payload: []byte(err.Error())})
+		_ = s.send(protocol.Frame{Type: protocol.TypeListenDatagramError, StreamID: id, Payload: protocol.ErrorPayload(err)})
 		return
 	}
 	s.mu.Lock()
@@ -487,7 +487,7 @@ func (s *Server) openListener(id uint32, addr string) {
 		}
 		s.mu.Unlock()
 		cancel()
-		_ = s.send(protocol.Frame{Type: protocol.TypeListenError, StreamID: id, Payload: []byte(err.Error())})
+		_ = s.send(protocol.Frame{Type: protocol.TypeListenError, StreamID: id, Payload: protocol.ErrorPayload(err)})
 		return
 	}
 	s.mu.Lock()
@@ -582,7 +582,7 @@ func (s *Server) open(id uint32, target string) {
 	conn, err := s.dial(ctx, target)
 	if err != nil {
 		s.remove(id)
-		s.send(protocol.Frame{Type: protocol.TypeOpenError, StreamID: id, Payload: []byte(err.Error())})
+		s.send(protocol.Frame{Type: protocol.TypeOpenError, StreamID: id, Payload: protocol.ErrorPayload(err)})
 		return
 	}
 	s.mu.Lock()
@@ -667,7 +667,7 @@ func (s *Server) writeToRemote(id uint32, stream *serverStream) {
 }
 
 func (s *Server) reset(id uint32, err error) {
-	s.send(protocol.Frame{Type: protocol.TypeReset, StreamID: id, Payload: []byte(err.Error())})
+	s.send(protocol.Frame{Type: protocol.TypeReset, StreamID: id, Payload: protocol.ErrorPayload(err)})
 	s.remove(id)
 }
 

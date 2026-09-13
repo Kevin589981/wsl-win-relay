@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"unicode/utf8"
 )
 
 const (
@@ -12,6 +13,7 @@ const (
 	HeaderSize                = 16
 	MaxPayloadSize            = 1 << 20
 	MaxTargetSize             = 4096
+	MaxErrorSize              = 4096
 	MaxDataSize               = 32 << 10
 	InitialStreamWindow       = 256 << 10
 )
@@ -74,6 +76,9 @@ func (f Frame) Validate() error {
 	if (f.Type == TypeListenOK || f.Type == TypeListenDatagramOK) && len(f.Payload) > MaxTargetSize {
 		return fmt.Errorf("bound listen address exceeds %d bytes", MaxTargetSize)
 	}
+	if isErrorType(f.Type) && len(f.Payload) > MaxErrorSize {
+		return fmt.Errorf("error payload exceeds %d bytes", MaxErrorSize)
+	}
 	if f.Type == TypeOpen && (len(f.Payload) == 0 || len(f.Payload) > MaxTargetSize) {
 		return fmt.Errorf("open target must be between 1 and %d bytes", MaxTargetSize)
 	}
@@ -107,6 +112,31 @@ func (f Frame) Validate() error {
 	return nil
 }
 
+func isErrorType(kind Type) bool {
+	switch kind {
+	case TypeOpenError, TypeReset, TypeListenError, TypeDatagramError, TypeListenDatagramError:
+		return true
+	default:
+		return false
+	}
+}
+
+// ErrorPayload bounds locally generated diagnostics before they enter a
+// control frame. Receive-side validation independently rejects oversized peers.
+func ErrorPayload(err error) []byte {
+	if err == nil {
+		return nil
+	}
+	payload := []byte(err.Error())
+	if len(payload) > MaxErrorSize {
+		payload = payload[:MaxErrorSize]
+		for !utf8.Valid(payload) {
+			payload = payload[:len(payload)-1]
+		}
+	}
+	return payload
+}
+
 func Write(w io.Writer, f Frame) error {
 	if err := f.Validate(); err != nil {
 		return err
@@ -138,7 +168,11 @@ func Read(r io.Reader) (Frame, error) {
 	if length > MaxPayloadSize {
 		return Frame{}, fmt.Errorf("payload exceeds %d bytes", MaxPayloadSize)
 	}
-	f := Frame{Type: Type(header[5]), StreamID: binary.BigEndian.Uint32(header[8:12]), Payload: make([]byte, length)}
+	kind := Type(header[5])
+	if isErrorType(kind) && length > MaxErrorSize {
+		return Frame{}, fmt.Errorf("error payload exceeds %d bytes", MaxErrorSize)
+	}
+	f := Frame{Type: kind, StreamID: binary.BigEndian.Uint32(header[8:12]), Payload: make([]byte, length)}
 	if _, err := io.ReadFull(r, f.Payload); err != nil {
 		return Frame{}, err
 	}

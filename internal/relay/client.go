@@ -790,7 +790,7 @@ func (c *Client) removeListener(id uint32) { c.mu.Lock(); delete(c.listeners, id
 func (c *Client) acceptInbound(l *clientListener, s *clientStream) {
 	local, err := (&net.Dialer{}).DialContext(l.ctx, "tcp", l.target)
 	if err != nil {
-		_ = c.write(protocol.Frame{Type: protocol.TypeReset, StreamID: s.id, Payload: []byte(err.Error())})
+		_ = c.write(protocol.Frame{Type: protocol.TypeReset, StreamID: s.id, Payload: protocol.ErrorPayload(err)})
 		c.removeStream(s.id)
 		return
 	}
@@ -1064,7 +1064,7 @@ func (s *clientStream) handle(frame protocol.Frame) {
 		case <-s.client.closed:
 		default:
 			err := errors.New("stream receive window exceeded")
-			_ = s.client.write(protocol.Frame{Type: protocol.TypeReset, StreamID: s.id, Payload: []byte(err.Error())})
+			_ = s.client.write(protocol.Frame{Type: protocol.TypeReset, StreamID: s.id, Payload: protocol.ErrorPayload(err)})
 			s.fail(err)
 		}
 	case protocol.TypeWindowUpdate:

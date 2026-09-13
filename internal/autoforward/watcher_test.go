@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestWatcherAddsAndRemovesListeners(t *testing.T) {
@@ -441,6 +442,21 @@ func TestFormatMappingRejectionExplainsSharedPortConflicts(t *testing.T) {
 	}
 	if plain := formatMappingRejection(errors.New("connection reset")); plain != "connection reset" {
 		t.Fatalf("non-bind error was rewritten: %q", plain)
+	}
+}
+
+func TestBoundedStatusError(t *testing.T) {
+	message := strings.Repeat("x", maxStatusError+100)
+	got := boundedStatusError(errors.New(message))
+	if len(got) != maxStatusError || got != message[:maxStatusError] {
+		t.Fatalf("bounded error length=%d", len(got))
+	}
+	if boundedStatusError(nil) != "" {
+		t.Fatal("nil status error was not empty")
+	}
+	unicodeError := boundedStatusError(errors.New(strings.Repeat("界", maxStatusError)))
+	if len(unicodeError) > maxStatusError || !utf8.ValidString(unicodeError) {
+		t.Fatalf("Unicode error length=%d valid=%v", len(unicodeError), utf8.ValidString(unicodeError))
 	}
 }
 

@@ -2,7 +2,11 @@ package protocol
 
 import (
 	"bytes"
+	"encoding/binary"
+	"fmt"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestFrameRoundTrip(t *testing.T) {
@@ -85,6 +89,18 @@ func TestReadRejectsOversizedPayload(t *testing.T) {
 	}
 }
 
+func TestReadRejectsOversizedErrorBeforeReadingPayload(t *testing.T) {
+	header := make([]byte, HeaderSize)
+	copy(header[:4], magic[:])
+	header[4] = Version
+	header[5] = byte(TypeOpenError)
+	binary.BigEndian.PutUint32(header[8:12], 1)
+	binary.BigEndian.PutUint32(header[12:16], MaxErrorSize+1)
+	if _, err := Read(bytes.NewReader(header)); err == nil || !strings.Contains(err.Error(), "error payload exceeds") {
+		t.Fatalf("Read returned %v", err)
+	}
+}
+
 func TestValidateRejectsInvalidFrames(t *testing.T) {
 	cases := []Frame{
 		{Type: TypeData},
@@ -95,10 +111,25 @@ func TestValidateRejectsInvalidFrames(t *testing.T) {
 		{Type: TypeListenDatagramOpen, StreamID: 1},
 		{Type: TypeListenDatagramData, StreamID: 1, Payload: []byte{0, 0}},
 		{Type: TypeListenOK, StreamID: 1, Payload: make([]byte, MaxTargetSize+1)},
+		{Type: TypeListenError, StreamID: 1, Payload: make([]byte, MaxErrorSize+1)},
 	}
 	for _, tc := range cases {
 		if err := tc.Validate(); err == nil {
 			t.Fatalf("expected validation error for %#v", tc)
 		}
+	}
+}
+
+func TestErrorPayloadIsBounded(t *testing.T) {
+	payload := ErrorPayload(fmt.Errorf("%s", strings.Repeat("x", MaxErrorSize+100)))
+	if len(payload) != MaxErrorSize {
+		t.Fatalf("payload length=%d", len(payload))
+	}
+	if ErrorPayload(nil) != nil {
+		t.Fatal("nil error produced a payload")
+	}
+	unicodePayload := ErrorPayload(fmt.Errorf("%s", strings.Repeat("界", MaxErrorSize)))
+	if len(unicodePayload) > MaxErrorSize || !utf8.Valid(unicodePayload) {
+		t.Fatalf("Unicode payload length=%d valid=%v", len(unicodePayload), utf8.Valid(unicodePayload))
 	}
 }

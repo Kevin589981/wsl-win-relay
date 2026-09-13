@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -53,6 +54,27 @@ func TestClientServerEcho(t *testing.T) {
 	case <-serverDone:
 	case <-time.After(time.Second):
 		t.Fatal("server did not stop")
+	}
+}
+
+func TestDialErrorIsTruncatedAndDelivered(t *testing.T) {
+	clientSide, serverSide := net.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := NewServer(serverSide, func(context.Context, string) (net.Conn, error) {
+		return nil, errors.New(strings.Repeat("x", protocol.MaxErrorSize+100))
+	})
+	go func() { _ = server.Serve(ctx) }()
+	client := NewClient(clientSide)
+	go func() { _ = client.Run(ctx) }()
+	dialCtx, dialCancel := context.WithTimeout(ctx, time.Second)
+	defer dialCancel()
+	_, err := client.DialContext(dialCtx, "example.invalid:1234")
+	if err == nil {
+		t.Fatal("expected dial error")
+	}
+	if len(err.Error()) != protocol.MaxErrorSize {
+		t.Fatalf("dial error length=%d err=%v", len(err.Error()), err)
 	}
 }
 
