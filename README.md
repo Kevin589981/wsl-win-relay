@@ -521,7 +521,7 @@ The lifecycle smoke also covers `wordexp()` command substitution, which
 exercises a shell-backed libc process launch and the same descendant lease
 ownership cleanup.
 The native lifecycle smoke also exercises `posix_spawnp()` PATH lookup,
-including the explicit `POSIX_SPAWN_USEVFORK` combination, plus
+including the explicit `POSIX_SPAWN_USEVFORK` and file-action combinations, plus
 `posix_spawn` signal-mask, signal-default, and process-group attributes, plus
 GNU `posix_spawn_file_actions_addchdir_np()` and `addfchdir_np()` actions when
 available, and `addclosefrom_np()` bulk descriptor cleanup when available, plus
