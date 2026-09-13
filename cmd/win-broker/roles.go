@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Kevin589981/wsl-win-relay/internal/broker"
+	"github.com/Kevin589981/wsl-win-relay/internal/netserve"
 	"github.com/Kevin589981/wsl-win-relay/internal/relay"
 	"github.com/Kevin589981/wsl-win-relay/internal/transport/attach"
 	"github.com/Kevin589981/wsl-win-relay/internal/transport/framed"
@@ -26,7 +27,13 @@ import (
 	"github.com/Kevin589981/wsl-win-relay/internal/upstream"
 )
 
-const workerStartupTimeout = 10 * time.Second
+const (
+	workerStartupTimeout      = 10 * time.Second
+	maxRoleBridgeConnections  = 32
+	maxRoleControlConnections = 16
+)
+
+var roleControlRequestTimeout = 2 * time.Second
 
 const (
 	roleWorker       = "worker"
@@ -52,10 +59,6 @@ func runFrontend(opts options, logger *log.Logger) error {
 	defer listener.Close()
 	service, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	go func() {
-		<-service.Done()
-		_ = listener.Close()
-	}()
 	worker := newWorkerSupervisor(opts, deriveEndpoint(opts.endpoint, "worker"), logger)
 	err = worker.ensure(service)
 	if err != nil {
@@ -63,19 +66,7 @@ func runFrontend(opts options, logger *log.Logger) error {
 	}
 	defer worker.stop()
 	logger.Printf("broker frontend listening on %s (worker %s)", opts.endpoint, worker.endpoint)
-	for {
-		conn, acceptErr := listener.Accept()
-		if acceptErr != nil {
-			if service.Err() != nil {
-				return service.Err()
-			}
-			if networkErr, ok := acceptErr.(net.Error); ok && networkErr.Temporary() {
-				continue
-			}
-			return acceptErr
-		}
-		go worker.bridge(service, conn)
-	}
+	return netserve.ServeWithLimit(service, listener, maxRoleBridgeConnections, worker.bridge)
 }
 
 type workerSupervisor struct {
@@ -172,7 +163,7 @@ func (s *workerSupervisor) bridge(ctx context.Context, client net.Conn) {
 		}
 	}
 	defer worker.Close()
-	bridgeConnections(client, worker)
+	bridgeConnections(ctx, client, worker)
 }
 
 func (s *workerSupervisor) stop() {
@@ -235,7 +226,16 @@ func ensureWorker(ctx context.Context, opts options, endpoint string, logger *lo
 	}
 }
 
-func bridgeConnections(a, b net.Conn) {
+func bridgeConnections(ctx context.Context, a, b net.Conn) {
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = a.Close()
+			_ = b.Close()
+		case <-done:
+		}
+	}()
 	errCh := make(chan error, 2)
 	copyOne := func(dst, src net.Conn) {
 		_, err := io.Copy(dst, src)
@@ -251,6 +251,7 @@ func bridgeConnections(a, b net.Conn) {
 	go copyOne(b, a)
 	<-errCh
 	<-errCh
+	close(done)
 }
 
 func runWorker(opts options, logger *log.Logger) error {
@@ -321,26 +322,11 @@ func runWorker(opts options, logger *log.Logger) error {
 		return fmt.Errorf("listen worker control: %w", err)
 	}
 	defer controlListener.Close()
-	go func() {
-		<-service.Done()
-		_ = listener.Close()
-		_ = controlListener.Close()
-	}()
 	go serveWorkerControl(service, controlListener, stop, opts.tokenHex, roleWorker)
 	logger.Printf("broker bridge worker listening on %s (socket host bridge %s, socket owner %s)", opts.endpoint, hostEndpoint, ownerEndpoint)
-	for {
-		conn, acceptErr := listener.Accept()
-		if acceptErr != nil {
-			if service.Err() != nil {
-				return service.Err()
-			}
-			if networkErr, ok := acceptErr.(net.Error); ok && networkErr.Temporary() {
-				continue
-			}
-			return acceptErr
-		}
-		go bridgeWorkerConnection(service, conn, hostEndpoint, stop)
-	}
+	return netserve.ServeWithLimit(service, listener, maxRoleBridgeConnections, func(serveCtx context.Context, conn net.Conn) {
+		bridgeWorkerConnection(serveCtx, conn, hostEndpoint, stop)
+	})
 }
 
 func monitorSocketHost(ctx context.Context, endpoint, tokenHex, role string, stop context.CancelFunc) {
@@ -372,7 +358,7 @@ func bridgeWorkerConnection(ctx context.Context, client net.Conn, endpoint strin
 		return
 	}
 	defer host.Close()
-	bridgeConnections(client, host)
+	bridgeConnections(ctx, client, host)
 }
 
 func ensureSocketOwner(ctx context.Context, opts options, endpoint string, logger *log.Logger) (*exec.Cmd, <-chan struct{}, error) {
@@ -551,27 +537,12 @@ func runSocketBridge(opts options, logger *log.Logger, role string) error {
 		return fmt.Errorf("listen socket bridge control: %w", err)
 	}
 	defer controlListener.Close()
-	go func() {
-		<-service.Done()
-		_ = listener.Close()
-		_ = controlListener.Close()
-	}()
 	go serveWorkerControl(service, controlListener, stop, opts.tokenHex, role)
 	go monitorSocketHost(service, opts.ownerEndpoint, opts.tokenHex, roleSocketOwner, stop)
 	logger.Printf("broker socket bridge listening on %s (role %s, socket owner %s)", opts.endpoint, role, opts.ownerEndpoint)
-	for {
-		conn, acceptErr := listener.Accept()
-		if acceptErr != nil {
-			if service.Err() != nil {
-				return service.Err()
-			}
-			if networkErr, ok := acceptErr.(net.Error); ok && networkErr.Temporary() {
-				continue
-			}
-			return acceptErr
-		}
-		go bridgeSocketConnection(service, conn, opts.ownerEndpoint, stop)
-	}
+	return netserve.ServeWithLimit(service, listener, maxRoleBridgeConnections, func(serveCtx context.Context, conn net.Conn) {
+		bridgeSocketConnection(serveCtx, conn, opts.ownerEndpoint, stop)
+	})
 }
 
 func bridgeSocketConnection(ctx context.Context, client net.Conn, ownerEndpoint string, stop context.CancelFunc) {
@@ -584,37 +555,24 @@ func bridgeSocketConnection(ctx context.Context, client net.Conn, ownerEndpoint 
 		return
 	}
 	defer owner.Close()
-	bridgeConnections(client, owner)
+	bridgeConnections(ctx, client, owner)
 }
 
 func serveWorkerControl(ctx context.Context, listener net.Listener, stop context.CancelFunc, tokenHex, role string) {
-	go func() {
-		<-ctx.Done()
-		_ = listener.Close()
-	}()
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-			continue
+	_ = netserve.ServeWithLimit(ctx, listener, maxRoleControlConnections, func(_ context.Context, conn net.Conn) {
+		_ = conn.SetDeadline(time.Now().Add(roleControlRequestTimeout))
+		line, _ := bufio.NewReader(io.LimitReader(conn, 128)).ReadString('\n')
+		fields := strings.Fields(line)
+		switch {
+		case len(fields) == 3 && fields[0] == "PING" && fields[2] == role && equalTokenHex(fields[1], tokenHex):
+			_, _ = io.WriteString(conn, "PONG\n")
+		case len(fields) == 1 && fields[0] == "STOP":
+			_, _ = io.WriteString(conn, "OK\n")
+			stop()
+		default:
+			_, _ = io.WriteString(conn, "ERR\n")
 		}
-		go func() {
-			defer conn.Close()
-			line, _ := bufio.NewReader(io.LimitReader(conn, 128)).ReadString('\n')
-			fields := strings.Fields(line)
-			switch {
-			case len(fields) == 3 && fields[0] == "PING" && fields[2] == role && equalTokenHex(fields[1], tokenHex):
-				_, _ = io.WriteString(conn, "PONG\n")
-			case len(fields) == 1 && fields[0] == "STOP":
-				_, _ = io.WriteString(conn, "OK\n")
-				stop()
-			default:
-				_, _ = io.WriteString(conn, "ERR\n")
-			}
-		}()
-	}
+	})
 }
 
 func probeRole(ctx context.Context, endpoint, tokenHex, role string) error {

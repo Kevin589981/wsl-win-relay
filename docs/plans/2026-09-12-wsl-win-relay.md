@@ -150,6 +150,9 @@
       summary snapshots, attach/resume acceptance, and stale-session isolation.
 - [x] Broker listener lifecycle with active connector tracking, cancellation
       teardown, and handler draining before service return.
+- [x] Replaceable broker-role data bridges and private control endpoints use
+      fixed concurrency caps; control reads have a two-second deadline, and
+      cancellation closes and drains all accepted role connections.
 - [x] The installed broker service wrapper propagates an optional Windows-side
       upstream proxy through `WSLENV`, keeping the URL out of the broker command
       line while preserving private environment-file permissions.

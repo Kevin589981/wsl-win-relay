@@ -82,6 +82,63 @@ func TestServeWorkerControlRequiresToken(t *testing.T) {
 	}
 }
 
+func TestServeWorkerControlTimesOutStalledRequest(t *testing.T) {
+	previousTimeout := roleControlRequestTimeout
+	roleControlRequestTimeout = 25 * time.Millisecond
+	t.Cleanup(func() { roleControlRequestTimeout = previousTimeout })
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverCtx, serverCancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		serveWorkerControl(serverCtx, listener, func() {}, "aabbcc", roleWorker)
+		close(done)
+	}()
+	conn, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := conn.Read(make([]byte, 1)); err == nil {
+		t.Fatal("stalled control connection remained open")
+	}
+	serverCancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("control server did not drain after cancellation")
+	}
+}
+
+func TestBridgeConnectionsCancellationClosesBothSides(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	inbound, inboundPeer := net.Pipe()
+	outbound, outboundPeer := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		bridgeConnections(ctx, inbound, outbound)
+		close(done)
+	}()
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("bridge did not stop after cancellation")
+	}
+	for name, peer := range map[string]net.Conn{"inbound": inboundPeer, "outbound": outboundPeer} {
+		_ = peer.SetReadDeadline(time.Now().Add(time.Second))
+		if _, err := peer.Read(make([]byte, 1)); err == nil {
+			t.Fatalf("%s peer remained open", name)
+		}
+		_ = peer.Close()
+	}
+}
+
 func TestProbeRoleClassifiesMismatchAndStopsConflict(t *testing.T) {
 	endpoint := fmt.Sprintf("wsl-win-relay-role-test-%d", time.Now().UnixNano())
 	if runtime.GOOS != "windows" {

@@ -123,6 +123,37 @@ WSL_WIN_RELAY_BROKER_ENDPOINT="$tmp_dir/broker.sock" \
     >"$tmp_dir/proxy.log" 2>&1 &
 proxy_pid=$!
 
+for _ in $(seq 1 300); do
+    if python3 - <<'PY'
+import socket
+
+sock = socket.socket()
+sock.settimeout(0.2)
+try:
+    sock.connect(("127.0.0.1", 18083))
+except OSError:
+    raise SystemExit(1)
+finally:
+    sock.close()
+PY
+    then
+        break
+    fi
+    sleep 0.1
+done
+if ! python3 - <<'PY'
+import socket
+
+sock = socket.socket()
+sock.settimeout(1)
+sock.connect(("127.0.0.1", 18083))
+sock.close()
+PY
+then
+    cat "$tmp_dir/broker.log" "$tmp_dir/proxy.log"
+    exit 1
+fi
+
 curl --noproxy '' --silent --show-error --fail \
     --socks5-hostname 127.0.0.1:18083 \
     http://127.0.0.1:18082/ >"$tmp_dir/curl.out" 2>"$tmp_dir/curl.err" &

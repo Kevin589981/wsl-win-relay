@@ -225,6 +225,11 @@ Up to 16 handshake prefixes are processed concurrently, so a half-open client
 cannot head-of-line block a valid replacement connector. Registry generation
 and frame-link installation remain serialized; pending handshakes are tracked
 and closed immediately during broker shutdown.
+Each replaceable broker role also caps its internal data bridges at 32 active
+connections and its private control endpoint at 16 active requests. Excess
+connections are closed without displacing established bridges. Control clients
+must complete their single request within two seconds, and role shutdown closes
+and drains every accepted bridge and control connection.
 
 To exercise the same path while keeping an upstream proxy on the Windows side,
 set `WWR_WINDOWS_UPSTREAM_PROXY` when running the smoke. WSL still sends only
