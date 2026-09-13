@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"syscall"
 	"time"
 )
@@ -70,7 +71,28 @@ type listenerWithCleanup struct {
 }
 
 func (l *listenerWithCleanup) Close() error {
+	// Go's UnixListener may unlink its address while closing. Move a path that
+	// no longer belongs to this listener aside first, so a replacement created
+	// by another owner cannot be removed as a side effect of closing our fd.
+	preservedPath := ""
+	if current, statErr := os.Lstat(l.path); statErr == nil &&
+		(current.Mode()&os.ModeSocket == 0 || (l.fileInfo != nil && !os.SameFile(l.fileInfo, current))) {
+		temporary, tempErr := os.CreateTemp(filepath.Dir(l.path), ".wsl-win-relay-preserve-*")
+		if tempErr == nil {
+			preservedPath = temporary.Name()
+			_ = temporary.Close()
+			_ = os.Remove(preservedPath)
+			if renameErr := os.Rename(l.path, preservedPath); renameErr != nil {
+				preservedPath = ""
+			}
+		}
+	}
 	err := l.Listener.Close()
+	if preservedPath != "" {
+		if restoreErr := os.Rename(preservedPath, l.path); restoreErr != nil && err == nil {
+			err = restoreErr
+		}
+	}
 	var removeErr error
 	if current, statErr := os.Lstat(l.path); statErr == nil {
 		if current.Mode()&os.ModeSocket != 0 && (l.fileInfo == nil || os.SameFile(l.fileInfo, current)) {
