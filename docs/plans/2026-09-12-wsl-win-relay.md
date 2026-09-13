@@ -123,6 +123,9 @@
       vfork coverage to common pre-exec process state setup.
 - [x] The static lifecycle smoke covers the GNU `POSIX_SPAWN_SETSID` session
       attribute when provided by the host libc, with an explicit skip otherwise.
+- [x] The static lifecycle smoke covers the standard `POSIX_SPAWN_RESETIDS`
+      attribute when provided by the host libc, preserving lease tracking while
+      spawn resets child identity attributes.
 - [x] The static lifecycle smoke covers GNU `posix_spawn` `addchdir_np` and
       `addfchdir_np` file actions when the host glibc provides them, with an
       explicit skip on older libc versions.
