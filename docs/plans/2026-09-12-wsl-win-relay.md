@@ -30,6 +30,9 @@
 - [x] Transparent relay shutdown handles `HUP`/`QUIT` and bounds tun2socks
       termination before route, DNS, and TUN rollback; a mock fault-injection
       smoke runs this path without requiring root or a real TUN device.
+- [x] Transparent relay DNS replacement accepts an injectable `WWR_RESOLV_CONF`
+      path and restores both symlink shape and original contents in the smoke
+      test, keeping container and namespace verification off the host resolver.
 - [x] systemd user-service installer and private configuration handling.
 - [x] Independent IPv4/IPv6 Windows bind hosts for automatic and strict
       listener mappings.
@@ -229,6 +232,9 @@
 - [x] New systemd broker installations create a protected `attach.token` and
       pass its converted Windows path to the Windows broker while retaining
       legacy environment token compatibility for existing deployments.
+- [x] Broker mode rejects a WSL-side upstream proxy setting early because the
+      connector does not own outbound dialing; broker upstream configuration is
+      required on the Windows broker/service boundary.
 
 The hot-reconnect implementation follows [ADR-0015](../adr/0015-persistent-windows-ownership-and-attach.md) and [ADR-0016](../adr/0016-process-isolated-socket-owner.md): relay state and socket ownership now live in an independent socket owner behind replaceable connector bridges.
 
