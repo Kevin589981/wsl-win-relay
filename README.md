@@ -461,6 +461,10 @@ listeners share the process lease by design and are covered; unusual
 thread-group teardown and signal/exec interactions remain outside the strict
 adapter contract. `close_range(CLOSE_RANGE_UNSHARE)` is rejected rather than
 silently weakening descriptor ownership guarantees.
+The kernel supervisor also recovers the initial unclassified child stop seen
+with nested libc `vfork()` launches when the parent relationship and pending
+create syscall are both unambiguous; static `system()` and `popen()` smoke
+cases cover this path, while ambiguous variants remain fail-closed.
 The native interposer targets the Linux
 amd64 build produced by the WSL scripts. The daemon tracks multiple process
 owners and reaps leases from processes that exit without closing their

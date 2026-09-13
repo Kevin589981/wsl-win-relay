@@ -46,8 +46,12 @@ work follows the same model:
 - `vfork()` uses `PTRACE_EVENT_VFORK` and a copied process group, so child-side
   `bind/listen` before `_exit` is coordinated. Ordinary `CLONE_THREAD` tasks share the binding
   table and migrate the group owner at `PTRACE_EVENT_EXIT`; the paired
-  `PTRACE_EVENT_VFORK_DONE` parent notification is accepted explicitly. Unusual
-  exec and signal interactions remain follow-up validation.
+  `PTRACE_EVENT_VFORK_DONE` parent notification is accepted explicitly. Some
+  libc implementations report the child's initial unclassified `SIGSTOP`
+  before the parent event; the supervisor recovers that stop only when procfs
+  confirms the tracked parent still has an unfinished create syscall, and
+  rejects all unmatched stops. `system()` and `popen()` nested-vfork launches
+  are covered by the static smoke test.
 - Lease teardown will use owner-scoped `RELEASE pid lease`; a lease is closed
   by the control server only after its final owner disappears. `CLOSE` remains
   reserved for a lease with no child owner.
@@ -62,8 +66,10 @@ work follows the same model:
 - Owner migration and process-group cloning roll back previously successful
   `ADOPT` operations when a later owner update fails, so a partial control
   response cannot leave a child holding only part of the inherited lease set.
-- `vfork()` child-side libc behavior remains outside the contract; direct
-  syscall-safe operations through `_exit` are the supported pattern.
+- Unmatched or ambiguous `vfork()` child-side libc behavior remains outside the
+  contract; direct syscall-safe operations through `_exit` are still the
+  supported pattern for implementations that do not expose the recoverable
+  initial stop sequence.
 - The adapter remains opt-in. Unsupported architectures and unrecognized
   ptrace events fail closed with a diagnostic rather than silently falling back
   to polling.

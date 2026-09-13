@@ -72,8 +72,8 @@
       notification emitted for traced `vfork()` parents instead of treating it
       as an unknown event.
 - [ ] Kernel-level coverage for non-direct vfork libc interactions remains
-      open beyond the `posix_spawn` and pre-exec file-action paths, which are
-      covered by the native smoke test together with
+      open for implementations beyond the `system()`, `popen()`, `posix_spawn`
+      and pre-exec file-action paths, which are covered by the native smoke test together with
       leader-exit/sibling-listener ownership. Setuid/setgid binaries remain
       intentionally rejected because neither launcher path can preserve their
       semantics.
@@ -99,11 +99,11 @@
       descriptor-table unsharing remains explicitly rejected in strict mode.
 - [x] Leader-exit ownership migration excludes already-exiting thread tasks,
       avoiding duplicate owner transfers during `PTRACE_EVENT_EXIT` ordering.
-- [ ] Early ptrace stops for very short libc `vfork()` children remain
-      intentionally fail-closed. A stop can arrive after the child has already
-      crossed an exec/syscall boundary, so recovering it without a reliable
-      syscall-entry marker could miss listener creation; a kernel-level event
-      design that preserves this invariant remains open.
+- [x] Early ptrace stops for very short libc `vfork()` children are recovered
+      when procfs confirms a tracked parent still has an unfinished create
+      syscall and the stop is an unclassified initial `SIGSTOP`; unmatched or
+      ambiguous stops remain fail-closed. Static `system()` and `popen()` smoke
+      cases exercise the nested-vfork sequence.
 - [x] Signal-terminated roots and thread-triggered `exit_group` teardown are
       covered by static supervisor smoke cases; lease cleanup remains
       single-shot when the group has no ordinary return path.

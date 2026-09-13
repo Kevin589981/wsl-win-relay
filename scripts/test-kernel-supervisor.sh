@@ -26,6 +26,7 @@ printf '%s\n' \
     '#include <errno.h>' \
     '#include <fcntl.h>' \
     '#include <linux/sched.h>' \
+    '#include <limits.h>' \
     '#include <pthread.h>' \
     '#include <spawn.h>' \
     '#include <signal.h>' \
@@ -74,6 +75,16 @@ printf '%s\n' \
     '    address.sin_family = AF_INET; address.sin_port = htons(47147); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
     '    if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) return 2;' \
     '    close(fd); return 0;' \
+    '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "system") == 0) {' \
+    '    char command[PATH_MAX]; if (snprintf(command, sizeof(command), "%s spawn-child", argv[0]) < 0) return 4;' \
+    '    int status = system(command); return status == 0 ? 0 : 6;' \
+    '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "popen") == 0) {' \
+    '    char command[PATH_MAX]; if (snprintf(command, sizeof(command), "%s spawn-child", argv[0]) < 0) return 4;' \
+    '    FILE *stream = popen(command, "r"); if (stream == NULL) return 5;' \
+    '    char buffer[64]; while (fread(buffer, 1, sizeof(buffer), stream) > 0) {}' \
+    '    int status = pclose(stream); return status == 0 ? 0 : 6;' \
     '  }' \
     '  if (argc > 1 && strcmp(argv[1], "posix-spawn") == 0) {' \
     '    pid_t child = -1; char *spawn_argv[] = { argv[0], (char *)"spawn-child", NULL };' \
@@ -345,6 +356,20 @@ grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/posix-spawn-close.log"
 grep -q 'RESERVE .* tcp4 47148' "$tmp_dir/posix-spawn-close.log"
 grep -q '^ADOPT ' "$tmp_dir/posix-spawn-close.log"
 grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/posix-spawn-close.log"
+stop_control
+
+start_control "$tmp_dir/system.sock" "$tmp_dir/system.log"
+WSL_WIN_RELAY_CONTROL="$tmp_dir/system.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" system
+grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/system.log"
+grep -q '^COMMIT ' "$tmp_dir/system.log"
+grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/system.log"
+stop_control
+
+start_control "$tmp_dir/popen.sock" "$tmp_dir/popen.log"
+WSL_WIN_RELAY_CONTROL="$tmp_dir/popen.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" popen
+grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/popen.log"
+grep -q '^COMMIT ' "$tmp_dir/popen.log"
+grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/popen.log"
 stop_control
 
 start_control "$tmp_dir/thread.sock" "$tmp_dir/thread.log"
