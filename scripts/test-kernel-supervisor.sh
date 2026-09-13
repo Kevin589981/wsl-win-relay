@@ -34,6 +34,7 @@ printf '%s\n' \
     '#include <sys/syscall.h>' \
     '#include <sys/wait.h>' \
     '#include <unistd.h>' \
+    '#include <wordexp.h>' \
     'extern char **environ;' \
     'static volatile int leader_listener_fd = -1;' \
     'static void *thread_close(void *argument) { usleep(1000000); close(*(int *)argument); return NULL; }' \
@@ -132,6 +133,11 @@ printf '%s\n' \
     '    FILE *stream = popen(command, "r"); if (stream == NULL) return 5;' \
     '    char buffer[64]; while (fread(buffer, 1, sizeof(buffer), stream) > 0) {}' \
     '    int status = pclose(stream); return status == 0 ? 0 : 6;' \
+    '  }' \
+    '  if (argc > 1 && strcmp(argv[1], "wordexp") == 0) {' \
+    '    char expression[PATH_MAX + 32]; if (snprintf(expression, sizeof(expression), "$(%s spawn-child)", argv[0]) < 0) return 4;' \
+    '    wordexp_t words; int word_error = wordexp(expression, &words, 0); if (word_error != 0) return word_error;' \
+    '    wordfree(&words); return 0;' \
     '  }' \
     '  if (argc > 1 && strcmp(argv[1], "posix-spawn") == 0) {' \
     '    pid_t child = -1; char *spawn_argv[] = { argv[0], (char *)"spawn-child", NULL };' \
@@ -496,6 +502,13 @@ WSL_WIN_RELAY_CONTROL="$tmp_dir/popen.sock" "$repo_dir/scripts/wsl-win-relay-run
 grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/popen.log"
 grep -q '^COMMIT ' "$tmp_dir/popen.log"
 grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/popen.log"
+stop_control
+
+start_control "$tmp_dir/wordexp.sock" "$tmp_dir/wordexp.log"
+WSL_WIN_RELAY_CONTROL="$tmp_dir/wordexp.sock" "$repo_dir/scripts/wsl-win-relay-run" --kernel "$tmp_dir/static-target" wordexp
+grep -q 'RESERVE .* tcp4 47147' "$tmp_dir/wordexp.log"
+grep -q '^COMMIT ' "$tmp_dir/wordexp.log"
+grep -Eq '^(CLOSE|RELEASE) ' "$tmp_dir/wordexp.log"
 stop_control
 
 start_control "$tmp_dir/thread.sock" "$tmp_dir/thread.log"

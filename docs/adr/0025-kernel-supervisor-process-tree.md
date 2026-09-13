@@ -50,7 +50,7 @@ work follows the same model:
   libc implementations report the child's initial unclassified `SIGSTOP`
   before the parent event; the supervisor recovers that stop only when procfs
   confirms the tracked parent still has an unfinished create syscall, and
-  rejects all unmatched stops. `system()` and `popen()` nested-vfork launches,
+  rejects all unmatched stops. `system()`, `popen()`, and `wordexp()` nested-vfork launches,
   plus `posix_spawnp()` PATH lookup and direct `vfork()`/`execl()` and
   `vfork()`/`execvp()` and descriptor-based `vfork()`/`fexecve()` children are
   covered by the static smoke test. The same smoke covers `daemon()` root-leader

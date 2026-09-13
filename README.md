@@ -491,6 +491,9 @@ The kernel supervisor also recovers the initial unclassified child stop seen
 with nested libc `vfork()` launches when the parent relationship and pending
 create syscall are both unambiguous; static `system()` and `popen()` smoke
 cases cover this path, while ambiguous variants remain fail-closed.
+The lifecycle smoke also covers `wordexp()` command substitution, which
+exercises a shell-backed libc process launch and the same descendant lease
+ownership cleanup.
 The native lifecycle smoke also exercises `posix_spawnp()` PATH lookup and
 direct `vfork()` followed by `execl()`, `execvp()`, or descriptor-based
 `fexecve()`, plus `execvpe()` with an explicit child environment; these paths
