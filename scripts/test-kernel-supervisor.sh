@@ -60,7 +60,7 @@ printf '%s\n' \
     '      address.sin_family = AF_INET; address.sin_port = htons(47157); address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);' \
     '      if (fd < 0 || bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 4) < 0) _exit(2);' \
     '      close(fd); _exit(0); }' \
-    '    close(master); int status = 0; if (waitpid(child, &status, 0) != child) return 6; return WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : 77;' \
+    '    close(master); int status = 0; if (waitpid(child, &status, 0) != child) return 6; if (WIFEXITED(status) && WEXITSTATUS(status) == 0) return 0; if (WIFEXITED(status) && WEXITSTATUS(status) == 2) return 2; return 77;' \
     '  }' \
     '  if (argc > 1 && strcmp(argv[1], "daemon") == 0) {' \
     '    if (daemon(1, 1) < 0) return errno == ENOSYS ? 77 : 7;' \
