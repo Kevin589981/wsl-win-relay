@@ -33,6 +33,12 @@ If the Windows child has already exited normally with a non-zero status, treat
 that status as fatal as well; otherwise a malformed Windows-side configuration
 would look like an EOF and trigger an infinite supervisor loop.
 
+Strict listener leases that could not be rebound because the replacement
+Windows endpoint was temporarily unavailable remain owned by the WSL control
+daemon. A serialized background retry loop revisits only leases without an
+active reservation, so a later port release can restore that listener without
+closing or disrupting healthy mappings.
+
 ## Consequences
 
 ### Positive

@@ -357,6 +357,33 @@ func TestRebindKeepsLeaseWhenReplacementFails(t *testing.T) {
 	}
 }
 
+func TestRetryMissingLeavesHealthyReservationsUntouched(t *testing.T) {
+	old := &fakeReservation{}
+	replacement := &fakeReservation{}
+	server := &Server{leases: map[uint64]*lease{
+		1: {reservation: nil, windows: "127.0.0.1:8000", wsl: "127.0.0.1:8000", owners: map[int]string{123: "start"}},
+		2: {reservation: old, windows: "127.0.0.1:8001", wsl: "127.0.0.1:8001", owners: map[int]string{123: "start"}},
+	}}
+	var opened []string
+	if err := server.RetryMissing(context.Background(), func(_ context.Context, windows, wsl string) (Reservation, error) {
+		opened = append(opened, windows+"="+wsl)
+		return replacement, nil
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(opened) != 1 || opened[0] != "127.0.0.1:8000=127.0.0.1:8000" {
+		t.Fatalf("retry opened %v", opened)
+	}
+	_, oldClosed := old.values()
+	if oldClosed {
+		t.Fatal("retry closed a healthy reservation")
+	}
+	_, replacementClosed := replacement.values()
+	if replacementClosed {
+		t.Fatal("replacement reservation was closed")
+	}
+}
+
 func TestRebindUsesDatagramReservationFactory(t *testing.T) {
 	old := &fakeReservation{}
 	server := &Server{leases: map[uint64]*lease{

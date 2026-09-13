@@ -161,6 +161,10 @@
       so rapid broker peer clear/set transitions cannot lose the reset event.
 - [x] Strict lease rebind releases stale peer reservations before replacement
       binds, preserving leases while preventing stale Windows EADDRINUSE.
+- [x] Strict leases whose replacement reservation is temporarily unavailable
+      are retried in the background without disturbing already-restored
+      reservations; rebind operations are serialized and covered by a focused
+      unit test.
 - [x] Automatic mapping refusals use bounded exponential retry backoff instead
       of issuing a Windows bind attempt on every procfs scan; session resets
       clear the backoff immediately.

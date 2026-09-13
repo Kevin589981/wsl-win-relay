@@ -322,6 +322,9 @@ func run(parent context.Context, opts options, logger *log.Logger) error {
 		go func() { controlDone <- control.Serve(ctx) }()
 		logger.Printf("strict-listen control socket %s", opts.controlSocket)
 	}
+	if control != nil {
+		go retryMissingLeases(ctx, opts.relayDialTimeout, logger, dialer, control)
+	}
 	socksDone := make(chan error, 1)
 	proxy := &socks5.Server{Listener: socksListener, Dialer: dialer, Logger: logger, UDPAssociateIdleTimeout: opts.udpAssociateIdle, DialTimeout: opts.relayDialTimeout}
 	go func() { socksDone <- proxy.Serve(ctx) }()
@@ -537,6 +540,42 @@ func rebindControl(ctx context.Context, timeout time.Duration, logger *log.Logge
 	)
 	if rebindErr != nil {
 		logger.Printf("strict-listen lease rebind: %v", rebindErr)
+	}
+}
+
+func retryMissingLeases(parent context.Context, timeout time.Duration, logger *log.Logger, dialer *sessionDialer, control *listencontrol.Server) {
+	interval := timeout
+	if interval < time.Second {
+		interval = time.Second
+	}
+	if interval > 10*time.Second {
+		interval = 10 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-parent.Done():
+			return
+		case <-ticker.C:
+		}
+		retryCtx, cancel := context.WithTimeout(parent, timeout)
+		err := control.RetryMissing(retryCtx,
+			func(reserveCtx context.Context, windows, wsl string) (listencontrol.Reservation, error) {
+				return dialer.reserveReverseForward(reserveCtx, windows, wsl)
+			},
+			func(reserveCtx context.Context, windows, wsl string) (listencontrol.Reservation, error) {
+				closer, reserveErr := dialer.reserveDatagramForward(reserveCtx, windows, wsl)
+				if reserveErr != nil {
+					return nil, reserveErr
+				}
+				return noCommitReservation{Closer: closer}, nil
+			},
+		)
+		cancel()
+		if err != nil && parent.Err() == nil {
+			logger.Printf("strict-listen missing lease retry: %v", err)
+		}
 	}
 }
 

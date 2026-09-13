@@ -536,7 +536,9 @@ restarts preserve socket-owner-owned TCP/UDP sockets. A socket-owner process
 crash still loses those sockets. The strict control socket remains
 available across relay sessions,
 and live leases are rebound and recommitted when the replacement child is
-ready. The proxy also retries a relay-only EOF on its own
+ready. If a replacement Windows bind is temporarily refused, missing strict
+leases are retried in the background without disturbing leases that already
+recovered. The proxy also retries a relay-only EOF on its own
 with an exponential backoff from two seconds up to thirty seconds when run
 directly; after a minute of stable operation the next failure starts again at
 two seconds. Local SOCKS5/HTTP listener ports stay bound while a replacement

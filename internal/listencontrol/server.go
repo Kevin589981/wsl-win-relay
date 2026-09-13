@@ -34,6 +34,7 @@ type Server struct {
 	ProcessIdentity ProcessIdentityFunc
 	ReapInterval    time.Duration
 	mu              sync.Mutex
+	rebindMu        sync.Mutex
 	leases          map[uint64]*lease
 	next            atomic.Uint64
 }
@@ -463,9 +464,22 @@ func (s *Server) closeAll() {
 // The returned error is an aggregate of individual failures. Successful
 // leases are still installed even when another lease cannot be restored.
 func (s *Server) Rebind(ctx context.Context, reserve ReserveFunc, reserveDatagram ReserveDatagramFunc) error {
+	return s.rebind(ctx, reserve, reserveDatagram, false)
+}
+
+// RetryMissing recreates only leases whose Windows reservation is currently
+// absent. It is safe to call periodically while a session is healthy after a
+// transient rebind failure; existing reservations are left untouched.
+func (s *Server) RetryMissing(ctx context.Context, reserve ReserveFunc, reserveDatagram ReserveDatagramFunc) error {
+	return s.rebind(ctx, reserve, reserveDatagram, true)
+}
+
+func (s *Server) rebind(ctx context.Context, reserve ReserveFunc, reserveDatagram ReserveDatagramFunc, onlyMissing bool) error {
 	if reserve == nil && reserveDatagram == nil {
 		return errors.New("at least one reserve function is required")
 	}
+	s.rebindMu.Lock()
+	defer s.rebindMu.Unlock()
 	s.mu.Lock()
 	entries := make([]struct {
 		id uint64
@@ -487,6 +501,10 @@ func (s *Server) Rebind(ctx context.Context, reserve ReserveFunc, reserveDatagra
 		default:
 		}
 		entry.l.mu.Lock()
+		if onlyMissing && entry.l.reservation != nil {
+			entry.l.mu.Unlock()
+			continue
+		}
 		windows, wsl, datagram := entry.l.windows, entry.l.wsl, entry.l.datagram
 		old := entry.l.reservation
 		entry.l.reservation = nil
