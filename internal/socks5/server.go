@@ -12,6 +12,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/Kevin589981/wsl-win-relay/internal/netserve"
 )
 
 const defaultUDPAssociateIdleTimeout = 5 * time.Minute
@@ -223,7 +225,10 @@ type Server struct {
 	Logger                  *log.Logger
 	UDPAssociateIdleTimeout time.Duration
 	DialTimeout             time.Duration
+	HandshakeTimeout        time.Duration
 }
+
+const defaultHandshakeTimeout = 15 * time.Second
 
 func (s *Server) Serve(ctx context.Context) error {
 	if s.Listener == nil {
@@ -235,33 +240,31 @@ func (s *Server) Serve(ctx context.Context) error {
 	if s.Logger == nil {
 		s.Logger = log.New(io.Discard, "", 0)
 	}
-	go func() { <-ctx.Done(); _ = s.Listener.Close() }()
-	for {
-		conn, err := s.Listener.Accept()
-		if err != nil {
-			select {
-			case <-ctx.Done():
-				return nil
-			default:
-				return err
-			}
+	return netserve.Serve(ctx, s.Listener, func(serveCtx context.Context, conn net.Conn) {
+		if err := s.ServeConn(serveCtx, conn); err != nil {
+			s.Logger.Printf("connection: %v", err)
 		}
-		go func() {
-			if err := s.ServeConn(ctx, conn); err != nil {
-				s.Logger.Printf("connection: %v", err)
-			}
-		}()
-	}
+	})
 }
 
 func (s *Server) ServeConn(ctx context.Context, client net.Conn) error {
 	defer client.Close()
+	timeout := s.HandshakeTimeout
+	if timeout <= 0 {
+		timeout = defaultHandshakeTimeout
+	}
+	if err := client.SetDeadline(time.Now().Add(timeout)); err != nil {
+		return err
+	}
 	if err := negotiate(client); err != nil {
 		return err
 	}
 	request, err := readRequest(client)
 	if err != nil {
 		_ = writeReply(client, replyGeneralFailure, nil)
+		return err
+	}
+	if err := client.SetDeadline(time.Time{}); err != nil {
 		return err
 	}
 	if request.command == commandUDPAssociate {

@@ -21,6 +21,7 @@ type File struct {
 	RelayHandshakeTimeout string            `json:"relay_handshake_timeout"`
 	RelayDialTimeout      string            `json:"relay_dial_timeout"`
 	UDPAssociateIdle      string            `json:"udp_associate_idle_timeout"`
+	ProxyHandshakeTimeout string            `json:"proxy_handshake_timeout"`
 	Reverse               []string          `json:"reverse"`
 	ReverseUDP            []string          `json:"reverse_udp"`
 	AutoForward           AutoForwardConfig `json:"auto_forward"`
@@ -49,6 +50,7 @@ func Default() File {
 		RelayHandshakeTimeout: "5s",
 		RelayDialTimeout:      "30s",
 		UDPAssociateIdle:      "5m",
+		ProxyHandshakeTimeout: "15s",
 		AutoForward:           AutoForwardConfig{WindowsHost: "127.0.0.1", WindowsHost6: "::1", Interval: "1s", RetryMin: "1s", RetryMax: "30s"},
 	}
 }
@@ -76,6 +78,9 @@ func Load(path string) (File, error) {
 		return File{}, err
 	}
 	if _, err := result.UDPAssociateIdleDuration(); err != nil {
+		return File{}, err
+	}
+	if _, err := result.ProxyHandshakeDuration(); err != nil {
 		return File{}, err
 	}
 	if _, err := result.RelayDialDuration(); err != nil {
@@ -132,6 +137,14 @@ func (f File) UDPAssociateIdleDuration() (time.Duration, error) {
 	duration, err := time.ParseDuration(f.UDPAssociateIdle)
 	if err != nil || duration <= 0 {
 		return 0, fmt.Errorf("udp_associate_idle_timeout must be a positive duration")
+	}
+	return duration, nil
+}
+
+func (f File) ProxyHandshakeDuration() (time.Duration, error) {
+	duration, err := time.ParseDuration(f.ProxyHandshakeTimeout)
+	if err != nil || duration <= 0 {
+		return 0, fmt.Errorf("proxy_handshake_timeout must be a positive duration")
 	}
 	return duration, nil
 }

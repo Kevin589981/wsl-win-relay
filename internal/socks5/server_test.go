@@ -35,6 +35,23 @@ func (c *resolvingPacketConn) WriteTo(data []byte, address net.Addr) (int, error
 	return c.WriteToUDP(data, target)
 }
 
+func TestServeConnTimesOutStalledHandshake(t *testing.T) {
+	client, serverConn := net.Pipe()
+	defer client.Close()
+	done := make(chan error, 1)
+	go func() {
+		done <- (&Server{Dialer: &echoDialer{}, HandshakeTimeout: 10 * time.Millisecond}).ServeConn(context.Background(), serverConn)
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("stalled SOCKS5 handshake unexpectedly succeeded")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stalled SOCKS5 handshake did not time out")
+	}
+}
+
 func TestServeConnTimesOutWaitingForRelay(t *testing.T) {
 	client, serverConn := net.Pipe()
 	s := &Server{Dialer: blockingDialer{}, DialTimeout: 20 * time.Millisecond}

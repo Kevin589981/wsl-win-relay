@@ -9,6 +9,7 @@
   "strict_listen_host6": "::1",
   "relay_handshake_timeout": "5s",
   "relay_dial_timeout": "30s",
+  "proxy_handshake_timeout": "15s",
   "udp_associate_idle_timeout": "5m",
   "reverse": [
     "127.0.0.1:8000=127.0.0.1:8000"

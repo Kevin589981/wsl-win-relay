@@ -1,6 +1,7 @@
 package httpproxy
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net"
@@ -15,6 +16,34 @@ func (echoDialer) DialContext(context.Context, string) (net.Conn, error) {
 	local, remote := net.Pipe()
 	go func() { _, _ = io.Copy(remote, remote); _ = remote.Close() }()
 	return local, nil
+}
+
+func TestConnectTimesOutStalledHandshake(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	done := make(chan error, 1)
+	go func() {
+		done <- (&Server{Dialer: echoDialer{}, HandshakeTimeout: 10 * time.Millisecond}).ServeConn(context.Background(), server)
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("stalled HTTP CONNECT handshake unexpectedly succeeded")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stalled HTTP CONNECT handshake did not time out")
+	}
+}
+
+func TestHandshakeReaderBoundsHTTPHeaders(t *testing.T) {
+	reader := &handshakeReader{reader: bytes.NewReader(make([]byte, maxConnectRequestBytes+1)), remaining: maxConnectRequestBytes, bounded: true}
+	if _, err := io.Copy(io.Discard, reader); err == nil {
+		t.Fatal("oversized HTTP CONNECT request was accepted")
+	}
+	reader.bounded = false
+	if _, err := io.Copy(io.Discard, reader); err != nil {
+		t.Fatalf("unbounded tunnel read failed: %v", err)
+	}
 }
 
 func TestConnectTimesOutWaitingForRelay(t *testing.T) {

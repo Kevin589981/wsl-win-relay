@@ -10,6 +10,8 @@ import (
 	"net"
 	"net/http"
 	"time"
+
+	"github.com/Kevin589981/wsl-win-relay/internal/netserve"
 )
 
 type Dialer interface {
@@ -17,11 +19,17 @@ type Dialer interface {
 }
 
 type Server struct {
-	Listener    net.Listener
-	Dialer      Dialer
-	Logger      *log.Logger
-	DialTimeout time.Duration
+	Listener         net.Listener
+	Dialer           Dialer
+	Logger           *log.Logger
+	DialTimeout      time.Duration
+	HandshakeTimeout time.Duration
 }
+
+const (
+	defaultHandshakeTimeout = 15 * time.Second
+	maxConnectRequestBytes  = 64 << 10
+)
 
 func (s *Server) Serve(ctx context.Context) error {
 	if s.Listener == nil || s.Dialer == nil {
@@ -30,31 +38,31 @@ func (s *Server) Serve(ctx context.Context) error {
 	if s.Logger == nil {
 		s.Logger = log.New(io.Discard, "", 0)
 	}
-	go func() { <-ctx.Done(); _ = s.Listener.Close() }()
-	for {
-		conn, err := s.Listener.Accept()
-		if err != nil {
-			select {
-			case <-ctx.Done():
-				return nil
-			default:
-				return err
-			}
+	return netserve.Serve(ctx, s.Listener, func(serveCtx context.Context, conn net.Conn) {
+		if err := s.ServeConn(serveCtx, conn); err != nil {
+			s.Logger.Printf("HTTP proxy connection: %v", err)
 		}
-		go func() {
-			if err := s.ServeConn(ctx, conn); err != nil {
-				s.Logger.Printf("HTTP proxy connection: %v", err)
-			}
-		}()
-	}
+	})
 }
 
 func (s *Server) ServeConn(ctx context.Context, client net.Conn) error {
 	defer client.Close()
-	reader := bufio.NewReader(client)
+	timeout := s.HandshakeTimeout
+	if timeout <= 0 {
+		timeout = defaultHandshakeTimeout
+	}
+	if err := client.SetDeadline(time.Now().Add(timeout)); err != nil {
+		return err
+	}
+	limited := &handshakeReader{reader: client, remaining: maxConnectRequestBytes, bounded: true}
+	reader := bufio.NewReader(limited)
 	request, err := http.ReadRequest(reader)
 	if err != nil {
 		writeError(client, http.StatusBadRequest)
+		return err
+	}
+	limited.bounded = false
+	if err := client.SetDeadline(time.Time{}); err != nil {
 		return err
 	}
 	if request.Body != nil {
@@ -84,6 +92,27 @@ func (s *Server) ServeConn(ctx context.Context, client net.Conn) error {
 		return err
 	}
 	return bridge(&bufferedConn{Conn: client, reader: reader}, remote)
+}
+
+type handshakeReader struct {
+	reader    io.Reader
+	remaining int64
+	bounded   bool
+}
+
+func (r *handshakeReader) Read(p []byte) (int, error) {
+	if !r.bounded {
+		return r.reader.Read(p)
+	}
+	if r.remaining <= 0 {
+		return 0, errors.New("HTTP CONNECT request exceeds limit")
+	}
+	if int64(len(p)) > r.remaining {
+		p = p[:r.remaining]
+	}
+	n, err := r.reader.Read(p)
+	r.remaining -= int64(n)
+	return n, err
 }
 
 func (s *Server) dialContext(ctx context.Context) (context.Context, context.CancelFunc) {
