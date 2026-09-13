@@ -799,6 +799,18 @@ existing configuration through the installed proxy, then restarts the user
 service so the new configuration is active immediately. A failed validation or
 an unchanged example placeholder leaves running services untouched.
 
+To remove the complete unprivileged proxy/broker deployment:
+
+```bash
+./scripts/install-user-service.sh --uninstall
+```
+
+Uninstall stops and disables both user units and removes only their fixed unit,
+wrapper, proxy, status, doctor, strict-supervisor, and interposer targets. It
+refuses symlinked targets before making changes and deliberately preserves the
+private `config.json`, `broker.env`, and `attach.token` files for recovery or a
+later reinstall. The separately privileged transparent service is unaffected.
+
 The service restarts the proxy after a Windows relay crash or broken stdio
 transport; startup handshake and reverse registrations are recreated on each
 restart. With `broker_mode` enabled, connector, broker-frontend, or bridge-worker

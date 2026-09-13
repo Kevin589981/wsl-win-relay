@@ -131,4 +131,54 @@ WSL_WIN_RELAY_SHELL=/bin/sh \
 WSL_WIN_RELAY_CONTROL="$tmp_dir/missing-control.sock" \
     "$tmp_dir/home/bin/wsl-win-relay-shell" -c 'exit 0'
 
-echo "user installer includes runnable strict supervisor and protected configuration"
+mv "$tmp_dir/home/bin/wsl-win-relay-doctor" "$tmp_dir/doctor.saved"
+ln -s "$tmp_dir/doctor.saved" "$tmp_dir/home/bin/wsl-win-relay-doctor"
+: >"$tmp_dir/systemctl.log"
+set +e
+HOME="$tmp_dir/home" \
+XDG_CONFIG_HOME="$tmp_dir/config" \
+PATH="$tmp_dir/bin:/usr/bin:/bin" \
+SYSTEMCTL_LOG="$tmp_dir/systemctl.log" \
+    "$repo_dir/scripts/install-user-service.sh" --uninstall >"$tmp_dir/symlink-uninstall.log" 2>&1
+symlink_uninstall_status=$?
+set -e
+[ "$symlink_uninstall_status" -ne 0 ]
+grep -q 'refusing symlinked installation target' "$tmp_dir/symlink-uninstall.log"
+[ ! -s "$tmp_dir/systemctl.log" ]
+rm "$tmp_dir/home/bin/wsl-win-relay-doctor"
+mv "$tmp_dir/doctor.saved" "$tmp_dir/home/bin/wsl-win-relay-doctor"
+
+HOME="$tmp_dir/home" \
+XDG_CONFIG_HOME="$tmp_dir/config" \
+PATH="$tmp_dir/bin:/usr/bin:/bin" \
+SYSTEMCTL_LOG="$tmp_dir/systemctl.log" \
+    "$repo_dir/scripts/install-user-service.sh" --uninstall >"$tmp_dir/uninstall.log"
+for removed in \
+    "$tmp_dir/home/bin/wsl-proxy-linux" \
+    "$tmp_dir/home/bin/wsl-win-relay-status" \
+    "$tmp_dir/home/bin/wsl-win-relay-run" \
+    "$tmp_dir/home/bin/wsl-win-relay-shell" \
+    "$tmp_dir/home/bin/wsl-win-relay-service" \
+    "$tmp_dir/home/bin/wsl-win-relay-broker-service" \
+    "$tmp_dir/home/bin/wsl-win-relay-doctor" \
+    "$tmp_dir/home/bin/wsl-win-relay-strict" \
+    "$tmp_dir/home/lib/libwsl_win_relay_listen.so" \
+    "$tmp_dir/config/systemd/user/wsl-win-relay.service" \
+    "$tmp_dir/config/systemd/user/wsl-win-relay-broker.service"; do
+    [ ! -e "$removed" ]
+done
+[ -f "$tmp_dir/config/wsl-win-relay/config.json" ]
+[ -f "$tmp_dir/config/wsl-win-relay/broker.env" ]
+grep -q 'disable --now wsl-win-relay.service' "$tmp_dir/systemctl.log"
+grep -q 'disable --now wsl-win-relay-broker.service' "$tmp_dir/systemctl.log"
+grep -q 'preserved .*wsl-win-relay' "$tmp_dir/uninstall.log"
+
+HOME="$tmp_dir/home" \
+XDG_CONFIG_HOME="$tmp_dir/config" \
+PATH="$tmp_dir/bin:/usr/bin:/bin" \
+SYSTEMCTL_LOG="$tmp_dir/systemctl.log" \
+    "$repo_dir/scripts/install-user-service.sh" --uninstall >"$tmp_dir/uninstall-again.log"
+[ -f "$tmp_dir/config/wsl-win-relay/config.json" ]
+[ -f "$tmp_dir/config/wsl-win-relay/broker.env" ]
+
+echo "user installer stages safely and supports protected idempotent uninstall"

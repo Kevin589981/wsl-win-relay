@@ -1,12 +1,54 @@
 #!/bin/sh
 set -eu
 
+mode=install
+case "$#" in
+    0) ;;
+    1) [ "$1" = "--uninstall" ] && mode=uninstall || { echo "usage: install-user-service.sh [--uninstall]" >&2; exit 2; } ;;
+    *) echo "usage: install-user-service.sh [--uninstall]" >&2; exit 2 ;;
+esac
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 bin_dir=$HOME/bin
 lib_dir=$HOME/lib
 service_dir=${XDG_CONFIG_HOME:-"$HOME/.config"}/systemd/user
 config_dir=${XDG_CONFIG_HOME:-"$HOME/.config"}/wsl-win-relay
 broker_env=$config_dir/broker.env
+proxy_binary=$bin_dir/wsl-proxy-linux
+status_binary=$bin_dir/wsl-win-relay-status
+run_wrapper=$bin_dir/wsl-win-relay-run
+shell_wrapper=$bin_dir/wsl-win-relay-shell
+proxy_wrapper=$bin_dir/wsl-win-relay-service
+broker_wrapper=$bin_dir/wsl-win-relay-broker-service
+doctor=$bin_dir/wsl-win-relay-doctor
+strict_binary=$bin_dir/wsl-win-relay-strict
+interposer=$lib_dir/libwsl_win_relay_listen.so
+proxy_unit=$service_dir/wsl-win-relay.service
+broker_unit=$service_dir/wsl-win-relay-broker.service
+
+for target in "$proxy_binary" "$status_binary" "$run_wrapper" "$shell_wrapper" "$proxy_wrapper" "$broker_wrapper" "$doctor" "$strict_binary" "$interposer" "$proxy_unit" "$broker_unit"; do
+    if [ -L "$target" ]; then
+        echo "refusing symlinked installation target: $target" >&2
+        exit 1
+    fi
+done
+
+if [ "$mode" = uninstall ]; then
+    if [ -e "$proxy_unit" ]; then
+        systemctl --user disable --now wsl-win-relay.service
+    else
+        systemctl --user disable --now wsl-win-relay.service >/dev/null 2>&1 || true
+    fi
+    if [ -e "$broker_unit" ]; then
+        systemctl --user disable --now wsl-win-relay-broker.service
+    else
+        systemctl --user disable --now wsl-win-relay-broker.service >/dev/null 2>&1 || true
+    fi
+    rm -f "$proxy_unit" "$broker_unit" "$proxy_binary" "$status_binary" "$run_wrapper" "$shell_wrapper" "$proxy_wrapper" "$broker_wrapper" "$doctor" "$strict_binary" "$interposer"
+    systemctl --user daemon-reload
+    echo "removed wsl-win-relay user services and deployed binaries; preserved $config_dir"
+    exit 0
+fi
+
 if [ ! -x "$repo_dir/bin/wsl-proxy-linux" ]; then
     echo "missing $repo_dir/bin/wsl-proxy-linux; run scripts/build-wsl.sh first" >&2
     exit 1
@@ -16,24 +58,24 @@ if [ ! -x "$repo_dir/bin/wsl-win-relay-status" ]; then
     exit 1
 fi
 mkdir -p "$bin_dir"
-install -m 0755 "$repo_dir/bin/wsl-proxy-linux" "$bin_dir/wsl-proxy-linux"
-install -m 0755 "$repo_dir/bin/wsl-win-relay-status" "$bin_dir/wsl-win-relay-status"
-install -m 0755 "$repo_dir/scripts/wsl-win-relay-run" "$bin_dir/wsl-win-relay-run"
-install -m 0755 "$repo_dir/scripts/wsl-win-relay-shell" "$bin_dir/wsl-win-relay-shell"
-install -m 0755 "$repo_dir/scripts/run-user-service.sh" "$bin_dir/wsl-win-relay-service"
-install -m 0755 "$repo_dir/scripts/run-broker-user-service.sh" "$bin_dir/wsl-win-relay-broker-service"
-install -m 0755 "$repo_dir/scripts/wsl-win-relay-doctor" "$bin_dir/wsl-win-relay-doctor"
+install -m 0755 "$repo_dir/bin/wsl-proxy-linux" "$proxy_binary"
+install -m 0755 "$repo_dir/bin/wsl-win-relay-status" "$status_binary"
+install -m 0755 "$repo_dir/scripts/wsl-win-relay-run" "$run_wrapper"
+install -m 0755 "$repo_dir/scripts/wsl-win-relay-shell" "$shell_wrapper"
+install -m 0755 "$repo_dir/scripts/run-user-service.sh" "$proxy_wrapper"
+install -m 0755 "$repo_dir/scripts/run-broker-user-service.sh" "$broker_wrapper"
+install -m 0755 "$repo_dir/scripts/wsl-win-relay-doctor" "$doctor"
 if [ -x "$repo_dir/bin/wsl-win-relay-strict" ]; then
-    install -m 0755 "$repo_dir/bin/wsl-win-relay-strict" "$bin_dir/wsl-win-relay-strict"
+    install -m 0755 "$repo_dir/bin/wsl-win-relay-strict" "$strict_binary"
 fi
 if [ -r "$repo_dir/lib/libwsl_win_relay_listen.so" ]; then
     mkdir -p "$lib_dir"
-    install -m 0755 "$repo_dir/lib/libwsl_win_relay_listen.so" "$lib_dir/libwsl_win_relay_listen.so"
+    install -m 0755 "$repo_dir/lib/libwsl_win_relay_listen.so" "$interposer"
 fi
 mkdir -p "$service_dir" "$config_dir"
 chmod 700 "$config_dir"
-install -m 0644 "$repo_dir/systemd/wsl-win-relay.service" "$service_dir/wsl-win-relay.service"
-install -m 0644 "$repo_dir/systemd/wsl-win-relay-broker.service" "$service_dir/wsl-win-relay-broker.service"
+install -m 0644 "$repo_dir/systemd/wsl-win-relay.service" "$proxy_unit"
+install -m 0644 "$repo_dir/systemd/wsl-win-relay-broker.service" "$broker_unit"
 config_path=$config_dir/config.json
 if [ -L "$config_path" ]; then
     echo "refusing symlinked config path: $config_path" >&2
