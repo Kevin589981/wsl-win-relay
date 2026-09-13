@@ -36,6 +36,7 @@ typedef int (*close_range_fn)(unsigned int, unsigned int, int);
 typedef int (*fcntl_fn)(int, int, ...);
 typedef long (*syscall_fn)(long, ...);
 typedef int (*clone_fn)(int (*)(void *), void *, int, void *, ...);
+typedef int (*clone_callback_fn)(void *);
 typedef ssize_t (*readlink_fn)(const char *, char *, size_t);
 
 struct tracked_lease { uint64_t id; unsigned refs; };
@@ -425,6 +426,14 @@ static int adopt_tracked_for_pid(pid_t pid) {
     return 0;
 }
 
+static int tracked_any(void) {
+    int present;
+    pthread_mutex_lock(&tracked_mu);
+    present = tracked != NULL;
+    pthread_mutex_unlock(&tracked_mu);
+    return present;
+}
+
 static void atfork_child(void) {
     pthread_mutex_unlock(&tracked_mu);
     int read_fd = fork_gate_read_fd;
@@ -458,6 +467,38 @@ static int abort_unadopted_child(pid_t child) {
     }
     errno = saved == 0 ? EIO : saved;
     return -1;
+}
+
+struct clone_gate {
+    int read_fd;
+    int write_fd;
+    clone_callback_fn function;
+    void *argument;
+};
+
+static int clone_gate_entry(void *argument) {
+    struct clone_gate *gate = argument;
+    if (gate == NULL) {
+        _exit(127);
+    }
+    if (real_close != NULL) {
+        (void)real_close(gate->write_fd);
+    }
+    unsigned char decision = 0;
+    ssize_t count;
+    do {
+        count = read(gate->read_fd, &decision, sizeof(decision));
+    } while (count < 0 && errno == EINTR);
+    if (real_close != NULL) {
+        (void)real_close(gate->read_fd);
+    }
+    clone_callback_fn function = gate->function;
+    void *function_argument = gate->argument;
+    free(gate);
+    if (count != (ssize_t)sizeof(decision) || decision != 1 || function == NULL) {
+        _exit(127);
+    }
+    return function(function_argument);
 }
 
 static int find_tracked(int fd) {
@@ -796,12 +837,13 @@ long syscall(long number, ...) {
             if (reject_shared_files_clone(flags)) {
                 return -1;
             }
+            if (relay_control_enabled() && (flags & CLONE_THREAD) == 0 && tracked_any()) {
+                errno = ENOTSUP;
+                return -1;
+            }
             syscall_interposer_depth++;
             long result = real_syscall(SYS_clone, flags, stack, parent_tid, child_tid, tls);
             syscall_interposer_depth--;
-            if (result > 0 && (flags & CLONE_THREAD) == 0 && adopt_tracked_for_pid((pid_t)result) < 0) {
-                return abort_unadopted_child((pid_t)result);
-            }
             return result;
         }
 #endif
@@ -816,14 +858,13 @@ long syscall(long number, ...) {
             if (reject_shared_files_clone3(clone_arguments, clone_arguments_size, &clone_flags)) {
                 return -1;
             }
+            if (relay_control_enabled() && (clone_flags & CLONE_THREAD) == 0 && tracked_any()) {
+                errno = ENOTSUP;
+                return -1;
+            }
             syscall_interposer_depth++;
             long result = real_syscall(SYS_clone3, clone_arguments, clone_arguments_size);
             syscall_interposer_depth--;
-            if (result > 0) {
-                if ((clone_flags & CLONE_THREAD) == 0 && adopt_tracked_for_pid((pid_t)result) < 0) {
-                    return abort_unadopted_child((pid_t)result);
-                }
-            }
             return result;
         }
 #endif
@@ -1004,8 +1045,58 @@ int clone(int (*function)(void *), void *stack, int flags, void *argument, ...) 
     if (reject_shared_files_clone((unsigned long)flags)) {
         return -1;
     }
-    pid_t child = real_clone(function, stack, flags, argument, parent_tid, tls, child_tid);
-    if (child > 0 && (flags & CLONE_THREAD) == 0 && adopt_tracked_for_pid(child) < 0) {
+    int gated = relay_control_enabled() && (flags & CLONE_THREAD) == 0 && tracked_any();
+    if (gated && (flags & (CLONE_VM | CLONE_VFORK)) != 0) {
+        /* A child sharing the address space or suspending its parent cannot
+         * safely run the heap-backed gate trampoline. Keep the strict
+         * contract by rejecting the process-style variant. */
+        errno = ENOTSUP;
+        return -1;
+    }
+    if (!gated) {
+        return real_clone(function, stack, flags, argument, parent_tid, tls, child_tid);
+    }
+    struct clone_gate *gate = malloc(sizeof(*gate));
+    if (gate == NULL) {
+        errno = ENOMEM;
+        return -1;
+    }
+    int descriptors[2];
+    if (pipe2(descriptors, O_CLOEXEC) < 0) {
+        int saved = errno;
+        free(gate);
+        errno = saved;
+        return -1;
+    }
+    gate->read_fd = descriptors[0];
+    gate->write_fd = descriptors[1];
+    gate->function = function;
+    gate->argument = argument;
+    pid_t child = real_clone(clone_gate_entry, stack, flags, gate, parent_tid, tls, child_tid);
+    if (child < 0) {
+        int saved = errno;
+        (void)real_close(descriptors[0]);
+        (void)real_close(descriptors[1]);
+        free(gate);
+        errno = saved;
+        return -1;
+    }
+    if (child == 0) {
+        /* The trampoline owns the child-side descriptor and gate allocation. */
+        return 0;
+    }
+    (void)real_close(descriptors[0]);
+    int adoption_error = adopt_tracked_for_pid(child);
+    unsigned char decision = adoption_error < 0 ? 0 : 1;
+    ssize_t written;
+    do {
+        written = write(descriptors[1], &decision, sizeof(decision));
+    } while (written < 0 && errno == EINTR);
+    int saved = adoption_error < 0 ? errno : (written == (ssize_t)sizeof(decision) ? 0 : EIO);
+    (void)real_close(descriptors[1]);
+    free(gate);
+    if (adoption_error < 0 || written != (ssize_t)sizeof(decision)) {
+        errno = saved == 0 ? EIO : saved;
         return abort_unadopted_child(child);
     }
     return child;

@@ -472,10 +472,13 @@ the socket inode identity in `RESERVE`/`ADOPT` and lets the control daemon's
 reaper reclaim leases whose descriptor disappeared at that boundary. The
 dynamic interposer rejects process-style
 `CLONE_FILES` in the raw/libc `clone()` paths because its tracking table is
-process-local. It applies the same check to `clone3()` by safely reading the
-caller's flags; malformed or unreadable clone arguments fail closed with
-`ENOTSUP`. Static or shared-fd process creation should use the opt-in kernel
-adapter.
+process-local. When tracked listeners exist, raw process-style clone syscalls
+are rejected before creation, while the libc callback form uses a gate
+trampoline; `CLONE_VM`/`CLONE_VFORK` callback variants are rejected because
+their address-space contract cannot safely carry the gate. It applies the same
+check to `clone3()` by safely reading the caller's flags; malformed or
+unreadable clone arguments fail closed with `ENOTSUP`. Static or shared-fd
+process creation should use the opt-in kernel adapter.
 Static binaries should use the
 opt-in `--kernel` adapter; setuid binaries remain rejected. Child-side
 networking before `vfork()` `exec`/`_exit` is supported only for direct

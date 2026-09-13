@@ -85,6 +85,9 @@
       return to application code until the parent has completed `ADOPT`, and a
       rejected adoption terminates the child before it can use the inherited
       listener.
+- [x] Dynamic libc callback-style process `clone()` uses the same pre-callback
+      gate; raw process-style clone syscalls and shared-address-space clone
+      variants are rejected while tracked listeners exist.
 - [x] The kernel supervisor explicitly handles the `PTRACE_EVENT_VFORK_DONE`
       notification emitted for traced `vfork()` parents instead of treating it
       as an unknown event.

@@ -68,7 +68,11 @@ Provide `libwsl_win_relay_listen.so` and a `wsl-win-relay-run` launcher. The int
   `vfork()` wrapper has no post-return bookkeeping because the shared address
   space makes wrapper-local state unsafe; the dynamic path rejects process-style
   `CLONE_FILES` in both raw/libc `clone()` and safely inspected `clone3()`
-  calls because its fd table is process-local. The smoke test tolerates
+  calls because its fd table is process-local. When tracked listeners exist,
+  raw process-style clone syscalls are rejected before creation; the libc
+  callback form uses a gate trampoline, while `CLONE_VM`/`CLONE_VFORK` process
+  variants are rejected because their address-space contract cannot safely
+  carry the gate. The smoke test tolerates
   sandboxed kernels that return `ENOSYS`, `EPERM`, `EINVAL`, or `ENOTSUP` for
   unavailable clone operations. The current native build is Linux amd64,
   matching the supported WSL binary target.

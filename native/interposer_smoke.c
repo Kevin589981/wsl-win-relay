@@ -90,9 +90,41 @@ static int adoption_failure_smoke(void) {
     return saved == EIO ? 0 : 4;
 }
 
+static int clone_noop(void *argument) {
+    (void)argument;
+    return 0;
+}
+
+static int clone_adoption_failure_smoke(void) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return 1;
+    struct sockaddr_in address = {0};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = htons(47132);
+    if (bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 || listen(fd, 16) < 0) {
+        close(fd);
+        return 2;
+    }
+    void *stack = malloc(65536);
+    if (stack == NULL) {
+        close(fd);
+        return 3;
+    }
+    errno = 0;
+    pid_t child = clone(clone_noop, (char *)stack + 65536, SIGCHLD, NULL);
+    int saved = errno;
+    free(stack);
+    close(fd);
+    return child < 0 && saved == EIO ? 0 : 4;
+}
+
 int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "adopt-failure") == 0) {
         return adoption_failure_smoke();
+    }
+    if (argc > 1 && strcmp(argv[1], "adopt-failure-clone") == 0) {
+        return clone_adoption_failure_smoke();
     }
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) return 1;
