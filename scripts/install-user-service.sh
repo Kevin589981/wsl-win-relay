@@ -41,6 +41,10 @@ if [ ! -f "$config_path" ]; then
     exit 1
 fi
 chmod 600 "$config_path"
+if ! "$bin_dir/wsl-proxy-linux" -config "$config_path" -check-config >/dev/null; then
+    echo "relay configuration validation failed; services were not restarted" >&2
+    exit 1
+fi
 systemctl --user daemon-reload
 if [ -n "${XDG_CONFIG_HOME:-}" ]; then
     systemctl --user import-environment XDG_CONFIG_HOME

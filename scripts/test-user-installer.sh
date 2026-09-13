@@ -18,12 +18,13 @@ if [ ! -x "$repo_dir/bin/wsl-win-relay-strict" ]; then
 fi
 
 mkdir -p "$tmp_dir/home" "$tmp_dir/config" "$tmp_dir/bin"
-printf '%s\n' '#!/bin/sh' 'exit 0' >"$tmp_dir/bin/systemctl"
+printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$*" >>"$SYSTEMCTL_LOG"' >"$tmp_dir/bin/systemctl"
 chmod 700 "$tmp_dir/bin/systemctl"
 
 HOME="$tmp_dir/home" \
 XDG_CONFIG_HOME="$tmp_dir/config" \
 PATH="$tmp_dir/bin:/usr/bin:/bin" \
+SYSTEMCTL_LOG="$tmp_dir/systemctl.log" \
     "$repo_dir/scripts/install-user-service.sh" >"$tmp_dir/install.log"
 
 [ -x "$tmp_dir/home/bin/wsl-proxy-linux" ]
@@ -34,6 +35,25 @@ PATH="$tmp_dir/bin:/usr/bin:/bin" \
 [ -x "$tmp_dir/home/bin/wsl-win-relay-broker-service" ]
 [ -f "$tmp_dir/config/wsl-win-relay/config.json" ]
 [ "$(stat -c '%a' "$tmp_dir/config/wsl-win-relay/config.json")" = 600 ]
+"$tmp_dir/home/bin/wsl-proxy-linux" \
+    -config "$tmp_dir/config/wsl-win-relay/config.json" \
+    -check-config >"$tmp_dir/check.log"
+grep -q '^configuration valid$' "$tmp_dir/check.log"
+
+: >"$tmp_dir/systemctl.log"
+printf '%s\n' '{"unknown_setting":true}' >"$tmp_dir/config/wsl-win-relay/config.json"
+set +e
+HOME="$tmp_dir/home" \
+XDG_CONFIG_HOME="$tmp_dir/config" \
+PATH="$tmp_dir/bin:/usr/bin:/bin" \
+SYSTEMCTL_LOG="$tmp_dir/systemctl.log" \
+    "$repo_dir/scripts/install-user-service.sh" >"$tmp_dir/invalid-install.log" 2>&1
+invalid_status=$?
+set -e
+[ "$invalid_status" -ne 0 ]
+grep -q 'configuration validation failed' "$tmp_dir/invalid-install.log"
+[ ! -s "$tmp_dir/systemctl.log" ]
+install -m 0600 "$repo_dir/wsl-win-relay.example.json" "$tmp_dir/config/wsl-win-relay/config.json"
 
 set +e
 HOME="$tmp_dir/home" \

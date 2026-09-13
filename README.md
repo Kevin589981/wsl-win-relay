@@ -307,6 +307,13 @@ For long-running use, start from [`wsl-win-relay.example.json`](wsl-win-relay.ex
 ./bin/wsl-proxy-linux -config ./wsl-win-relay.json
 ```
 
+Validate the fully merged file and command-line configuration without starting
+the Windows relay or binding any local ports:
+
+```bash
+./bin/wsl-proxy-linux -config ./wsl-win-relay.json -check-config
+```
+
 The JSON decoder rejects unknown fields so misspelled safety or bind settings do
 not silently disappear. Command-line options override scalar configuration
 values; repeated command-line `-reverse` mappings are added to configured
@@ -760,8 +767,10 @@ With WSL systemd enabled, install the user service:
 systemctl --user status wsl-win-relay.service
 ```
 
-Re-running the installer updates the installed binaries and unit, then
-restarts the user service so the new configuration is active immediately.
+Re-running the installer updates the installed binaries and unit, validates the
+existing configuration through the installed proxy, then restarts the user
+service so the new configuration is active immediately. A failed validation
+leaves running services untouched.
 
 The service restarts the proxy after a Windows relay crash or broken stdio
 transport; startup handshake and reverse registrations are recreated on each

@@ -184,6 +184,16 @@ func TestParseOptionsSupportsBrokerMode(t *testing.T) {
 	}
 }
 
+func TestParseOptionsSupportsConfigCheck(t *testing.T) {
+	opts, err := parseOptions([]string{"-check-config"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opts.checkConfig {
+		t.Fatal("config check was not enabled")
+	}
+}
+
 func TestParseOptionsRejectsUpstreamProxyInBrokerMode(t *testing.T) {
 	if _, err := parseOptions([]string{"-broker-mode", "-upstream-proxy", "socks5h://127.0.0.1:7890"}); err == nil || !strings.Contains(err.Error(), "Windows broker") {
 		t.Fatalf("expected broker upstream configuration error, got %v", err)

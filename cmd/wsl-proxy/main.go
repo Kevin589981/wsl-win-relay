@@ -30,6 +30,7 @@ import (
 )
 
 type options struct {
+	checkConfig           bool
 	socksListen           string
 	httpListen            string
 	relayExe              string
@@ -75,6 +76,10 @@ func main() {
 	if err != nil {
 		logger.Printf("configuration: %v", err)
 		os.Exit(2)
+	}
+	if opts.checkConfig {
+		fmt.Fprintln(os.Stdout, "configuration valid")
+		return
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -198,6 +203,7 @@ func parseOptions(args []string) (options, error) {
 	udpInclude := formatPorts(fileConfig.AutoForward.UDPInclude)
 	set := flag.NewFlagSet("wsl-proxy", flag.ContinueOnError)
 	set.SetOutput(io.Discard)
+	set.BoolVar(&opts.checkConfig, "check-config", false, "validate configuration and exit without starting the relay")
 	set.StringVar(&configPath, "config", configPath, "JSON configuration file")
 	set.StringVar(&opts.socksListen, "listen", opts.socksListen, "SOCKS5 listen address")
 	set.StringVar(&opts.httpListen, "http-listen", opts.httpListen, "optional HTTP proxy listen address (CONNECT and plain HTTP)")
