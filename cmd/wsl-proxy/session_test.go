@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Kevin589981/wsl-win-relay/internal/listenaddr"
 	"github.com/Kevin589981/wsl-win-relay/internal/relay"
 )
 
@@ -144,7 +145,7 @@ func TestSessionDialerReverseForwardCommitsMapping(t *testing.T) {
 	dialer := newSessionDialer()
 	dialer.set(client)
 
-	target, err := net.Listen("tcp", "127.0.0.1:0")
+	target, _, err := listenaddr.ListenTCP("auto:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +157,7 @@ func TestSessionDialerReverseForwardCommitsMapping(t *testing.T) {
 			accepted <- conn
 		}
 	}()
-	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	probe, _, err := listenaddr.ListenTCP("auto:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +169,9 @@ func TestSessionDialerReverseForwardCommitsMapping(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer mapping.Close()
-	conn, err := net.Dial("tcp", windowsAddr)
+	dialCtx, dialCancel := context.WithTimeout(ctx, time.Second)
+	defer dialCancel()
+	conn, err := (&net.Dialer{}).DialContext(dialCtx, "tcp", windowsAddr)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -137,11 +137,11 @@ WSL 实例，不会接管 Windows 本机流量。
 TUN 主要接管 IP 流量；应用在建立连接前进行的 DNS 解析可能仍然依赖 WSL
 DNS。DNS 已损坏时，优先使用 `socks5h`，或在启动脚本时配置 `WWR_DNS`。
 
-如果 mirror 模式把 `127.0.0.1` 错误路由到 `loopback0`，而 WSL 本地监听
-一直处于 `SYN-SENT`，可以使用 WSL 自己的回环别名（常见为
-`10.255.255.254`）：将 `socks5_listen`/`http_proxy_listen` 和
-`WWR_TUN_PROXY` 改为该地址。脚本会根据内核的 `local` 路由识别这类本地
-代理，不会再把它错误绑定到外部 uplink 接口。
+如果 mirror 模式把 `127.0.0.1` 错误路由到 `loopback0`，而 WSL 本地连接
+一直处于 `SYN-SENT`，请使用 `auto:<端口>`。relay 会枚举真正 Linux `lo`
+接口上的 IPv4 地址，并对每个候选执行实际的 bind + TCP connect/accept 探测；
+只有确实可达的地址才会被选中。例如某台机器可能选中 `10.255.255.254`，但
+这个地址不是常量，也不会被代码写死。
 
 ### 显式 reverse 反向映射
 
@@ -272,8 +272,9 @@ ${EDITOR:-nano} "$HOME/wsl-win-relay.json"
   "relay_exe": "/mnt/c/Tools/wsl-win-relay/wsl-win-relay.exe",
   "broker_mode": false,
   "upstream_proxy": "",
-  "socks5_listen": "127.0.0.1:1080",
-  "http_proxy_listen": "127.0.0.1:8080"
+  "socks5_listen": "auto:1080",
+  "http_proxy_listen": "auto:8080",
+  "listen_status_file": "auto"
 }
 ```
 
@@ -367,8 +368,9 @@ WSL 不会直接连接 `YOUR_PROXY_HOST:PORT`。stdio 模式则在 JSON 的
 
 | 字段 | 默认值 | 作用 |
 | --- | --- | --- |
-| `socks5_listen` | `127.0.0.1:1080` | WSL SOCKS5 监听 |
-| `http_proxy_listen` | `127.0.0.1:8080` | WSL HTTP 监听 |
+| `socks5_listen` | `auto:1080` | 自动选择可达的 WSL 本地 SOCKS5 地址；也可显式指定 |
+| `http_proxy_listen` | 空（Release 示例为 `auto:8080`） | 可选 WSL HTTP 监听 |
+| `listen_status_file` | `auto` | 实际地址和发布进程状态；解析为 `/tmp/wsl-win-relay-<UID>/listeners.json` |
 | `relay_handshake_timeout` | `5s` | 启动能力协商超时 |
 | `relay_dial_timeout` | `30s` | 等待 relay 可用 |
 | `proxy_handshake_timeout` | `15s` | 本地代理握手超时 |
@@ -510,7 +512,7 @@ kernel adapter 在 Linux amd64 上完成运行验证，aarch64 仅构建。setui
 ```bash
 ./scripts/install-tun2socks.sh
 sudo env \
-  WWR_TUN_PROXY=socks5://127.0.0.1:1080 \
+  WWR_TUN_PROXY=auto \
   ./scripts/transparent-relay.sh
 ```
 
@@ -518,13 +520,14 @@ sudo env \
 
 ```bash
 sudo env \
-  WWR_UPLINK_INTERFACE=lo \
-  WWR_TUN_PROXY=socks5://127.0.0.1:1080 \
+  WWR_TUN_PROXY=auto \
   ./scripts/transparent-relay.sh
 ```
 
-脚本会先等待本地 SOCKS 监听，再修改路由；退出时恢复路由、DNS 和 TUN
-设备。只有确实需要替换 DNS 时才设置 `WWR_DNS`。
+`auto` 会读取 `/tmp/wsl-win-relay-<UID>/listeners.json` 中由存活 proxy 进程发布的
+实际 SOCKS5 地址。脚本会先确认发布进程和监听存在，再修改路由；本地代理
+不会被强制绑定到 `eth*` uplink。退出时恢复路由、DNS 和 TUN 设备。只有
+确实需要替换 DNS 时才设置 `WWR_DNS`。
 
 ## 服务操作和排查
 

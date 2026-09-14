@@ -27,7 +27,7 @@ printf '%s\n' '#!/bin/sh' \
     '  "--user is-active --quiet "*) [ "${FAKE_SYSTEMD_INACTIVE:-0}" = 0 ] ;;' \
     '  *) exit 1 ;;' \
     'esac' >"$tmp_dir/fake-bin/systemctl"
-printf '%s\n' '#!/bin/sh' 'exit 0' >"$tmp_dir/fake-bin/curl"
+printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$*" >"$FAKE_CURL_ARGS"' 'exit 0' >"$tmp_dir/fake-bin/curl"
 chmod 700 "$tmp_dir/fake-bin/systemctl" "$tmp_dir/fake-bin/curl"
 
 {
@@ -46,10 +46,17 @@ grep -q 'Windows broker and connector build metadata match' "$tmp_dir/pass.log"
 grep -q 'Summary: 0 failure(s)' "$tmp_dir/pass.log"
 
 HOME="$tmp_dir/home" XDG_CONFIG_HOME="$tmp_dir/config" PATH="$tmp_dir/fake-bin:/usr/bin:/bin" \
-    "$repo_dir/scripts/wsl-win-relay-doctor" --probe-url https://example.test >"$tmp_dir/services.log"
+    FAKE_CURL_ARGS="$tmp_dir/curl.args" \
+    "$repo_dir/scripts/wsl-win-relay-doctor" --probe-url https://example.test --listen-status "$tmp_dir/listeners.json" >"$tmp_dir/services.log"
 grep -q 'wsl-win-relay.service is active' "$tmp_dir/services.log"
 grep -q 'wsl-win-relay-broker.service is active' "$tmp_dir/services.log"
 grep -q 'end-to-end SOCKS probe reached https://example.test' "$tmp_dir/services.log"
+
+printf '{"process_id":%s,"socks5":"10.255.255.254:1081","http":"10.255.255.254:8081"}\n' "$$" >"$tmp_dir/listeners.json"
+HOME="$tmp_dir/home" XDG_CONFIG_HOME="$tmp_dir/config" PATH="$tmp_dir/fake-bin:/usr/bin:/bin" \
+    FAKE_CURL_ARGS="$tmp_dir/curl.args" \
+    "$repo_dir/scripts/wsl-win-relay-doctor" --probe-url https://example.test --listen-status "$tmp_dir/listeners.json" >"$tmp_dir/auto-proxy.log"
+grep -q -- '--proxy socks5h://10.255.255.254:1081' "$tmp_dir/curl.args"
 
 set +e
 HOME="$tmp_dir/home" XDG_CONFIG_HOME="$tmp_dir/config" PATH="$tmp_dir/fake-bin:/usr/bin:/bin" FAKE_SYSTEMD_INACTIVE=1 \

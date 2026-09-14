@@ -26,6 +26,11 @@ fi
 device=${WWR_TUN_DEVICE:-tun0}
 tun_address=${WWR_TUN_ADDRESS:-198.18.0.1/15}
 proxy=${WWR_TUN_PROXY:-socks5://127.0.0.1:1080}
+proxy_status_file=${WWR_PROXY_STATUS_FILE:-auto}
+if [ "$proxy_status_file" = auto ]; then
+    proxy_status_uid=${WWR_PROXY_STATUS_UID:-${SUDO_UID:-$(id -u)}}
+    proxy_status_file=/tmp/wsl-win-relay-$proxy_status_uid/listeners.json
+fi
 uplink=${WWR_UPLINK_INTERFACE:-}
 dns=${WWR_DNS:-}
 resolv_conf=${WWR_RESOLV_CONF:-/etc/resolv.conf}
@@ -143,6 +148,48 @@ case "$proxy_authority" in
     *) proxy_host=$proxy_authority ;;
 esac
 
+# When the proxy service selected an alternate WSL loopback address, reuse the
+# published address instead of requiring users to hardcode a machine-specific
+# alias. Explicit non-loopback proxy URLs are left unchanged.
+case "$proxy" in
+    auto|auto://*|socks5://127.*:*|socks5h://127.*:*)
+        if [ -f "$proxy_status_file" ] && [ ! -L "$proxy_status_file" ]; then
+            published_proxy=$(sed -n 's/.*"socks5"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$proxy_status_file" | head -n 1)
+            published_pid=$(sed -n 's/.*"process_id"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$proxy_status_file" | head -n 1)
+            published_port=${published_proxy##*:}
+            requested_port=$proxy_port
+            case "$proxy" in
+                auto|auto://*) use_published=1 ;;
+                *) use_published=0 ;;
+            esac
+            if [ -n "$published_pid" ] && kill -0 "$published_pid" 2>/dev/null && \
+               { [ "$use_published" -eq 1 ] || { [ -n "$published_proxy" ] && [ "$published_port" = "$requested_port" ]; }; }; then
+                proxy_scheme=socks5
+                case "$proxy" in socks5h://*) proxy_scheme=socks5h ;; esac
+                [ -n "$published_proxy" ] && proxy="$proxy_scheme://$published_proxy"
+            fi
+        fi
+        ;;
+esac
+case "$proxy" in
+    auto|auto://*)
+        echo "automatic TUN proxy is unavailable or stale: $proxy_status_file" >&2
+        exit 1
+        ;;
+esac
+
+# The status lookup may have replaced the proxy host. Re-parse the effective
+# URL before classifying it as local or non-local.
+proxy_authority=${proxy#*://}
+proxy_authority=${proxy_authority%%/*}
+proxy_authority=${proxy_authority%%\?*}
+proxy_authority=${proxy_authority##*@}
+case "$proxy_authority" in
+    \[*\]:*) proxy_host=${proxy_authority#\[}; proxy_host=${proxy_host%%\]*}; proxy_port=${proxy_authority##*:} ;;
+    *:*) proxy_host=${proxy_authority%:*}; proxy_port=${proxy_authority##*:} ;;
+    *) proxy_host=$proxy_authority ;;
+esac
+
 local_proxy=0
 case "$proxy_host" in
     localhost|127.*|0.0.0.0|::1|::) local_proxy=1 ;;
@@ -156,10 +203,21 @@ if [ "$local_proxy" -eq 0 ] && [ -n "$proxy_host" ]; then
         local\ *|*\ local\ *) local_proxy=1 ;;
     esac
 fi
+proxy_host_hex=
+case "$proxy_host" in
+    *[!0-9.]*|*.*.*.*.*|.*|*.) ;;
+    *.*.*.*)
+        proxy_host_hex=$(printf '%s\n' "$proxy_host" | awk -F. '
+            NF == 4 && $1 >= 0 && $1 <= 255 && $2 >= 0 && $2 <= 255 &&
+            $3 >= 0 && $3 <= 255 && $4 >= 0 && $4 <= 255 {
+                printf "%02X%02X%02X%02X", $4, $3, $2, $1
+            }')
+        ;;
+esac
 
 local_proxy_listening() {
     [ "$local_proxy" -eq 1 ] || return 0
-    { [ -r "$proc_net_tcp" ] && awk -v suffix=":$port_hex" '$4 == "0A" && substr($2, length($2) - length(suffix) + 1) == suffix { found=1 } END { exit !found }' "$proc_net_tcp"; } ||
+    { [ -r "$proc_net_tcp" ] && awk -v suffix=":$port_hex" -v host="$proxy_host_hex" '$4 == "0A" && substr($2, length($2) - length(suffix) + 1) == suffix && (host == "" || $2 == host suffix || $2 == "00000000" suffix) { found=1 } END { exit !found }' "$proc_net_tcp"; } ||
     { [ -r "$proc_net_tcp6" ] && awk -v suffix=":$port_hex" '$4 == "0A" && substr($2, length($2) - length(suffix) + 1) == suffix { found=1 } END { exit !found }' "$proc_net_tcp6"; }
 }
 
@@ -188,23 +246,25 @@ wait_for_local_proxy() {
 wait_for_local_proxy
 
 proxy_addresses=
-case "$proxy_host" in
-    ""|localhost|127.*|::1)
-        ;;
-    *:*)
-        proxy_addresses=$proxy_host
-        ;;
-    *[!0-9.]*|*[!0-9])
-        if ! command -v getent >/dev/null 2>&1; then
-            echo "getent is required to resolve the non-loopback TUN proxy $proxy_host" >&2
-            exit 1
-        fi
-        proxy_addresses=$(getent ahosts "$proxy_host" | awk '{print $1}' | sort -u)
-        ;;
-    *)
-        proxy_addresses=$proxy_host
-        ;;
-esac
+if [ "$local_proxy" -eq 0 ]; then
+    case "$proxy_host" in
+        "")
+            ;;
+        *:*)
+            proxy_addresses=$proxy_host
+            ;;
+        *[!0-9.]*|*[!0-9])
+            if ! command -v getent >/dev/null 2>&1; then
+                echo "getent is required to resolve the non-loopback TUN proxy $proxy_host" >&2
+                exit 1
+            fi
+            proxy_addresses=$(getent ahosts "$proxy_host" | awk '{print $1}' | sort -u)
+            ;;
+        *)
+            proxy_addresses=$proxy_host
+            ;;
+    esac
+fi
 if [ -n "$proxy_host" ] && [ -n "$proxy_addresses" ]; then
     proxy_route_file=$(mktemp /tmp/wsl-win-relay-proxy-route.XXXXXX)
     while read -r proxy_address; do

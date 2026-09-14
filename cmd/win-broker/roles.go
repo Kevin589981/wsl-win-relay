@@ -36,6 +36,7 @@ const (
 var roleControlRequestTimeout = 2 * time.Second
 
 const (
+	roleFrontend     = "frontend"
 	roleWorker       = "worker"
 	roleSocketHost   = "socket-host-v2"
 	roleSocketBridge = "socket-bridge"
@@ -59,6 +60,12 @@ func runFrontend(opts options, logger *log.Logger) error {
 	defer listener.Close()
 	service, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	controlListener, err := localipc.Listen(deriveEndpoint(opts.endpoint, "control"))
+	if err != nil {
+		return fmt.Errorf("listen frontend control: %w", err)
+	}
+	defer controlListener.Close()
+	go serveWorkerControl(service, controlListener, stop, opts.tokenHex, roleFrontend)
 	worker := newWorkerSupervisor(opts, deriveEndpoint(opts.endpoint, "worker"), logger)
 	err = worker.ensure(service)
 	if err != nil {

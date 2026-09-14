@@ -45,6 +45,7 @@ fi
 python3 -m http.server "$port" --bind 127.0.0.1 >"$work/http.log" 2>&1 &
 server_pid=$!
 "$proxy_bin" -relay-exe "$relay_exe" -listen "$proxy_listen" \
+	-listen-status "$work/listeners.json" \
 	-auto-forward -auto-forward-include "$port" -auto-forward-interval 100ms \
 	>"$work/proxy.log" 2>&1 &
 proxy_pid=$!

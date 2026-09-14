@@ -22,6 +22,7 @@ import (
 	appconfig "github.com/Kevin589981/wsl-win-relay/internal/config"
 	"github.com/Kevin589981/wsl-win-relay/internal/forward"
 	"github.com/Kevin589981/wsl-win-relay/internal/httpproxy"
+	"github.com/Kevin589981/wsl-win-relay/internal/listenaddr"
 	"github.com/Kevin589981/wsl-win-relay/internal/listencontrol"
 	"github.com/Kevin589981/wsl-win-relay/internal/protocol"
 	"github.com/Kevin589981/wsl-win-relay/internal/relay"
@@ -62,6 +63,7 @@ type options struct {
 	relayDialTimeout      time.Duration
 	proxyHandshakeTimeout time.Duration
 	maxProxyConnections   int
+	listenStatusFile      string
 }
 
 var errRelayExited = errors.New("Windows relay exited")
@@ -194,6 +196,7 @@ func parseOptions(args []string) (options, error) {
 		relayDialTimeout:      relayDialTimeout,
 		proxyHandshakeTimeout: proxyHandshakeTimeout,
 		maxProxyConnections:   fileConfig.MaxProxyConnections,
+		listenStatusFile:      fileConfig.ListenStatusFile,
 	}
 	for _, mapping := range fileConfig.Reverse {
 		if err := opts.reverse.Set(mapping); err != nil {
@@ -213,6 +216,7 @@ func parseOptions(args []string) (options, error) {
 	set.StringVar(&configPath, "config", configPath, "JSON configuration file")
 	set.StringVar(&opts.socksListen, "listen", opts.socksListen, "SOCKS5 listen address")
 	set.StringVar(&opts.httpListen, "http-listen", opts.httpListen, "optional HTTP proxy listen address (CONNECT and plain HTTP)")
+	set.StringVar(&opts.listenStatusFile, "listen-status", opts.listenStatusFile, "optional JSON status file for effective local proxy listeners")
 	set.StringVar(&opts.relayExe, "relay-exe", opts.relayExe, "Windows relay executable")
 	set.BoolVar(&opts.brokerMode, "broker-mode", opts.brokerMode, "reuse one relay client across reconnecting broker connector processes")
 	set.StringVar(&opts.upstreamProxy, "upstream-proxy", opts.upstreamProxy, "optional Windows-side HTTP CONNECT or SOCKS5 proxy URL")
@@ -366,21 +370,30 @@ func portsFromSet(ports map[uint16]bool) []uint16 {
 func run(parent context.Context, opts options, logger *log.Logger) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
-	socksListener, err := net.Listen("tcp", opts.socksListen)
+	socksListener, socksAddress, err := listenaddr.ListenTCP(opts.socksListen)
 	if err != nil {
 		return fmt.Errorf("SOCKS5 listen on %s: %w", opts.socksListen, err)
 	}
 	defer socksListener.Close()
 	var httpListener net.Listener
 	if opts.httpListen != "" {
-		httpListener, err = net.Listen("tcp", opts.httpListen)
+		socksHost, _, splitErr := net.SplitHostPort(socksAddress)
+		if splitErr != nil {
+			return fmt.Errorf("parse selected SOCKS5 listener %s: %w", socksAddress, splitErr)
+		}
+		httpListener, _, err = listenaddr.ListenTCPOnHost(opts.httpListen, socksHost)
 		if err != nil {
 			return fmt.Errorf("HTTP proxy listen on %s: %w", opts.httpListen, err)
 		}
 		defer httpListener.Close()
 	}
 	dialer := newSessionDialer()
-	logger.Printf("SOCKS5 listening on %s", socksListener.Addr())
+	logger.Printf("SOCKS5 listening on %s", socksAddress)
+	statusCleanup, err := publishListenStatus(opts.listenStatusFile, socksAddress, listenerAddress(httpListener))
+	if err != nil {
+		return fmt.Errorf("publish listener status: %w", err)
+	}
+	defer statusCleanup()
 	var control *listencontrol.Server
 	var controlDone chan error
 	if opts.controlSocket != "" {

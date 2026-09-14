@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -355,7 +356,7 @@ func TestParseOptionsLoadsConfigThenAppliesCLIOverrides(t *testing.T) {
 	if opts.relayExe != "from-cli.exe" || opts.socksListen != "127.0.0.1:1100" || !opts.brokerMode || opts.autoForward {
 		t.Fatalf("options: %#v", opts)
 	}
-	if opts.autoForwardInterval != 250*time.Millisecond || opts.autoForwardPortOffset != 10000 || opts.autoForwardStatus != "/tmp/mappings.json" || opts.autoRetryMin != 2*time.Second || opts.autoRetryMax != 10*time.Second || opts.relayHandshakeTimeout != 12*time.Second || opts.relayDialTimeout != 45*time.Second || !opts.autoInclude[8000] || !opts.autoExclude[53] || len(opts.reverse) != 1 {
+	if opts.autoForwardInterval != 250*time.Millisecond || opts.autoForwardPortOffset != 10000 || opts.autoForwardStatus != "/tmp/mappings.json" || opts.listenStatusFile != "auto" || opts.autoRetryMin != 2*time.Second || opts.autoRetryMax != 10*time.Second || opts.relayHandshakeTimeout != 12*time.Second || opts.relayDialTimeout != 45*time.Second || !opts.autoInclude[8000] || !opts.autoExclude[53] || len(opts.reverse) != 1 {
 		t.Fatalf("options: %#v", opts)
 	}
 }
@@ -378,5 +379,43 @@ func TestAddAutomaticMappedPortTracksOffsetTargetConflicts(t *testing.T) {
 	}
 	if len(ports) != 1 {
 		t.Fatalf("invalid source port was added: %v", ports)
+	}
+}
+
+func TestPublishListenStatusIsAtomicAndOwned(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "listeners.json")
+	cleanup, err := publishListenStatus(path, "10.255.255.254:1081", "10.255.255.254:8081")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status listenStatus
+	if err := json.Unmarshal(data, &status); err != nil {
+		t.Fatal(err)
+	}
+	if status.SOCKS5 != "10.255.255.254:1081" || status.HTTP != "10.255.255.254:8081" || status.ProcessID != os.Getpid() {
+		t.Fatalf("status=%#v", status)
+	}
+	cleanup()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("status file remains after cleanup: %v", err)
+	}
+}
+
+func TestPublishListenStatusRejectsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	path := filepath.Join(dir, "listeners.json")
+	if err := os.WriteFile(target, []byte("protected"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := publishListenStatus(path, "127.0.0.1:1080", ""); err == nil {
+		t.Fatal("symlink status path was accepted")
 	}
 }

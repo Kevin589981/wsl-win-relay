@@ -70,6 +70,16 @@ if [ ! -f "$config_target" ]; then
     exit 1
 fi
 chmod 600 "$config_target"
+status_uid=${WWR_PROXY_STATUS_UID:-${SUDO_UID:-}}
+if ! grep -q '^WWR_PROXY_STATUS_UID=' "$config_target"; then
+    case "$status_uid" in
+        ''|*[!0-9]*)
+            echo "set WWR_PROXY_STATUS_UID to the WSL user ID whose proxy service publishes listener status" >&2
+            exit 1
+            ;;
+        *) printf 'WWR_PROXY_STATUS_UID=%s\n' "$status_uid" >>"$config_target" ;;
+    esac
+fi
 
 systemctl daemon-reload
 systemctl enable wsl-win-relay-transparent.service

@@ -9,6 +9,7 @@ connector_exe=${WWR_CONNECTOR_EXE:-"$repo_dir/bin/wsl-win-connector.exe"}
 socks_listen=${WWR_BROKER_INTEROP_LISTEN:-}
 http_listen=${WWR_BROKER_INTEROP_HTTP_LISTEN:-}
 reverse_port=${WWR_BROKER_INTEROP_REVERSE_PORT:-}
+reverse_target_port=${WWR_BROKER_INTEROP_REVERSE_TARGET_PORT:-}
 auto_port=${WWR_BROKER_INTEROP_AUTO_PORT:-}
 auto_forward_offset=${WWR_BROKER_INTEROP_AUTO_FORWARD_OFFSET:-0}
 windows_port_auto=${WWR_BROKER_INTEROP_WINDOWS_PORT_AUTO:-0}
@@ -16,6 +17,9 @@ auto_udp=${WWR_BROKER_INTEROP_AUTO_UDP:-0}
 reverse_wsl_host=${WWR_BROKER_INTEROP_WSL_HOST:-127.0.0.2}
 endpoint=${WWR_BROKER_INTEROP_ENDPOINT:-"wsl-win-relay-interop-$$"}
 upstream_proxy=${WWR_WINDOWS_UPSTREAM_PROXY:-}
+probe_url=${WWR_BROKER_INTEROP_PROBE_URL:-https://example.com/}
+http_probe_url=${WWR_BROKER_INTEROP_HTTP_PROBE_URL:-http://example.com/}
+probe_pattern=${WWR_BROKER_INTEROP_PROBE_PATTERN:-Example Domain}
 service_wrapper=${WWR_BROKER_INTEROP_SERVICE_WRAPPER:-0}
 windows_shell=${WWR_WINDOWS_SHELL:-powershell.exe}
 case "$auto_forward_offset" in
@@ -161,13 +165,16 @@ pick_auto_port() {
 	return 1
 }
 if [ -z "$socks_listen" ]; then
-	socks_listen="127.0.0.1:$(pick_free_port)"
+	socks_listen="auto:$(pick_free_port)"
 fi
 if [ -z "$http_listen" ]; then
-	http_listen="127.0.0.1:$(pick_free_port)"
+	http_listen="auto:$(pick_free_port)"
 fi
 if [ -z "$reverse_port" ]; then
-	reverse_port=$(pick_shared_free_port)
+	reverse_port=$(pick_windows_free_port)
+fi
+if [ -z "$reverse_target_port" ]; then
+	reverse_target_port=$(pick_free_port)
 fi
 if [ -z "$auto_port" ]; then
 	auto_port=$(pick_auto_port)
@@ -214,7 +221,7 @@ broker_pid=$!
 sleep 1
 
 printf '%s\n' "wsl-win-relay reverse interop $endpoint" >"$work/index.html"
-python3 -m http.server "$reverse_port" --bind "$reverse_wsl_host" --directory "$work" >"$work/http.log" 2>&1 &
+python3 -m http.server "$reverse_target_port" --bind "$reverse_wsl_host" --directory "$work" >"$work/http.log" 2>&1 &
 http_pid=$!
 mkdir "$work/auto"
 printf '%s\n' "wsl-win-relay automatic interop $endpoint" >"$work/auto/index.html"
@@ -239,7 +246,9 @@ WSL_WIN_RELAY_ATTACH_TOKEN="$token" \
 	sh -c 'auto=$1; offset=$2; udp=$3; udp_port=$4; shift 4; if [ "$auto" -eq 1 ]; then set -- "$@" -auto-forward-port-auto; else set -- "$@" -auto-forward-port-offset "$offset"; fi; if [ "$udp" -eq 1 ]; then set -- "$@" -auto-forward-udp -auto-forward-udp-include "$udp_port"; fi; exec "$@"' sh "$windows_port_auto" "$auto_forward_offset" "$auto_udp" "$auto_udp_port" \
 	"$proxy_bin" -broker-mode -relay-exe "$connector_exe" -listen "$socks_listen" \
 		-http-listen "$http_listen" \
-		-reverse "127.0.0.1:$reverse_port=$reverse_wsl_host:$reverse_port" \
+		-listen-status "$work/listeners.json" \
+		-control-socket "$work/control.sock" \
+		-reverse "127.0.0.1:$reverse_port=$reverse_wsl_host:$reverse_target_port" \
 		-auto-forward -auto-forward-status "$work/auto-mappings.json" -auto-forward-include "$auto_port" >"$work/proxy.log" 2>&1 &
 proxy_pid=$!
 
@@ -255,18 +264,26 @@ if ! grep -q "Windows broker connector ready" "$work/proxy.log"; then
 	exit 1
 fi
 
-if ! curl --noproxy "" --proxy "socks5h://$socks_listen" --connect-timeout 5 --max-time 15 -fsS https://example.com/ >"$work/response.html" 2>"$work/curl.err"; then
+socks_listen_effective=$(sed -n 's/.*"socks5"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$work/listeners.json" | head -n 1)
+http_listen_effective=$(sed -n 's/.*"http"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$work/listeners.json" | head -n 1)
+if [ -z "$socks_listen_effective" ] || [ -z "$http_listen_effective" ]; then
+	echo "proxy did not publish effective local listeners" >&2
+	cat "$work/listeners.json" "$work/proxy.log" >&2 || true
+	exit 1
+fi
+
+if ! curl --noproxy "" --proxy "socks5h://$socks_listen_effective" --connect-timeout 5 --max-time 15 -fsS "$probe_url" >"$work/response.html" 2>"$work/curl.err"; then
 	echo "Windows broker SOCKS5 request failed" >&2
 	cat "$work/broker.log" "$work/proxy.log" "$work/curl.err" >&2 || true
 	exit 1
 fi
-grep -qi "Example Domain" "$work/response.html"
-if ! curl --noproxy "" --proxy "http://$http_listen" --connect-timeout 5 --max-time 15 -fsS http://example.com/ >"$work/http-response.html" 2>"$work/http-curl.err"; then
+grep -qi "$probe_pattern" "$work/response.html"
+if ! curl --noproxy "" --proxy "http://$http_listen_effective" --connect-timeout 5 --max-time 15 -fsS "$http_probe_url" >"$work/http-response.html" 2>"$work/http-curl.err"; then
 	echo "Windows broker HTTP proxy request failed" >&2
 	cat "$work/broker.log" "$work/proxy.log" "$work/http-curl.err" >&2 || true
 	exit 1
 fi
-grep -qi "Example Domain" "$work/http-response.html"
+grep -qi "$probe_pattern" "$work/http-response.html"
 
 connector_pid=$(pgrep -P "$proxy_pid" -f 'wsl-win-connector\.exe' | head -n 1 || true)
 if [ -z "$connector_pid" ]; then
@@ -341,7 +358,7 @@ fi
 for _ in $(seq 1 60); do
 	if grep -q "auto-forward added 127.0.0.1:$auto_windows_port" "$work/proxy.log" && \
 		grep -q '"windows_address": "127.0.0.1:'"$auto_windows_port"'"' "$work/auto-mappings.json" && \
-		grep -q '"wsl_address": "127.0.0.2:'"$auto_port"'"' "$work/auto-mappings.json"; then
+		grep -q '"wsl_address": "'"$reverse_wsl_host"':'"$auto_port"'"' "$work/auto-mappings.json"; then
 		break
 	fi
 	sleep 0.5
@@ -351,7 +368,7 @@ if ! grep -q "auto-forward added 127.0.0.1:$auto_windows_port" "$work/proxy.log"
 	cat "$work/broker.log" "$work/proxy.log" "$work/auto-http.log" >&2 || true
 	exit 1
 fi
-if ! grep -q '"windows_address": "127.0.0.1:'"$auto_windows_port"'"' "$work/auto-mappings.json" || ! grep -q '"wsl_address": "127.0.0.2:'"$auto_port"'"' "$work/auto-mappings.json"; then
+if ! grep -q '"windows_address": "127.0.0.1:'"$auto_windows_port"'"' "$work/auto-mappings.json" || ! grep -q '"wsl_address": "'"$reverse_wsl_host"':'"$auto_port"'"' "$work/auto-mappings.json"; then
 	echo "automatic mapping status file did not publish the expected addresses" >&2
 	cat "$work/auto-mappings.json" >&2 || true
 	exit 1
@@ -399,5 +416,5 @@ if [ "$auto_udp" -eq 1 ]; then
 elif [ -n "$upstream_proxy" ]; then
 	echo "WSL SOCKS5 and HTTP proxies reached example.com through Windows broker and upstream $upstream_proxy; Windows reverse and automatic mappings reached WSL HTTP services"
 else
-	echo "WSL SOCKS5 and HTTP proxies attached to Windows broker over named pipe, reached example.com, and Windows reverse and automatic mappings reached WSL HTTP services"
+echo "WSL SOCKS5 and HTTP proxies attached to the Windows broker over named pipe; outbound probes and Windows reverse/automatic mappings reached their targets"
 fi

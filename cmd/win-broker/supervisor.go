@@ -44,7 +44,7 @@ func runSupervisor(opts options, logger *log.Logger) error {
 	go drainSupervisorLock(ctx, lock)
 	delay := supervisorInitialDelay
 	for {
-		waitForExistingFrontend(ctx, opts.endpoint, logger)
+		waitForExistingFrontend(ctx, opts.endpoint, opts.tokenHex, logger)
 		started := time.Now()
 		cmd := exec.Command(executable, args...)
 		cmd.Stdin = os.Stdin
@@ -157,11 +157,25 @@ func drainSupervisorLock(ctx context.Context, listener net.Listener) {
 	}
 }
 
-func waitForExistingFrontend(ctx context.Context, endpoint string, logger *log.Logger) {
+func waitForExistingFrontend(ctx context.Context, endpoint, tokenHex string, logger *log.Logger) {
 	if !frontendReachable(ctx, endpoint) {
 		return
 	}
-	logger.Printf("reusing existing broker frontend on %s; waiting for it to exit", endpoint)
+	probeCtx, cancel := context.WithTimeout(ctx, supervisorProbeTimeout)
+	probeErr := probeRole(probeCtx, endpoint, tokenHex, roleFrontend)
+	cancel()
+	switch {
+	case probeErr == nil:
+		logger.Printf("reusing authenticated broker frontend on %s; waiting for it to exit", endpoint)
+	case errors.Is(probeErr, errRoleTokenMismatch):
+		logger.Printf("broker frontend token mismatch on %s; requesting conflicting instance stop", endpoint)
+		requestWorkerStop(endpoint)
+	default:
+		// v0.1.2 and older frontends have no control endpoint. Keep a safe
+		// migration path: never race their public endpoint, but clearly log
+		// that only reachability (not authenticated health) was available.
+		logger.Printf("reusing legacy broker frontend on %s without authenticated health endpoint; waiting for it to exit", endpoint)
+	}
 	waitForFrontendExit(ctx, endpoint)
 	if ctx.Err() == nil {
 		logger.Printf("existing broker frontend on %s is unavailable; starting replacement", endpoint)

@@ -34,8 +34,13 @@ GOPROXY=off go build -o "$tmp_dir/win-broker" "$repo_dir/cmd/win-broker"
 GOPROXY=off go build -o "$tmp_dir/win-connector" "$repo_dir/cmd/win-connector"
 GOPROXY=off go build -o "$tmp_dir/wsl-proxy" "$repo_dir/cmd/wsl-proxy"
 
+test_host=$(ip -o -4 addr show dev lo 2>/dev/null | awk '$4 !~ /^127\./ {split($4, fields, "/"); print fields[1]; exit}')
+[ -n "$test_host" ] || test_host=127.0.0.1
+export WWR_TEST_HOST=$test_host
+
 python3 - >"$tmp_dir/http.log" 2>&1 <<'PY' &
 import http.server
+import os
 import time
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -52,15 +57,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
-http.server.ThreadingHTTPServer(("127.0.0.1", 18082), Handler).serve_forever()
+http.server.ThreadingHTTPServer((os.environ["WWR_TEST_HOST"], 18082), Handler).serve_forever()
 PY
 http_pid=$!
 
 python3 - >"$tmp_dir/udp.log" 2>&1 <<'PY' &
 import socket
+import os
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sock.bind(("127.0.0.1", 18085))
+sock.bind((os.environ["WWR_TEST_HOST"], 18085))
 while True:
     data, address = sock.recvfrom(65535)
     print("udp-started", flush=True)
@@ -71,11 +77,12 @@ udp_pid=$!
 for _ in $(seq 1 300); do
     if python3 - <<'PY'
 import socket
+import os
 
 sock = socket.socket()
 sock.settimeout(0.2)
 try:
-    sock.connect(("127.0.0.1", 18082))
+    sock.connect((os.environ["WWR_TEST_HOST"], 18082))
 except OSError:
     raise SystemExit(1)
 finally:
@@ -88,10 +95,11 @@ PY
 done
 if ! python3 - <<'PY'
 import socket
+import os
 
 sock = socket.socket()
 sock.settimeout(1)
-sock.connect(("127.0.0.1", 18082))
+sock.connect((os.environ["WWR_TEST_HOST"], 18082))
 sock.close()
 PY
 then
@@ -117,46 +125,26 @@ fi
 WSL_WIN_RELAY_ATTACH_TOKEN=$token \
 WSL_WIN_RELAY_BROKER_ENDPOINT="$tmp_dir/broker.sock" \
     "$tmp_dir/wsl-proxy" -broker-mode -relay-exe "$tmp_dir/win-connector" \
-    -listen 127.0.0.1:18083 -control-socket "$tmp_dir/control.sock" \
-    -reverse 127.0.0.1:18084=127.0.0.1:18082 \
-    -reverse-udp 127.0.0.1:18086=127.0.0.1:18085 \
+    -listen auto:18083 -listen-status "$tmp_dir/listeners.json" -control-socket "$tmp_dir/control.sock" \
+    -reverse "$test_host:18084=$test_host:18082" \
+    -reverse-udp "$test_host:18086=$test_host:18085" \
     >"$tmp_dir/proxy.log" 2>&1 &
 proxy_pid=$!
 
+proxy_address=
 for _ in $(seq 1 300); do
-    if python3 - <<'PY'
-import socket
-
-sock = socket.socket()
-sock.settimeout(0.2)
-try:
-    sock.connect(("127.0.0.1", 18083))
-except OSError:
-    raise SystemExit(1)
-finally:
-    sock.close()
-PY
-    then
-        break
-    fi
+    proxy_address=$(sed -n 's/.*"socks5"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$tmp_dir/listeners.json" 2>/dev/null | head -n 1)
+    [ -n "$proxy_address" ] && break
     sleep 0.1
 done
-if ! python3 - <<'PY'
-import socket
-
-sock = socket.socket()
-sock.settimeout(1)
-sock.connect(("127.0.0.1", 18083))
-sock.close()
-PY
-then
+[ -n "$proxy_address" ] || {
     cat "$tmp_dir/broker.log" "$tmp_dir/proxy.log"
     exit 1
-fi
+}
 
 curl --noproxy '' --silent --show-error --fail \
-    --socks5-hostname 127.0.0.1:18083 \
-    http://127.0.0.1:18082/ >"$tmp_dir/curl.out" 2>"$tmp_dir/curl.err" &
+    --socks5-hostname "$proxy_address" \
+    "http://$test_host:18082/" >"$tmp_dir/curl.out" 2>"$tmp_dir/curl.err" &
 curl_pid=$!
 for _ in $(seq 1 300); do
     grep -q request-started "$tmp_dir/http.log" && break
@@ -173,11 +161,12 @@ fi
 for _ in $(seq 1 300); do
     if python3 - <<'PY'
 import socket
+import os
 
 sock = socket.socket()
 sock.settimeout(0.2)
 try:
-    sock.connect(("127.0.0.1", 18084))
+    sock.connect((os.environ["WWR_TEST_HOST"], 18084))
 except OSError:
     raise SystemExit(1)
 finally:
@@ -190,10 +179,11 @@ PY
 done
 if ! python3 - <<'PY'
 import socket
+import os
 
 sock = socket.socket()
 sock.settimeout(1)
-sock.connect(("127.0.0.1", 18084))
+sock.connect((os.environ["WWR_TEST_HOST"], 18084))
 sock.close()
 PY
 then
@@ -211,15 +201,16 @@ done
 kill "$connector_pid"
 
 curl --noproxy '*' --silent --show-error --fail --max-time 20 \
-    http://127.0.0.1:18084/ >"$tmp_dir/reverse-curl.out" 2>"$tmp_dir/reverse-curl.err" &
+    "http://$test_host:18084/" >"$tmp_dir/reverse-curl.out" 2>"$tmp_dir/reverse-curl.err" &
 reverse_curl_pid=$!
 
 python3 - >"$tmp_dir/udp-check.out" 2>"$tmp_dir/udp-check.err" <<'PY' &
 import socket
+import os
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.settimeout(20)
-sock.sendto(b"udp-reconnect", ("127.0.0.1", 18086))
+sock.sendto(b"udp-reconnect", (os.environ["WWR_TEST_HOST"], 18086))
 data, _ = sock.recvfrom(65535)
 if data != b"udp-reconnect":
     raise SystemExit("unexpected UDP response: %r" % (data,))

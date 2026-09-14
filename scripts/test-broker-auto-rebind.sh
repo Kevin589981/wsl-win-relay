@@ -22,8 +22,13 @@ GOPROXY=off go build -o "$tmp_dir/win-broker" "$repo_dir/cmd/win-broker"
 GOPROXY=off go build -o "$tmp_dir/win-connector" "$repo_dir/cmd/win-connector"
 GOPROXY=off go build -o "$tmp_dir/wsl-proxy" "$repo_dir/cmd/wsl-proxy"
 
+test_host=$(ip -o -4 addr show dev lo 2>/dev/null | awk '$4 !~ /^127\./ {split($4, fields, "/"); print fields[1]; exit}')
+[ -n "$test_host" ] || test_host=127.0.0.1
+export WWR_TEST_HOST=$test_host
+
 python3 - >"$tmp_dir/http.log" 2>&1 <<'PY' &
 import http.server
+import os
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
@@ -36,7 +41,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
-http.server.ThreadingHTTPServer(("127.0.0.1", 18087), Handler).serve_forever()
+http.server.ThreadingHTTPServer((os.environ["WWR_TEST_HOST"], 18087), Handler).serve_forever()
 PY
 http_pid=$!
 
@@ -55,15 +60,15 @@ done
 WSL_WIN_RELAY_ATTACH_TOKEN=$token \
 WSL_WIN_RELAY_BROKER_ENDPOINT="$tmp_dir/broker.sock" \
     "$tmp_dir/wsl-proxy" -broker-mode -relay-exe "$tmp_dir/win-connector" \
-    -listen 127.0.0.1:18088 -auto-forward \
-    -auto-forward-host 127.0.0.2 -auto-forward-include 18087 \
+    -listen auto:18088 -listen-status "$tmp_dir/listeners.json" -auto-forward \
+    -auto-forward-host "$test_host" -auto-forward-port-offset 1000 -auto-forward-include 18087 \
     -auto-forward-interval 100ms -control-socket "$tmp_dir/control.sock" \
     >"$tmp_dir/proxy.log" 2>&1 &
 proxy_pid=$!
 
 probe() {
     curl --noproxy '*' --silent --show-error --fail --max-time 2 \
-        http://127.0.0.2:18087/
+        "http://$test_host:19087/"
 }
 
 for _ in $(seq 1 150); do

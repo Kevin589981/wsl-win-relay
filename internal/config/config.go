@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"time"
+
+	"github.com/Kevin589981/wsl-win-relay/internal/listenaddr"
 )
 
 type File struct {
@@ -28,6 +30,7 @@ type File struct {
 	UDPAssociateIdle      string            `json:"udp_associate_idle_timeout"`
 	ProxyHandshakeTimeout string            `json:"proxy_handshake_timeout"`
 	MaxProxyConnections   int               `json:"max_proxy_connections"`
+	ListenStatusFile      string            `json:"listen_status_file"`
 	Reverse               []string          `json:"reverse"`
 	ReverseUDP            []string          `json:"reverse_udp"`
 	AutoForward           AutoForwardConfig `json:"auto_forward"`
@@ -52,7 +55,7 @@ type AutoForwardConfig struct {
 func Default() File {
 	return File{
 		RelayExecutable:       "wsl-win-relay.exe",
-		SOCKS5Listen:          "127.0.0.1:1080",
+		SOCKS5Listen:          "auto:1080",
 		ControlSocket:         "/tmp/wsl-win-relay-control.sock",
 		StrictListenHost:      "127.0.0.1",
 		StrictListenHost6:     "::1",
@@ -64,6 +67,7 @@ func Default() File {
 		UDPAssociateIdle:      "5m",
 		ProxyHandshakeTimeout: "15s",
 		MaxProxyConnections:   256,
+		ListenStatusFile:      "auto",
 		AutoForward:           AutoForwardConfig{WindowsHost: "127.0.0.1", WindowsHost6: "::1", Interval: "1s", RetryMin: "1s", RetryMax: "30s"},
 	}
 }
@@ -106,6 +110,14 @@ func Load(path string) (File, error) {
 	}
 	if result.MaxProxyConnections <= 0 || result.MaxProxyConnections > 65535 {
 		return File{}, errors.New("max_proxy_connections must be between 1 and 65535")
+	}
+	if err := listenaddr.ValidateTCPListenSpec(result.SOCKS5Listen); err != nil {
+		return File{}, fmt.Errorf("socks5_listen: %w", err)
+	}
+	if result.HTTPProxyListen != "" {
+		if err := listenaddr.ValidateTCPListenSpec(result.HTTPProxyListen); err != nil {
+			return File{}, fmt.Errorf("http_proxy_listen: %w", err)
+		}
 	}
 	for name, value := range map[string]int{
 		"strict_max_connections":      result.StrictMaxConnections,

@@ -35,6 +35,7 @@ printf '%s\n' \
     '  "link show"*) [ "$3" = "$WWR_TUN_DEVICE" ] && [ -f "$WWR_TEST_TUN_FILE" ] && exit 0 || exit 1 ;;' \
     '  "link del"*) rm -f "$WWR_TEST_TUN_FILE"; exit 0 ;;' \
     '  "tuntap add"*) : >"$WWR_TEST_TUN_FILE"; exit 0 ;;' \
+    '  "route get"*) printf "local %s dev lo table local\\n" "$3"; exit 0 ;;' \
     '  "-6 route add ::/1"*) [ "${WWR_TEST_IPV6_MODE:-unsupported}" = partial ] && exit 0 || exit 1 ;;' \
     '  "-6 route add 8000::/1"*) [ "${WWR_TEST_IPV6_MODE:-unsupported}" = partial ] && exit 1 || exit 0 ;;' \
     '  *) exit 0 ;;' \
@@ -168,4 +169,42 @@ set -e
 grep -q 'local TUN proxy did not start' "$tmp_dir/proxy-wait.log"
 [ ! -s "$log_file" ] || { echo "network mutation occurred before local proxy preflight" >&2; cat "$log_file" >&2; exit 1; }
 unset WWR_PROC_NET_TCP WWR_PROC_NET_TCP6
+unset WWR_TEST_IPV6_MODE
+
+# Auto mode consumes the proxy service's live listener status before making
+# network changes and still treats the published address as a local dial.
+printf '{"process_id":%s,"socks5":"10.255.255.254:1080","http":""}\n' "$$" >"$tmp_dir/listeners.json"
+chmod 600 "$tmp_dir/listeners.json"
+printf '%s\n' '  sl  local_address rem_address   st' '   0: FEFFFF0A:0438 00000000:0000 0A' >"$proc_tcp"
+export WWR_TUN_PROXY=auto
+export WWR_PROXY_STATUS_FILE="$tmp_dir/listeners.json"
+export WWR_PROC_NET_TCP=$proc_tcp
+export WWR_PROC_NET_TCP6=$proc_tcp6
+: >"$log_file"
+: >"$tun2socks_args"
+rm -f "$active_file"
+"$repo_dir/scripts/transparent-relay.sh" >"$tmp_dir/auto.log" 2>&1 &
+relay_pid=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [ -f "$active_file" ] && break
+    sleep 0.1
+done
+[ -f "$active_file" ] || { cat "$tmp_dir/auto.log" >&2; exit 1; }
+grep -q -- '--device wsl-win-relay-test-tun --proxy socks5://10.255.255.254:1080$' "$tun2socks_args"
+kill -HUP "$relay_pid"
+set +e
+wait "$relay_pid"
+set -e
+relay_pid=
+
+# A stale publisher must fail before any TUN or route mutation.
+printf '{"process_id":999999,"socks5":"127.0.0.1:1080","http":""}\n' >"$tmp_dir/listeners.json"
+: >"$log_file"
+set +e
+"$repo_dir/scripts/transparent-relay.sh" >"$tmp_dir/stale-status.log" 2>&1
+stale_status=$?
+set -e
+[ "$stale_status" -ne 0 ] || { echo "stale listener status unexpectedly passed" >&2; exit 1; }
+grep -q 'automatic TUN proxy is unavailable or stale' "$tmp_dir/stale-status.log"
+[ ! -s "$log_file" ] || { echo "stale listener status mutated networking" >&2; cat "$log_file" >&2; exit 1; }
 echo "transparent relay bounded shutdown and partial IPv6 rollback passed"

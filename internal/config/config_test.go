@@ -17,7 +17,7 @@ func TestLoadMergesDefaultsAndRejectsUnknownFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.SOCKS5Listen != "127.0.0.1:1080" || got.RelayExecutable != "/mnt/c/relay.exe" || !got.BrokerMode || got.UpstreamProxy != "socks5h://127.0.0.1:7890" || got.StrictListenHost6 != "::1" || got.RelayHandshakeTimeout != "5s" || got.RelayDialTimeout != "30s" || got.ProxyHandshakeTimeout != "3s" || got.MaxProxyConnections != 123 || got.AutoForward.WindowsHost6 != "::1" || got.AutoForward.WindowsPortOffset != 10000 || got.AutoForward.StatusFile != "/tmp/mappings.json" || len(got.ReverseUDP) != 1 || !got.AutoForward.Enabled {
+	if got.SOCKS5Listen != "auto:1080" || got.RelayExecutable != "/mnt/c/relay.exe" || !got.BrokerMode || got.UpstreamProxy != "socks5h://127.0.0.1:7890" || got.StrictListenHost6 != "::1" || got.RelayHandshakeTimeout != "5s" || got.RelayDialTimeout != "30s" || got.ProxyHandshakeTimeout != "3s" || got.MaxProxyConnections != 123 || got.AutoForward.WindowsHost6 != "::1" || got.AutoForward.WindowsPortOffset != 10000 || got.AutoForward.StatusFile != "/tmp/mappings.json" || len(got.ReverseUDP) != 1 || !got.AutoForward.Enabled {
 		t.Fatalf("config: %#v", got)
 	}
 	if duration, _ := got.AutoForwardDuration(); duration != 250*time.Millisecond {
@@ -91,6 +91,32 @@ func TestLoadNormalizesHTTPProxyListenName(t *testing.T) {
 		}
 		if got.HTTPProxyListen != "127.0.0.1:8081" || got.HTTPConnectListen != "127.0.0.1:8081" {
 			t.Fatalf("normalized config for %s: %#v", content, got)
+		}
+	}
+}
+
+func TestLoadAcceptsAutomaticLocalListeners(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"socks5_listen":"auto:1081","http_proxy_listen":"auto:8081"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SOCKS5Listen != "auto:1081" || got.HTTPProxyListen != "auto:8081" || got.ListenStatusFile != "auto" {
+		t.Fatalf("config=%#v", got)
+	}
+}
+
+func TestLoadRejectsInvalidAutomaticLocalListener(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	for _, value := range []string{"auto:", "auto:0", "auto:65536", "auto:not-a-port"} {
+		if err := os.WriteFile(path, []byte(`{"socks5_listen":"`+value+`"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil {
+			t.Fatalf("accepted socks5_listen=%q", value)
 		}
 	}
 }

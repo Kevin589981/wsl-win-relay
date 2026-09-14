@@ -18,6 +18,7 @@ export PATH="$tmp_dir/bin:/usr/bin:/bin"
 export WWR_INSTALL_ROOT="$tmp_dir/root"
 export WWR_TUN2SOCKS_BIN="$tmp_dir/bin/tun2socks"
 export WWR_TEST_SYSTEMCTL_LOG="$tmp_dir/systemctl.log"
+export WWR_PROXY_STATUS_UID=1000
 
 "$repo_dir/scripts/install-transparent-service.sh" >"$tmp_dir/install.log" 2>&1
 libexec=$tmp_dir/root/usr/local/libexec/wsl-win-relay
@@ -30,6 +31,7 @@ unit=$tmp_dir/root/etc/systemd/system/wsl-win-relay-transparent.service
 [ "$(stat -c '%a' "$config")" = 600 ]
 grep -q '^ExecStart=/usr/local/libexec/wsl-win-relay/transparent-relay.sh$' "$unit"
 grep -q '^WWR_TUN2SOCKS_BIN=/usr/local/libexec/wsl-win-relay/tun2socks$' "$config"
+grep -q '^WWR_PROXY_STATUS_UID=1000$' "$config"
 grep -qx 'daemon-reload' "$WWR_TEST_SYSTEMCTL_LOG"
 grep -qx 'enable wsl-win-relay-transparent.service' "$WWR_TEST_SYSTEMCTL_LOG"
 grep -qx 'restart wsl-win-relay-transparent.service' "$WWR_TEST_SYSTEMCTL_LOG"

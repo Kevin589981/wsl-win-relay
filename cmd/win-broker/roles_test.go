@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Kevin589981/wsl-win-relay/internal/listenaddr"
 	"github.com/Kevin589981/wsl-win-relay/internal/transport/localipc"
 )
 
@@ -30,7 +31,7 @@ func TestEqualTokenHex(t *testing.T) {
 }
 
 func TestServeWorkerControlRequiresToken(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, _, err := listenaddr.ListenTCP("auto:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +88,7 @@ func TestServeWorkerControlTimesOutStalledRequest(t *testing.T) {
 	roleControlRequestTimeout = 25 * time.Millisecond
 	t.Cleanup(func() { roleControlRequestTimeout = previousTimeout })
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, _, err := listenaddr.ListenTCP("auto:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +98,9 @@ func TestServeWorkerControlTimesOutStalledRequest(t *testing.T) {
 		serveWorkerControl(serverCtx, listener, func() {}, "aabbcc", roleWorker)
 		close(done)
 	}()
-	conn, err := net.Dial("tcp", listener.Addr().String())
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), time.Second)
+	defer dialCancel()
+	conn, err := (&net.Dialer{}).DialContext(dialCtx, "tcp", listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -22,7 +22,9 @@ GOPROXY=off go build -o "$tmp_dir/win-broker" "$repo_dir/cmd/win-broker"
 GOPROXY=off go build -o "$tmp_dir/win-connector" "$repo_dir/cmd/win-connector"
 GOPROXY=off go build -o "$tmp_dir/wsl-proxy" "$repo_dir/cmd/wsl-proxy"
 
-python3 -m http.server 18081 --bind 127.0.0.1 >"$tmp_dir/http.log" 2>&1 &
+test_host=$(ip -o -4 addr show dev lo 2>/dev/null | awk '$4 !~ /^127\./ {split($4, fields, "/"); print fields[1]; exit}')
+[ -n "$test_host" ] || test_host=127.0.0.1
+python3 -m http.server 18081 --bind "$test_host" >"$tmp_dir/http.log" 2>&1 &
 http_pid=$!
 
 token=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
@@ -40,14 +42,16 @@ done
 WSL_WIN_RELAY_ATTACH_TOKEN=$token \
 WSL_WIN_RELAY_BROKER_ENDPOINT="$tmp_dir/broker.sock" \
     "$tmp_dir/wsl-proxy" -broker-mode -relay-exe "$tmp_dir/win-connector" \
-    -listen 127.0.0.1:18080 -control-socket "$tmp_dir/control.sock" \
+    -listen auto:18080 -listen-status "$tmp_dir/listeners.json" -control-socket "$tmp_dir/control.sock" \
     >"$tmp_dir/proxy.log" 2>&1 &
 proxy_pid=$!
 
 for _ in $(seq 1 100); do
+    proxy_address=$(sed -n 's/.*"socks5"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$tmp_dir/listeners.json" 2>/dev/null | head -n 1)
+    [ -n "$proxy_address" ] || { sleep 0.1; continue; }
     if curl --noproxy '' --silent --show-error --fail \
-        --socks5-hostname 127.0.0.1:18080 \
-        http://127.0.0.1:18081/ >/dev/null 2>/dev/null; then
+        --socks5-hostname "$proxy_address" \
+        "http://$test_host:18081/" >/dev/null 2>/dev/null; then
         echo "broker-connector SOCKS5 integration passed"
         exit 0
     fi

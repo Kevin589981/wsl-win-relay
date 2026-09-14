@@ -15,10 +15,14 @@ delayed_curl_pid=
 worker_delayed_curl_pid=
 host_delayed_curl_pid=
 owner_pid=
+test_host=$(ip -o -4 addr show dev lo 2>/dev/null | awk '$4 !~ /^127\./ {split($4, fields, "/"); print fields[1]; exit}')
+[ -n "$test_host" ] || test_host=127.0.0.1
+export WWR_TEST_HOST=$test_host
 service_port=$(python3 -c 'import socket
+import os
 while True:
-    s=socket.socket(); s.bind(("127.0.0.1", 0)); p=s.getsockname()[1]; s.close()
-    if p <= 65000:
+    s=socket.socket(); s.bind((os.environ["WWR_TEST_HOST"], 0)); p=s.getsockname()[1]; s.close()
+    if p <= 55000:
         print(p)
         break')
 explicit_target_port=$((service_port + 1))
@@ -26,6 +30,7 @@ explicit_port=$((service_port + 2))
 socks_port=$((service_port + 3))
 strict_port=$((service_port + 4))
 delayed_port=$((service_port + 5))
+auto_windows_port=$((service_port + 10000))
 
 cleanup() {
     [ -z "${proxy_pid:-}" ] || kill "$proxy_pid" 2>/dev/null || true
@@ -72,7 +77,7 @@ GOPROXY=off go build -o "$tmp_dir/win-connector" "$repo_dir/cmd/win-connector"
 GOPROXY=off go build -o "$tmp_dir/wsl-proxy" "$repo_dir/cmd/wsl-proxy"
 
 printf '%s\n' 'broker-restart-ok' >"$tmp_dir/index.html"
-(cd "$tmp_dir" && python3 -m http.server "$service_port" --bind 127.0.0.1) >"$tmp_dir/http.log" 2>&1 &
+(cd "$tmp_dir" && python3 -m http.server "$service_port" --bind "$test_host") >"$tmp_dir/http.log" 2>&1 &
 http_pid=$!
 sleep 0.2
 if ! kill -0 "$http_pid" 2>/dev/null; then
@@ -80,12 +85,13 @@ if ! kill -0 "$http_pid" 2>/dev/null; then
     exit 1
 fi
 
-(cd "$tmp_dir" && python3 -m http.server "$explicit_target_port" --bind 127.0.0.1) >"$tmp_dir/http2.log" 2>&1 &
+(cd "$tmp_dir" && python3 -m http.server "$explicit_target_port" --bind "$test_host") >"$tmp_dir/http2.log" 2>&1 &
 http2_pid=$!
-(cd "$tmp_dir" && python3 -m http.server "$strict_port" --bind 127.0.0.1) >"$tmp_dir/http3.log" 2>&1 &
+(cd "$tmp_dir" && python3 -m http.server "$strict_port" --bind "$test_host") >"$tmp_dir/http3.log" 2>&1 &
 http3_pid=$!
 python3 - "$delayed_port" >"$tmp_dir/delayed.log" 2>&1 <<'PY' &
 import http.server
+import os
 import sys
 import time
 
@@ -112,7 +118,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
-http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+http.server.ThreadingHTTPServer((os.environ["WWR_TEST_HOST"], port), Handler).serve_forever()
 PY
 delayed_pid=$!
 
@@ -131,17 +137,17 @@ wait_for_socket "$tmp_dir/broker.sock"
 WSL_WIN_RELAY_ATTACH_TOKEN=$token \
 WSL_WIN_RELAY_BROKER_ENDPOINT="$tmp_dir/broker.sock" \
     "$tmp_dir/wsl-proxy" -broker-mode -relay-exe "$tmp_dir/win-connector" \
-    -listen "127.0.0.1:$socks_port" -auto-forward \
-    -auto-forward-host 127.0.0.2 -auto-forward-include "$service_port" \
-    -auto-forward-interval 100ms -reverse "127.0.0.2:$explicit_port=127.0.0.1:$explicit_target_port" \
-    -reverse "127.0.0.2:$delayed_port=127.0.0.1:$delayed_port" \
-    -strict-listen-host 127.0.0.2 \
+    -listen "auto:$socks_port" -listen-status "$tmp_dir/listeners.json" -auto-forward \
+    -auto-forward-host "$test_host" -auto-forward-port-offset 10000 -auto-forward-include "$service_port" \
+    -auto-forward-interval 100ms -reverse "[::1]:$explicit_port=$test_host:$explicit_target_port" \
+    -reverse "[::1]:$delayed_port=$test_host:$delayed_port" \
+    -strict-listen-host6 ::1 \
     -control-socket "$tmp_dir/control.sock" >"$tmp_dir/proxy.log" 2>&1 &
 proxy_pid=$!
 
 probe() {
     curl --noproxy '*' --silent --show-error --fail --max-time 2 \
-        "http://127.0.0.2:$service_port/"
+        "http://$test_host:$auto_windows_port/"
 }
 
 for _ in $(seq 1 300); do
@@ -157,8 +163,8 @@ if ! grep -qx "broker-restart-ok" "$tmp_dir/first.out"; then
 fi
 
 for _ in $(seq 1 150); do
-    if curl --noproxy '*' --silent --show-error --fail --max-time 2 \
-        "http://127.0.0.2:$explicit_port/" >"$tmp_dir/explicit-first.out" 2>"$tmp_dir/explicit-first.err"; then
+    if curl --globoff --noproxy '*' --silent --show-error --fail --max-time 2 \
+        "http://[::1]:$explicit_port/" >"$tmp_dir/explicit-first.out" 2>"$tmp_dir/explicit-first.err"; then
         break
     fi
     sleep 0.1
@@ -169,13 +175,14 @@ if ! grep -qx "broker-restart-ok" "$tmp_dir/explicit-first.out"; then
 fi
 
 strict_lease=$(python3 - "$tmp_dir/control.sock" "$http3_pid" "$strict_port" <<'PY'
+import os
 import socket
 import sys
 
 path, pid, port = sys.argv[1], sys.argv[2], sys.argv[3]
 with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
     conn.connect(path)
-    conn.sendall(f"RESERVE {pid} tcp4 {port} 127.0.0.1\n".encode())
+    conn.sendall(f"RESERVE {pid} tcp6 {port} {os.environ['WWR_TEST_HOST']}\n".encode())
     response = conn.recv(256).decode()
 if not response.startswith("OK "):
     raise SystemExit(response.strip())
@@ -190,16 +197,16 @@ print(lease)
 PY
 )
 for _ in $(seq 1 150); do
-    if curl --noproxy '*' --silent --show-error --fail --max-time 2 \
-        "http://127.0.0.2:$strict_port/" >"$tmp_dir/strict-first.out" 2>"$tmp_dir/strict-first.err"; then
+    if curl --globoff --noproxy '*' --silent --show-error --fail --max-time 2 \
+        "http://[::1]:$strict_port/" >"$tmp_dir/strict-first.out" 2>"$tmp_dir/strict-first.err"; then
         break
     fi
     sleep 0.1
 done
 grep -qx "broker-restart-ok" "$tmp_dir/strict-first.out"
 
-curl --noproxy '*' --silent --show-error --fail --max-time 20 \
-    "http://127.0.0.2:$delayed_port/" >"$tmp_dir/delayed.out" 2>"$tmp_dir/delayed.err" &
+curl --globoff --noproxy '*' --silent --show-error --fail --max-time 20 \
+    "http://[::1]:$delayed_port/" >"$tmp_dir/delayed.out" 2>"$tmp_dir/delayed.err" &
 delayed_curl_pid=$!
 for _ in $(seq 1 150); do
     grep -q delayed-request "$tmp_dir/delayed.log" && break
@@ -236,8 +243,8 @@ if ! grep -qx "broker-restart-ok" "$tmp_dir/second.out"; then
     exit 1
 fi
 for _ in $(seq 1 150); do
-    if curl --noproxy '*' --silent --show-error --fail --max-time 2 \
-        "http://127.0.0.2:$explicit_port/" >"$tmp_dir/explicit-second.out" 2>"$tmp_dir/explicit-second.err"; then
+    if curl --globoff --noproxy '*' --silent --show-error --fail --max-time 2 \
+        "http://[::1]:$explicit_port/" >"$tmp_dir/explicit-second.out" 2>"$tmp_dir/explicit-second.err"; then
         break
     fi
     sleep 0.1
@@ -247,8 +254,8 @@ if ! grep -qx "broker-restart-ok" "$tmp_dir/explicit-second.out"; then
     exit 1
 fi
 for _ in $(seq 1 150); do
-    if curl --noproxy '*' --silent --show-error --fail --max-time 2 \
-        "http://127.0.0.2:$strict_port/" >"$tmp_dir/strict-second.out" 2>"$tmp_dir/strict-second.err"; then
+    if curl --globoff --noproxy '*' --silent --show-error --fail --max-time 2 \
+        "http://[::1]:$strict_port/" >"$tmp_dir/strict-second.out" 2>"$tmp_dir/strict-second.err"; then
         break
     fi
     sleep 0.1
@@ -287,24 +294,24 @@ if ! grep -qx "broker-restart-ok" "$tmp_dir/worker-restart.out"; then
     exit 1
 fi
 for _ in $(seq 1 150); do
-    if curl --noproxy '*' --silent --show-error --fail --max-time 2 \
-        "http://127.0.0.2:$explicit_port/" >"$tmp_dir/explicit-worker.out" 2>"$tmp_dir/explicit-worker.err"; then
+    if curl --globoff --noproxy '*' --silent --show-error --fail --max-time 2 \
+        "http://[::1]:$explicit_port/" >"$tmp_dir/explicit-worker.out" 2>"$tmp_dir/explicit-worker.err"; then
         break
     fi
     sleep 0.1
 done
 grep -qx "broker-restart-ok" "$tmp_dir/explicit-worker.out"
 for _ in $(seq 1 150); do
-    if curl --noproxy '*' --silent --show-error --fail --max-time 2 \
-        "http://127.0.0.2:$strict_port/" >"$tmp_dir/strict-worker.out" 2>"$tmp_dir/strict-worker.err"; then
+    if curl --globoff --noproxy '*' --silent --show-error --fail --max-time 2 \
+        "http://[::1]:$strict_port/" >"$tmp_dir/strict-worker.out" 2>"$tmp_dir/strict-worker.err"; then
         break
     fi
     sleep 0.1
 done
 grep -qx "broker-restart-ok" "$tmp_dir/strict-worker.out"
 
-curl --noproxy '*' --silent --show-error --fail --max-time 20 \
-    "http://127.0.0.2:$delayed_port/worker" >"$tmp_dir/worker-delayed.out" 2>"$tmp_dir/worker-delayed.err" &
+curl --globoff --noproxy '*' --silent --show-error --fail --max-time 20 \
+    "http://[::1]:$delayed_port/worker" >"$tmp_dir/worker-delayed.out" 2>"$tmp_dir/worker-delayed.err" &
 worker_delayed_curl_pid=$!
 for _ in $(seq 1 150); do
     grep -q worker-delayed-request "$tmp_dir/delayed.log" && break
@@ -335,8 +342,8 @@ if [ -z "$host_pid" ]; then
     cat "$tmp_dir/broker.log" "$tmp_dir/proxy.log"
     exit 1
 fi
-curl --noproxy '*' --silent --show-error --fail --max-time 20 \
-    "http://127.0.0.2:$delayed_port/host" >"$tmp_dir/host-delayed.out" 2>"$tmp_dir/host-delayed.err" &
+curl --globoff --noproxy '*' --silent --show-error --fail --max-time 20 \
+    "http://[::1]:$delayed_port/host" >"$tmp_dir/host-delayed.out" 2>"$tmp_dir/host-delayed.err" &
 host_delayed_curl_pid=$!
 for _ in $(seq 1 150); do
     grep -q host-delayed-request "$tmp_dir/delayed.log" && break

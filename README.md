@@ -152,11 +152,12 @@ TUN primarily handles IP traffic. An application may still resolve a hostname
 before opening its connection, so broken WSL DNS can still matter. Prefer
 `socks5h` or configure `WWR_DNS` when DNS is also unavailable.
 
-If mirror mode routes `127.0.0.1` through `loopback0` and a WSL listener remains
-stuck in `SYN-SENT`, use a WSL-owned loopback alias (commonly `10.255.255.254`):
-set `socks5_listen`/`http_proxy_listen` and `WWR_TUN_PROXY` to that address. The
-script recognizes proxy addresses reported as `local` by the kernel and will not
-bind tun2socks to the external uplink for such a local proxy.
+If mirror mode routes `127.0.0.1` through `loopback0` and local connections remain
+stuck in `SYN-SENT`, use `auto:<port>`. The relay enumerates IPv4 addresses on the
+real Linux `lo` interface and performs an actual bind plus TCP connect/accept probe
+for every candidate. Only a reachable address is selected. A machine may select
+an address such as `10.255.255.254`, but that value is neither constant nor
+hardcoded.
 
 ### Explicit reverse mappings
 
@@ -330,8 +331,9 @@ egress:
   "relay_exe": "/mnt/c/Tools/wsl-win-relay/wsl-win-relay.exe",
   "broker_mode": false,
   "upstream_proxy": "",
-  "socks5_listen": "127.0.0.1:1080",
-  "http_proxy_listen": "127.0.0.1:8080"
+  "socks5_listen": "auto:1080",
+  "http_proxy_listen": "auto:8080",
+  "listen_status_file": "auto"
 }
 ```
 
@@ -410,8 +412,9 @@ Common fields:
 
 | Field | Default | Purpose |
 | --- | --- | --- |
-| `socks5_listen` | `127.0.0.1:1080` | WSL SOCKS5 listener |
-| `http_proxy_listen` | `127.0.0.1:8080` | WSL HTTP listener |
+| `socks5_listen` | `auto:1080` | Select a reachable WSL-local SOCKS5 address; explicit addresses remain supported |
+| `http_proxy_listen` | empty (Release example uses `auto:8080`) | optional WSL HTTP listener |
+| `listen_status_file` | `auto` | Effective addresses and publisher state; resolves to `/tmp/wsl-win-relay-<UID>/listeners.json` |
 | `relay_handshake_timeout` | `5s` | startup capability handshake |
 | `relay_dial_timeout` | `30s` | wait for a usable relay session |
 | `proxy_handshake_timeout` | `15s` | local SOCKS/HTTP handshake limit |
@@ -584,7 +587,7 @@ With the local SOCKS5 proxy already running:
 
 ```bash
 sudo env \
-  WWR_TUN_PROXY=socks5://127.0.0.1:1080 \
+  WWR_TUN_PROXY=auto \
   ./scripts/transparent-relay.sh
 ```
 
@@ -592,14 +595,15 @@ When HNS has removed the normal WSL interface and the proxy is local:
 
 ```bash
 sudo env \
-  WWR_UPLINK_INTERFACE=lo \
-  WWR_TUN_PROXY=socks5://127.0.0.1:1080 \
+  WWR_TUN_PROXY=auto \
   ./scripts/transparent-relay.sh
 ```
 
-The script waits for the local proxy before changing routes and restores routes,
-DNS, and the TUN device on exit. Set `WWR_DNS=1.1.1.1` only when replacement
-DNS is required.
+`auto` reads the effective SOCKS5 address published by the live proxy process in
+`/tmp/wsl-win-relay-<UID>/listeners.json`. The script verifies the publisher and listener
+before changing routes and does not bind a proven-local proxy dial to an `eth*`
+uplink. It restores routes, DNS, and the TUN device on exit. Set `WWR_DNS=1.1.1.1`
+only when replacement DNS is required.
 
 For a boot-persistent transparent service:
 

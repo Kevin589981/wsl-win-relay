@@ -6,7 +6,8 @@ config=${WSL_WIN_RELAY_CONFIG:-"$config_root/wsl-win-relay/config.json"}
 broker_env=${WSL_WIN_RELAY_BROKER_ENV_FILE:-"$config_root/wsl-win-relay/broker.env"}
 proxy_binary=${WSL_WIN_RELAY_PROXY_EXE:-"$HOME/bin/wsl-proxy-linux"}
 probe_url=
-socks_proxy=socks5h://127.0.0.1:1080
+socks_proxy=
+listen_status=${WSL_WIN_RELAY_LISTEN_STATUS_FILE:-/tmp/wsl-win-relay-$(id -u)/listeners.json}
 check_services=1
 failures=0
 warnings=0
@@ -18,7 +19,8 @@ Usage: wsl-win-relay-doctor [options]
   --broker-env PATH      private broker environment file
   --proxy-binary PATH    installed WSL proxy executable
   --probe-url URL        optional URL fetched through the SOCKS proxy
-  --socks-proxy URL      SOCKS proxy for --probe-url (default: socks5h://127.0.0.1:1080)
+  --socks-proxy URL      SOCKS proxy for --probe-url (default: active listener status)
+  --listen-status PATH   active local listener status JSON
   --skip-services        do not inspect systemd user units
 EOF
 }
@@ -29,7 +31,7 @@ fail() { failures=$((failures + 1)); printf '[FAIL] %s\n' "$*"; }
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --config|--broker-env|--proxy-binary|--probe-url|--socks-proxy)
+        --config|--broker-env|--proxy-binary|--probe-url|--socks-proxy|--listen-status)
             [ "$#" -ge 2 ] || { printf 'missing value for %s\n' "$1" >&2; exit 2; }
             option=$1
             value=$2
@@ -40,6 +42,7 @@ while [ "$#" -gt 0 ]; do
                 --proxy-binary) proxy_binary=$value ;;
                 --probe-url) probe_url=$value ;;
                 --socks-proxy) socks_proxy=$value ;;
+                --listen-status) listen_status=$value ;;
             esac
             ;;
         --skip-services) check_services=0; shift ;;
@@ -47,6 +50,17 @@ while [ "$#" -gt 0 ]; do
         *) printf 'unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
     esac
 done
+
+if [ -z "$socks_proxy" ] && [ -f "$listen_status" ] && [ ! -L "$listen_status" ]; then
+    active_socks=$(sed -n 's/.*"socks5"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$listen_status" | head -n 1)
+    active_pid=$(sed -n 's/.*"process_id"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$listen_status" | head -n 1)
+    if [ -n "$active_socks" ] && [ -n "$active_pid" ] && kill -0 "$active_pid" 2>/dev/null; then
+        socks_proxy=socks5h://$active_socks
+    fi
+fi
+if [ -z "$socks_proxy" ]; then
+    socks_proxy=socks5h://127.0.0.1:1080
+fi
 
 file_mode() {
     stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null
