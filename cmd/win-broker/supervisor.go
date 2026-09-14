@@ -5,11 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/Kevin589981/wsl-win-relay/internal/transport/localipc"
 )
 
 const (
@@ -17,12 +20,14 @@ const (
 	supervisorMaxDelay     = 30 * time.Second
 	supervisorStablePeriod = time.Minute
 	supervisorStopTimeout  = 5 * time.Second
+	supervisorProbeTimeout = 300 * time.Millisecond
+	supervisorProbePeriod  = 500 * time.Millisecond
 )
 
-// runSupervisor owns no IPC endpoint itself. It is deliberately a thin host
-// boundary around the normal frontend, so a frontend crash cannot take the
-// service entrypoint down with it. The child keeps all existing role reuse and
-// socket-owner health logic.
+// runSupervisor owns only a private election endpoint. It is deliberately a
+// thin host boundary around the normal frontend, so a frontend crash cannot
+// take the service entrypoint down with it. The child keeps all existing role
+// reuse and socket-owner health logic.
 func runSupervisor(opts options, logger *log.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -31,8 +36,15 @@ func runSupervisor(opts options, logger *log.Logger) error {
 		return fmt.Errorf("locate broker executable: %w", err)
 	}
 	args := frontendArgs(opts)
+	lock, err := acquireSupervisorLock(ctx, opts.endpoint, logger)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	go drainSupervisorLock(ctx, lock)
 	delay := supervisorInitialDelay
 	for {
+		waitForExistingFrontend(ctx, opts.endpoint, logger)
 		started := time.Now()
 		cmd := exec.Command(executable, args...)
 		cmd.Stdin = os.Stdin
@@ -60,6 +72,19 @@ func runSupervisor(opts options, logger *log.Logger) error {
 		if exitCode == 2 {
 			return fmt.Errorf("broker frontend exited with configuration status 2")
 		}
+		if frontendReachable(ctx, opts.endpoint) {
+			// Another supervisor won the bind race, or an older supervisor
+			// survived a WSL restart. Keep this supervisor as a standby and
+			// take over only after the active frontend disappears.
+			logger.Printf("broker frontend is owned by another supervisor on %s; waiting for it to exit", opts.endpoint)
+			waitForFrontendExit(ctx, opts.endpoint)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			logger.Printf("broker frontend on %s is unavailable; taking ownership", opts.endpoint)
+			delay = supervisorInitialDelay
+			continue
+		}
 		if waitErr != nil {
 			logger.Printf("broker frontend exited with status %d: %v", exitCode, waitErr)
 		} else {
@@ -79,6 +104,86 @@ func runSupervisor(opts options, logger *log.Logger) error {
 			return ctx.Err()
 		}
 		delay = nextSupervisorDelay(delay)
+	}
+}
+
+// frontendReachable only probes whether the public frontend endpoint is owned
+// by a live process. The frontend has no control endpoint of its own, so a
+// short connect-and-close probe is used for supervisor election. The actual
+// attach handshake remains token-authenticated by the normal connector path.
+func frontendReachable(ctx context.Context, endpoint string) bool {
+	return endpointReachable(ctx, endpoint)
+}
+
+func endpointReachable(ctx context.Context, endpoint string) bool {
+	probeCtx, cancel := context.WithTimeout(ctx, supervisorProbeTimeout)
+	defer cancel()
+	conn, err := localipc.Dial(probeCtx, endpoint)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
+func acquireSupervisorLock(ctx context.Context, endpoint string, logger *log.Logger) (net.Listener, error) {
+	lockEndpoint := deriveEndpoint(endpoint, "supervisor")
+	for {
+		lock, err := localipc.Listen(lockEndpoint)
+		if err == nil {
+			logger.Printf("broker supervisor lock acquired on %s", lockEndpoint)
+			return lock, nil
+		}
+		logger.Printf("broker supervisor lock is owned by another process on %s; waiting", lockEndpoint)
+		waitForEndpointExit(ctx, lockEndpoint)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+	}
+}
+
+func drainSupervisorLock(ctx context.Context, listener net.Listener) {
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		_ = conn.Close()
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+	}
+}
+
+func waitForExistingFrontend(ctx context.Context, endpoint string, logger *log.Logger) {
+	if !frontendReachable(ctx, endpoint) {
+		return
+	}
+	logger.Printf("reusing existing broker frontend on %s; waiting for it to exit", endpoint)
+	waitForFrontendExit(ctx, endpoint)
+	if ctx.Err() == nil {
+		logger.Printf("existing broker frontend on %s is unavailable; starting replacement", endpoint)
+	}
+}
+
+func waitForFrontendExit(ctx context.Context, endpoint string) {
+	waitForEndpointExit(ctx, endpoint)
+}
+
+func waitForEndpointExit(ctx context.Context, endpoint string) {
+	ticker := time.NewTicker(supervisorProbePeriod)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if !endpointReachable(ctx, endpoint) {
+				return
+			}
+		}
 	}
 }
 

@@ -4,13 +4,15 @@ set -eu
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 tmp_dir=$(mktemp -d)
 supervisor_pid=
+second_supervisor_pid=
 frontend_pid=
 proxy_pid=
 http_pid=
 
 cleanup() {
-    [ -z "${proxy_pid:-}" ] || kill "$proxy_pid" 2>/dev/null || true
-    [ -z "${supervisor_pid:-}" ] || kill "$supervisor_pid" 2>/dev/null || true
+	[ -z "${proxy_pid:-}" ] || kill "$proxy_pid" 2>/dev/null || true
+	[ -z "${second_supervisor_pid:-}" ] || kill "$second_supervisor_pid" 2>/dev/null || true
+	[ -z "${supervisor_pid:-}" ] || kill "$supervisor_pid" 2>/dev/null || true
     [ -z "${frontend_pid:-}" ] || kill "$frontend_pid" 2>/dev/null || true
     [ -z "${http_pid:-}" ] || kill "$http_pid" 2>/dev/null || true
     # A killed frontend may have left roles that it did not start in this
@@ -19,7 +21,8 @@ cleanup() {
         kill "$pid" 2>/dev/null || true
     done
     [ -z "${proxy_pid:-}" ] || wait "$proxy_pid" 2>/dev/null || true
-    [ -z "${supervisor_pid:-}" ] || wait "$supervisor_pid" 2>/dev/null || true
+	[ -z "${supervisor_pid:-}" ] || wait "$supervisor_pid" 2>/dev/null || true
+	[ -z "${second_supervisor_pid:-}" ] || wait "$second_supervisor_pid" 2>/dev/null || true
     [ -z "${http_pid:-}" ] || wait "$http_pid" 2>/dev/null || true
     rm -rf "$tmp_dir"
 }
@@ -47,7 +50,10 @@ for _ in $(seq 1 100); do
 done
 [ -S "$tmp_dir/broker.sock" ]
 
-WSL_WIN_RELAY_ATTACH_TOKEN=$token WSL_WIN_RELAY_BROKER_ENDPOINT="$tmp_dir/broker.sock"     "$tmp_dir/wsl-proxy" -broker-mode -relay-exe "$tmp_dir/win-connector"     -listen 127.0.0.1:18083     >"$tmp_dir/proxy.log" 2>&1 &
+WSL_WIN_RELAY_ATTACH_TOKEN=$token WSL_WIN_RELAY_BROKER_ENDPOINT="$tmp_dir/broker.sock" \
+    "$tmp_dir/wsl-proxy" -broker-mode -relay-exe "$tmp_dir/win-connector" \
+    -listen 127.0.0.1:18083 -control-socket "$tmp_dir/control.sock" \
+    >"$tmp_dir/proxy.log" 2>&1 &
 proxy_pid=$!
 
 probe() {
@@ -61,6 +67,31 @@ for _ in $(seq 1 100); do
     sleep 0.1
 done
 probe
+
+# A second supervisor using the same endpoint must become a standby rather
+# than creating a competing frontend. This models a WSL restart while the
+# previous Windows process tree is still alive.
+WSL_WIN_RELAY_ATTACH_TOKEN=$token WSL_WIN_RELAY_BROKER_ENDPOINT="$tmp_dir/broker.sock" \
+    "$tmp_dir/win-broker" -supervise -endpoint "$tmp_dir/broker.sock" -token-file "$tmp_dir/token" \
+    >"$tmp_dir/second-broker.log" 2>&1 &
+second_supervisor_pid=$!
+for _ in $(seq 1 50); do
+    if grep -q 'broker supervisor lock is owned by another process' "$tmp_dir/second-broker.log" 2>/dev/null; then
+        break
+    fi
+    sleep 0.1
+done
+grep -q 'broker supervisor lock is owned by another process' "$tmp_dir/second-broker.log"
+frontend_count=$(ps -eo args= | awk -v exe="$tmp_dir/win-broker" -v endpoint="$tmp_dir/broker.sock" \
+    '$0 ~ exe && $0 ~ "-endpoint " endpoint && $0 !~ /-supervise/ && $0 !~ /-worker/ && $0 !~ /-socket-/ {count++} END {print count+0}')
+[ "$frontend_count" -eq 1 ] || {
+    cat "$tmp_dir/broker.log" "$tmp_dir/second-broker.log" >&2
+    echo "competing broker frontend count: $frontend_count" >&2
+    exit 1
+}
+kill "$second_supervisor_pid" 2>/dev/null || true
+wait "$second_supervisor_pid" 2>/dev/null || true
+second_supervisor_pid=
 
 for _ in $(seq 1 100); do
     frontend_pid=$(ps -eo pid=,args= | awk -v exe="$tmp_dir/win-broker" -v endpoint="$tmp_dir/broker.sock" '$0 ~ exe && $0 ~ endpoint && $0 !~ /-supervise/ {print $1; exit}')

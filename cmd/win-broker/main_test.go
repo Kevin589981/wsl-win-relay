@@ -1,6 +1,10 @@
 package main
 
 import (
+	"context"
+	"io"
+	"log"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -61,5 +65,31 @@ func TestSupervisorDelay(t *testing.T) {
 	}
 	if got := nextSupervisorDelay(supervisorMaxDelay); got != supervisorMaxDelay {
 		t.Fatalf("maximum backoff=%s", got)
+	}
+}
+
+func TestSupervisorLockExcludesSecondOwner(t *testing.T) {
+	endpoint := "wsl-win-relay-supervisor-test"
+	if runtime.GOOS != "windows" {
+		endpoint = t.TempDir() + "/broker.sock"
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	logger := log.New(io.Discard, "", 0)
+	lock, err := acquireSupervisorLock(ctx, endpoint, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+
+	probeCtx, probeCancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer probeCancel()
+	second, err := acquireSupervisorLock(probeCtx, endpoint, logger)
+	if second != nil {
+		_ = second.Close()
+		t.Fatal("second supervisor acquired the lock")
+	}
+	if err == nil {
+		t.Fatal("second supervisor unexpectedly returned success")
 	}
 }

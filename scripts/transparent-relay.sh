@@ -276,7 +276,13 @@ if [ "$uplink_fallback" -eq 1 ]; then
     echo "no default route; using loopback for local proxy"
 fi
 echo "transparent relay active: $device -> $proxy via $uplink"
-"$tun2socks_bin" --device "$device" --proxy "$proxy" --interface "$uplink" &
+if [ "$local_proxy" -eq 1 ]; then
+    # A local proxy must use the kernel loopback route. Binding the dialer to
+    # the WSL uplink (for example eth7) makes 127.0.0.1 unreachable.
+    "$tun2socks_bin" --device "$device" --proxy "$proxy" &
+else
+    "$tun2socks_bin" --device "$device" --proxy "$proxy" --interface "$uplink" &
+fi
 tun_pid=$!
 proxy_lost_at=
 while kill -0 "$tun_pid" 2>/dev/null; do

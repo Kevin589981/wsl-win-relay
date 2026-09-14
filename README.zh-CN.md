@@ -91,6 +91,11 @@ connector/frontend/bridge 重启时已有连接有机会继续使用。broker �
 owner 自身崩溃时，已有连接仍可能丢失。长期运行时推荐此模式；broker 模式的
 上游代理配置在 Windows broker 的私有环境中，WSL 不直接连接该地址。
 
+broker supervisor 还会持有一个独立的单实例选举 endpoint。WSL 关闭后旧的
+Windows broker 仍在运行时，新的 supervisor 会先复用/等待现有 frontend；如果
+旧实例最终消失，再由等待中的 supervisor 接管。这样可以避免两个 broker 同时
+抢占同名 endpoint，导致 `Access is denied`、反复重启或新 connector 无法工作。
+
 ### SOCKS5 出站模式
 
 ```text

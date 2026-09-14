@@ -7,6 +7,7 @@ fake_bin=$tmp_dir/bin
 mkdir -p "$fake_bin"
 log_file=$tmp_dir/ip.log
 active_file=$tmp_dir/tun2socks.active
+tun2socks_args=$tmp_dir/tun2socks.args
 relay_log=$tmp_dir/relay.log
 resolv_target=$tmp_dir/resolv.target
 resolv_conf=$tmp_dir/resolv.conf
@@ -42,6 +43,7 @@ printf '%s\n' \
 printf '%s\n' \
     '#!/bin/sh' \
     'printf "%s\\n" "$$" >"$WWR_TEST_TUN2SOCKS_ACTIVE"' \
+    'printf "%s\\n" "$*" >>"$WWR_TEST_TUN2SOCKS_ARGS"' \
     'trap "" TERM INT HUP' \
     'while :; do sleep 10; done' \
     >"$fake_bin/tun2socks"
@@ -64,6 +66,7 @@ export WWR_PROC_NET_TCP6=$proc_tcp6
 export WWR_TEST_IP_LOG=$log_file
 export WWR_TEST_TUN_FILE=$tmp_dir/tun-created
 export WWR_TEST_TUN2SOCKS_ACTIVE=$active_file
+export WWR_TEST_TUN2SOCKS_ARGS=$tun2socks_args
 
 "$repo_dir/scripts/transparent-relay.sh" >"$relay_log" 2>&1 &
 relay_pid=$!
@@ -73,6 +76,7 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
 done
 [ -f "$active_file" ] || { cat "$relay_log" >&2; exit 1; }
 tun_process=$(cat "$active_file")
+grep -q -- '--device wsl-win-relay-test-tun --proxy socks5://127.0.0.1:1080$' "$tun2socks_args"
 
 started=$(date +%s)
 kill -HUP "$relay_pid"

@@ -101,6 +101,13 @@ or socket-owner crash can still lose those connections. This is the recommended
 long-running mode. Its upstream proxy belongs in the private Windows broker
 environment; WSL does not connect to that upstream address directly.
 
+The broker supervisor also owns a private single-instance election endpoint. If
+WSL shuts down while the old Windows broker is still alive, a new supervisor first
+reuses or waits for the existing frontend. If that instance eventually disappears,
+the waiting supervisor takes ownership. This prevents competing brokers from
+binding the same endpoint and causing `Access is denied`, restart loops, or failed
+connector attachments.
+
 ### SOCKS5 egress mode
 
 ```text
