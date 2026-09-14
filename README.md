@@ -1,150 +1,453 @@
 # wsl-win-relay
 
-An emergency WSL-to-Windows network relay for cases where WSL networking is broken but Windows still has connectivity.
+An emergency network relay for WSL when WSL networking is broken but Windows
+still has network access.
 
-The current release exposes loopback SOCKS5 and HTTP proxies inside WSL, plus optional transparent routing and inbound port mapping. Windows processes perform outbound TCP/UDP and own inbound listeners while the WSL side exchanges multiplexed frames over stdio or the persistent broker transport. Protocol, transport, relay, and user-facing adapters remain independent.
+WSL applications connect to a local SOCKS5 or HTTP proxy. A Windows process
+performs the real outbound TCP/UDP connection, optionally through a Windows-side
+upstream proxy. WSL therefore does not need to reach the Windows proxy directly.
+This is useful when HNS, mirrored networking, a Windows hotspot, or the Windows
+loopback path is malfunctioning.
 
-## Status
+The relay can also expose WSL services on Windows ports, coordinate strict
+`listen()`/`bind()` calls, and route proxy-unaware applications through an
+optional TUN adapter.
 
-The repository remains under active maintenance. The current TCP/UDP relay is
-usable and tested:
+## Features
 
-- Versioned, bounded multiplexed protocol with explicit stream lifecycle.
-- Shared diagnostic normalization keeps relay errors, attach rejections,
-  strict-control responses, and mapping status valid UTF-8 within their
-  protocol-specific byte limits; line protocols also normalize CR/LF.
-- Stdio transport for WSL-to-Windows process interop.
-- Windows-side WinSock TCP dialing, including Windows-side DNS for domain targets.
-- Loopback SOCKS5 no-auth proxy with IPv4, IPv6, and domain CONNECT.
-- TCP half-close propagation so TLS/HTTP clients can finish writes before reading responses.
-- Cross-platform builds and WSL interop integration coverage.
-- Dynamic `/proc/net/tcp{,6}` listener discovery with automatic Windows add/remove.
-- Strict opt-in `listen()` coordination for dynamically linked Linux applications.
-- Explicit reverse UDP forwarding with per-source flow isolation.
-- Multiplexed Windows-side UDP sockets with endpoint-preserving datagram frames.
-- SOCKS5 UDP ASSOCIATE for DNS, QUIC-capable clients, and other UDP traffic.
-- Optional HTTP proxy for tools that only support `HTTP_PROXY`, including
-  CONNECT tunnels and cleartext HTTP forwarding.
-- Optional Windows-side HTTP CONNECT or SOCKS5/SOCKS5H upstream proxy; SOCKS5
-  upstreams also carry relay UDP via UDP ASSOCIATE.
-- Per-stream 256 KiB credit windows that isolate slow TCP consumers.
-- Global relay registry, UDP queue/source-flow, and concurrent-open caps that
-  reject excess work without disturbing established streams or mappings.
-- Non-blocking reverse-UDP frame dispatch and single-shot listener readiness,
-  preventing slow DNS or duplicate peer responses from stalling other flows.
-- Startup capability negotiation before any proxy or mapped port is advertised.
-- Idempotent systemd user-service installation with private configuration permissions and restart-on-relay-failure.
-- Broker installation validates the protected token file and rejects missing,
-  malformed, or environment-mismatched credentials before restarting services.
-- Control-socket startup is exclusive: an active prior instance is preserved and
-  rejected, while an unreferenced stale socket is cleaned up safely.
-- Verified in the target failure mode: WSL could not reach the configured Windows proxy port, while this relay still reached the public Internet and cloned a GitHub repository.
+- Loopback SOCKS5 proxy for proxy-aware command-line tools.
+- Optional HTTP proxy for tools that do not support SOCKS5.
+- Windows WinSock egress, or a Windows HTTP/SOCKS5 upstream proxy.
+- SOCKS5 UDP ASSOCIATE and reverse UDP forwarding.
+- Explicit reverse TCP/UDP mappings from Windows to WSL.
+- Polling-based automatic TCP listener discovery.
+- Conservative allowlisted automatic UDP discovery.
+- Strict Windows-before-WSL TCP `listen()` and UDP `bind()` coordination.
+- Optional TUN/tun2socks mode for applications without proxy support.
+- Persistent broker mode with connector reconnect and socket-owner recovery.
+- Idempotent systemd user-service installation and protected credentials.
 
-Explicit reverse port forwarding and strict synchronization with dynamically linked application `listen()` calls are implemented. The broader automatic mode remains polling-based so it can support unmodified applications.
+## How It Works
 
-Automatic discovery is available as an opt-in polling mode. It mirrors detected TCP listeners after they begin listening. This provides zero-configuration reachability but cannot retroactively make the application's already-successful `listen(2)` fail when Windows rejects the corresponding port; use the strict launcher when rejection propagation is required.
+```text
+WSL application
+      |
+127.0.0.1:1080 or 127.0.0.1:8080
+      |
+WSL relay client
+      |
+stdio child or broker connector
+      |
+Windows relay / socket owner
+      |
+WinSock direct or Windows upstream proxy
+```
 
-The persistent broker uses `internal/transport/attach` for per-instance tokens,
-generation-safe ownership, a bounded versioned
-attach handshake, and deterministic registry-summary/resume-ack messages. The
-transport-independent broker core in `internal/broker` now accepts those
-sessions and tracks stable entry IDs. Its registry admits at most 4096 live
-entries, matching the attach-summary wire limit; saturation rejects only new
-registrations and removing an entry restores capacity. The Windows broker/connector that owns
-sockets across connector restarts is enabled by the broker user-service
-installer; manually launched proxies remain stdio by default. A broken stdio
-session still ends in-flight connections while new requests and mappings
-recover normally.
+For an outbound request, ports do not need to correspond. WSL sends the target
+address; Windows creates a normal outbound socket and chooses an ephemeral
+source port. Inbound exposure is different: Windows must bind a listening port
+and then open a connection to the WSL service.
 
-The broker transport is the recommended long-running deployment mode. Build with
-`scripts/build-wsl.sh`, start `wsl-win-broker.exe` on Windows with a private
-`WSL_WIN_RELAY_ATTACH_TOKEN` and endpoint, then set the same token and
-`WSL_WIN_RELAY_BROKER_ENDPOINT` in WSL and configure `relay_exe` as
-`wsl-win-connector.exe`. The connector performs attach/resume before forwarding
-the existing relay byte stream. The broker now keeps one relay server alive and
-swaps the attached connector transport, so a connector break no longer tears
-down broker-side sockets immediately. In `-broker-mode`, WSL also keeps one
-relay client and stream registry, rehandshakes the replacement connector, and
-preserves in-flight TCP streams. `scripts/test-broker-reconnect.sh` verifies
-this with a delayed HTTP response and a broker-owned reverse listener that
-accepts a new stream after replacement. The same test covers a reverse-UDP
-echo flow after replacement. The broker executable now uses a replaceable
-frontend, bridge worker, socket-host bridge, and durable socket owner.
-Frontend, bridge-worker, or socket-host bridge crashes leave socket-owner-owned
-sockets and established streams alive; a socket-owner crash still ends them.
-When any outer bridge restarts, it reuses the same socket owner and the WSL
-proxy rebuilds any registrations that need it.
+## Limitations
 
-`scripts/test-broker-auto-rebind.sh` separately verifies that a procfs-discovered
-WSL listener remains reachable through its automatically created Windows port
-after the connector is replaced. `scripts/test-broker-restart.sh` also verifies
-that a broker process restart is detected and both automatic and explicit
-Windows mappings are reconstructed by the still-running WSL proxy.
+This project does not repair HNS. WSL must still be able to launch a Windows
+executable through WSL interop, and Windows must be able to reach the internet
+or the configured upstream proxy.
 
-Set `"broker_mode": true` in the JSON configuration to persist this mode for
-the systemd user service. When `install-broker-user-service.sh` creates the
-private broker environment it also sets `WSL_WIN_RELAY_BROKER_MODE=1`, which
-makes broker mode the proxy service default once that environment is loaded.
-Keep `WSL_WIN_RELAY_ATTACH_TOKEN` and
-`WSL_WIN_RELAY_BROKER_ENDPOINT` in the service environment; the token is
-intentionally not accepted from the configuration file.
+Automatic discovery is polling-based. It creates a Windows mapping after a WSL
+process has successfully called `listen()`. It cannot make that earlier call
+fail if Windows later refuses the port. Use strict mode when the refusal must
+be returned synchronously to the WSL process.
 
-For systemd-managed broker startup, set `WSL_WIN_RELAY_BROKER_EXE` to the
-mounted Windows `wsl-win-broker.exe` path and run
-`./scripts/install-broker-user-service.sh`. It creates a mode-0600
-`broker.env`, generates the attach token once, and enables
-`wsl-win-relay-broker.service` with a bounded restart policy. The broker
-service wrapper starts the broker's host-level `-supervise` parent, which keeps
-the public frontend recoverable after an abnormal exit. The broker executable
-keeps socket ownership in a separate socket-owner child behind a
-socket-host bridge, so frontend, bridge-worker, and socket-host bridge crashes
-do not close established kernel sockets; a socket-owner crash still does. The normal
-proxy service wrapper loads the same env file for connector children and
-selects broker mode when `WSL_WIN_RELAY_BROKER_MODE=1`. After a bridge-worker
-restart, the running proxy reconnects through the same socket owner and
-reconstructs explicit and automatic mappings when needed. The bridge and owner
-roles have separate token-bound health probes, so stale role processes are
-drained before endpoint reuse.
-The installer also records `WSL_WIN_RELAY_CONNECTOR_EXE` in `broker.env`; it
-defaults to `wsl-win-connector.exe` beside the broker executable and can be
-overridden with an absolute mounted path. The proxy service wrapper passes this
-path as `-relay-exe` in broker mode, so the JSON configuration does not need to
-be rewritten and cannot accidentally launch the stdio relay.
-When the proxy user unit is already installed, the broker installer restarts it
-after the broker is ready so the connector override takes effect immediately;
-otherwise it leaves the independent proxy installation order unchanged.
-Re-running the installer migrates missing legacy executable fields but rejects
-requested broker or connector paths that conflict with the active private
-environment, preventing an apparent upgrade from silently retaining another
-binary.
-Before restarting services, the installer also compares the broker and
-connector `-version` metadata and rejects mixed builds. Set
-`WSL_WIN_RELAY_ALLOW_UNVERIFIED_BINARIES=1` only for a deliberate legacy or
-custom build that does not implement the version contract.
+The default SOCKS5 and HTTP listeners bind WSL loopback and have no client
+authentication. Do not expose them to a LAN without adding a separate firewall
+and authentication boundary.
 
-New broker installations also create `attach.token` with mode `0600` and pass
-that path to the Windows broker (the wrapper converts a WSL path with
-`wslpath -w` before invoking a Windows `.exe`). The private environment still
-contains the token value for WSL connector propagation through `WSLENV`; older installations
-without `WSL_WIN_RELAY_ATTACH_TOKEN_FILE` continue to use the legacy
-`-token-hex` fallback until migrated.
-The broker unit uses `KillMode=process` so systemd frontend restarts do not
-terminate the bridge worker, socket-host bridge, or socket owner; a normal stop still shuts them down
-through the private control endpoints.
+## Requirements
 
-To configure a Windows-side upstream proxy for the installed broker, add
-`WSL_WIN_RELAY_UPSTREAM_PROXY=socks5h://matebookxpro.local:7890` to the private
-`broker.env`. The broker service wrapper adds this one variable to `WSLENV`
-before launching the Windows executable, so the URL is propagated without
-placing it in the broker command line.
-For a new installation, setting the same environment variable when running
-`install-broker-user-service.sh` writes it into `broker.env` automatically.
-Re-running the installer with the same value is idempotent; a conflicting
-requested value is rejected instead of silently replacing the active broker
-configuration.
+- Windows with WSL and WSL interop enabled.
+- An amd64 WSL distribution for the documented runtime verification.
+- Go 1.22 or newer to build from source.
+- GCC for the native strict supervisor and optional LD_PRELOAD interposer.
+- WSL systemd only when using the service installers.
+- Root, `iproute2`, `/dev/net/tun`, and tun2socks only for transparent mode.
 
-If the broker must outlive the WSL VM or user service, install the optional
-Windows Task Scheduler boundary from PowerShell 7:
+The repository may live on a Windows-mounted drive. The examples use:
+
+```text
+D:\Code\net\wsl-win-relay
+/mnt/d/Code/net/wsl-win-relay
+```
+
+For a new checkout, use:
+
+```bash
+git clone https://github.com/Kevin589981/wsl-win-relay.git
+cd wsl-win-relay
+```
+
+The repository is private, so the GitHub account running `git clone` must have
+access to it.
+
+## Quick Start: SOCKS5
+
+This mode needs no systemd. It starts a Windows relay child from WSL.
+
+### 1. Build
+
+```bash
+cd /mnt/d/Code/net/wsl-win-relay
+./scripts/build-wsl.sh
+```
+
+The relevant files are created in `bin/`:
+
+```text
+wsl-proxy-linux       WSL proxy
+wsl-win-relay.exe     Windows stdio relay
+wsl-win-broker.exe    Windows persistent broker
+wsl-win-connector.exe WSL-to-broker connector
+wsl-win-relay-status  mapping status reader
+```
+
+### 2. Configure
+
+```bash
+cp wsl-win-relay.example.json "$HOME/wsl-win-relay.json"
+${EDITOR:-nano} "$HOME/wsl-win-relay.json"
+```
+
+For your setup, the important values are:
+
+```json
+{
+  "relay_exe": "/mnt/d/Code/net/wsl-win-relay/bin/wsl-win-relay.exe",
+  "broker_mode": false,
+  "upstream_proxy": "socks5h://matebookxpro.local:7890",
+  "socks5_listen": "127.0.0.1:1080",
+  "http_proxy_listen": "127.0.0.1:8080"
+}
+```
+
+`upstream_proxy` is used by the Windows process. WSL does not connect to
+`matebookxpro.local:7890` itself. Leave it empty when Windows should connect
+directly.
+
+### 3. Start and use
+
+```bash
+./bin/wsl-proxy-linux -config "$HOME/wsl-win-relay.json"
+```
+
+Keep that terminal running. In another WSL terminal:
+
+```bash
+curl --proxy socks5h://127.0.0.1:1080 https://example.com
+```
+
+For tools that only support HTTP proxies:
+
+```bash
+HTTPS_PROXY=http://127.0.0.1:8080 curl https://example.com
+HTTP_PROXY=http://127.0.0.1:8080 curl http://example.com
+```
+
+Use `socks5h` when the target hostname should be resolved through the relay.
+Use `socks5` when Windows should resolve it before sending an IP address to the
+upstream SOCKS5 proxy.
+
+## Recommended Setup: Persistent Broker
+
+Broker mode keeps Windows-side socket ownership alive while the WSL connector,
+broker frontend, or bridge processes restart. WSL systemd must be enabled.
+
+```bash
+cd /mnt/d/Code/net/wsl-win-relay
+./scripts/build-wsl.sh
+
+export WSL_WIN_RELAY_BROKER_EXE=/mnt/d/Code/net/wsl-win-relay/bin/wsl-win-broker.exe
+export WSL_WIN_RELAY_CONNECTOR_EXE=/mnt/d/Code/net/wsl-win-relay/bin/wsl-win-connector.exe
+export WSL_WIN_RELAY_UPSTREAM_PROXY=socks5h://matebookxpro.local:7890
+
+./scripts/install-broker-user-service.sh
+./scripts/install-user-service.sh
+```
+
+The installers create protected files under `~/.config/wsl-win-relay/`:
+
+```text
+config.json   WSL proxy configuration
+broker.env    Windows broker path, endpoint, upstream, and mode
+attach.token  broker authentication token
+```
+
+Check the services and test the local proxy:
+
+```bash
+systemctl --user status wsl-win-relay-broker.service
+systemctl --user status wsl-win-relay.service
+curl --proxy socks5h://127.0.0.1:1080 https://example.com
+```
+
+In broker mode, put the upstream proxy in `broker.env`, not in the WSL proxy's
+`upstream_proxy` setting. The connector carries the authenticated relay stream;
+the Windows broker performs outbound dialing.
+
+## Configuration Reference
+
+The full sample is [`wsl-win-relay.example.json`](wsl-win-relay.example.json).
+Validate it without starting a relay or binding a port:
+
+```bash
+./bin/wsl-proxy-linux \
+  -config "$HOME/.config/wsl-win-relay/config.json" \
+  -check-config
+```
+
+Common fields:
+
+| Field | Default | Purpose |
+| --- | --- | --- |
+| `socks5_listen` | `127.0.0.1:1080` | WSL SOCKS5 listener |
+| `http_proxy_listen` | `127.0.0.1:8080` | WSL HTTP listener |
+| `relay_handshake_timeout` | `5s` | startup capability handshake |
+| `relay_dial_timeout` | `30s` | wait for a usable relay session |
+| `proxy_handshake_timeout` | `15s` | local SOCKS/HTTP handshake limit |
+| `max_proxy_connections` | `256` | clients per local proxy listener |
+| `udp_associate_idle_timeout` | `5m` | idle SOCKS5 UDP association limit |
+| `control_socket` | `/tmp/wsl-win-relay-control.sock` | strict control socket |
+
+Unknown JSON fields are rejected. Command-line scalar values override JSON;
+repeated `-reverse` and `-reverse-udp` flags add mappings.
+
+## Reverse Port Forwarding
+
+### Explicit TCP mapping
+
+If a WSL service listens on `127.0.0.1:8000`, add this to the configuration:
+
+```json
+{
+  "reverse": [
+    "127.0.0.1:8000=127.0.0.1:8000"
+  ]
+}
+```
+
+The left side is the Windows bind address. The right side is the WSL target.
+Windows owns its listening port and opens a fresh WSL connection for each
+Windows client:
+
+```powershell
+Invoke-WebRequest http://127.0.0.1:8000/
+```
+
+A Windows bind failure is reported during mapping setup and does not leave a
+half-installed mapping. A firewall may still reject clients after a successful
+bind; that later policy is not observable as a WSL `listen()` error.
+
+### Explicit UDP mapping
+
+```json
+{
+  "reverse_udp": [
+    "127.0.0.1:5353=127.0.0.1:5353"
+  ]
+}
+```
+
+Windows source endpoints are isolated into separate flows and responses return
+to the source that sent each datagram.
+
+## Automatic Mapping
+
+Enable polling-based TCP discovery:
+
+```json
+{
+  "auto_forward": {
+    "enabled": true,
+    "windows_host": "127.0.0.1",
+    "windows_host6": "::1",
+    "interval": "1s",
+    "exclude": [22, 53]
+  }
+}
+```
+
+Or use flags for a one-off process:
+
+```bash
+./bin/wsl-proxy-linux \
+  -config "$HOME/wsl-win-relay.json" \
+  -auto-forward \
+  -auto-forward-include 8000,9000 \
+  -auto-forward-exclude 22,53
+```
+
+When mirrored networking shares the WSL and Windows port namespace, choose a
+deterministic offset:
+
+```text
+-auto-forward-port-offset 10000
+```
+
+A WSL listener on `8000` is then exposed on Windows `10800`.
+
+To let Windows choose a free port and publish the result:
+
+```json
+{
+  "auto_forward": {
+    "enabled": true,
+    "windows_port_auto": true,
+    "status_file": "/run/user/1000/wsl-win-relay-mappings.json"
+  }
+}
+```
+
+```bash
+./bin/wsl-win-relay-status \
+  -file /run/user/1000/wsl-win-relay-mappings.json
+```
+
+Mappings are removed when their WSL listener disappears. Windows bind refusals
+use bounded retry backoff.
+
+### Allowlisted UDP discovery
+
+General UDP discovery is unsafe because `/proc/net/udp` cannot distinguish a
+server socket from an ephemeral client socket. Opt in only for known ports:
+
+```json
+{
+  "auto_forward": {
+    "enabled": true,
+    "udp_enabled": true,
+    "udp_include": [5353, 8125]
+  }
+}
+```
+
+## Strict Synchronized Listen/Bind
+
+Use strict mode when Windows must reserve the port before WSL observes
+`listen()` or non-zero UDP `bind()` success:
+
+```bash
+~/bin/wsl-win-relay-run python3 -m http.server 8000
+```
+
+For a complete shell process tree:
+
+```bash
+~/bin/wsl-win-relay-shell
+python3 -m http.server 8000
+```
+
+If Windows reports `EADDRINUSE`, the WSL call fails with `EADDRINUSE`. If WSL
+rejects the call, the Windows reservation is aborted. This is the mode that
+implements synchronous refusal propagation.
+
+Static applications use the kernel adapter:
+
+```bash
+~/bin/wsl-win-relay-run --kernel ./static-service 8000
+```
+
+The strict limits can be adjusted in JSON:
+
+```json
+{
+  "strict_max_connections": 64,
+  "strict_max_leases": 512,
+  "strict_max_owners_per_lease": 256
+}
+```
+
+The kernel adapter is runtime-verified on Linux amd64. aarch64 is build-only.
+Setuid/setgid binaries are rejected because their privilege semantics cannot be
+preserved safely by these adapters.
+
+## Transparent TUN Mode
+
+Use this for applications with no proxy support. It requires root, `iproute2`,
+`/dev/net/tun`, and tun2socks.
+
+```bash
+./scripts/install-tun2socks.sh
+```
+
+With the local SOCKS5 proxy already running:
+
+```bash
+sudo env \
+  WWR_TUN_PROXY=socks5://127.0.0.1:1080 \
+  ./scripts/transparent-relay.sh
+```
+
+When HNS has removed the normal WSL interface and the proxy is local:
+
+```bash
+sudo env \
+  WWR_UPLINK_INTERFACE=lo \
+  WWR_TUN_PROXY=socks5://127.0.0.1:1080 \
+  ./scripts/transparent-relay.sh
+```
+
+The script waits for the local proxy before changing routes and restores routes,
+DNS, and the TUN device on exit. Set `WWR_DNS=1.1.1.1` only when replacement
+DNS is required.
+
+For a boot-persistent transparent service:
+
+```bash
+sudo env WWR_TUN2SOCKS_BIN="$(go env GOPATH)/bin/tun2socks" \
+  ./scripts/install-transparent-service.sh
+sudo systemctl status wsl-win-relay-transparent.service
+```
+
+## Operations
+
+Follow logs:
+
+```bash
+journalctl --user -u wsl-win-relay.service -f
+journalctl --user -u wsl-win-relay-broker.service -f
+```
+
+Run diagnostics:
+
+```bash
+~/bin/wsl-win-relay-doctor
+~/bin/wsl-win-relay-doctor --probe-url https://example.com
+```
+
+Stop services:
+
+```bash
+systemctl --user stop wsl-win-relay.service
+systemctl --user stop wsl-win-relay-broker.service
+```
+
+Uninstall the unprivileged deployment while preserving configuration and
+credentials:
+
+```bash
+./scripts/install-user-service.sh --uninstall
+```
+
+Uninstall the privileged transparent service:
+
+```bash
+sudo ./scripts/install-transparent-service.sh --uninstall
+```
+
+## Optional Windows Task Scheduler
+
+If the broker should remain available across WSL user-service or VM shutdown,
+install the host-level supervisor from PowerShell 7. Use the Windows paths to
+the broker executable and the token file:
 
 ```powershell
 .\scripts\install-broker-windows-task.ps1 `
@@ -153,188 +456,76 @@ Windows Task Scheduler boundary from PowerShell 7:
   -StartNow
 ```
 
-The installer protects the token file ACL and registers the host-level
-`-supervise` parent. The WSL proxy still uses the same token value through its
-private environment/`WSLENV`; the task only receives the token-file path. Use
-`-Uninstall` with the same `-TaskName` to remove the task. This boundary keeps
-future attachments available across WSL shutdown, but cannot preserve
-established streams after a socket-owner crash.
-
-To verify the complete WSL-to-Windows broker path on a machine with WSL
-interop and working Windows egress, run:
-
-```bash
-./scripts/test-broker-windows-interop.sh
-```
-
-The smoke builds the Linux proxy and Windows broker/connector, starts the
-broker on a per-user named pipe, performs SOCKS5 and plain HTTP proxy requests
-to `example.com`, and has a Windows PowerShell process reach a temporary
-WSL HTTP services through both an explicit reverse mapping and an automatically
-discovered mapping, then stops the discovered service and verifies that the
-Windows listener is removed. Set `WWR_WINDOWS_SHELL`
-to an absolute mounted path when `powershell.exe`/`pwsh.exe` is not in the WSL
-`PATH`. WSL does not automatically export arbitrary environment
-variables to Windows processes, so broker mode adds
-`WSL_WIN_RELAY_BROKER_ENDPOINT` and `WSL_WIN_RELAY_ATTACH_TOKEN` to `WSLENV`
-for connector children. The token remains out of command-line arguments. See
-[ADR-0017](docs/adr/0017-wslenv-credential-propagation.md) for the normalization
-rule that preserves unrelated entries while forcing these two names to be
-single, flag-free entries.
-
-The reverse smoke binds its temporary WSL service to `127.0.0.2` and the
-Windows listener to `127.0.0.1`. This is intentional: mirrored WSL networking
-can share the loopback namespace, so binding both sides to the same loopback
-address and port would test the host's address collision rather than the relay.
-Override `WWR_BROKER_INTEROP_WSL_HOST` only when the environment has separate
-loopback namespaces and the default alias is unavailable.
-
-The same smoke terminates the broker connector once after initial success and
-checks that the connector reattaches and both automatic and explicit reverse
-listeners remain usable through the replacement.
-
-Set `WWR_BROKER_INTEROP_SERVICE_WRAPPER=1` to run the same smoke through the
-private broker service wrapper and its `0600` environment file, including
-upstream proxy propagation.
-Set `WWR_BROKER_INTEROP_WINDOWS_PORT_AUTO=1` to exercise Windows-allocated TCP
-ports and status-file discovery. Add `WWR_BROKER_INTEROP_AUTO_UDP=1` to start a
-temporary WSL UDP echo service and verify an allowlisted, Windows-allocated UDP
-mapping from PowerShell, including connector recovery and mapping removal.
-The combined service-wrapper path has also been verified with
-`WWR_WINDOWS_UPSTREAM_PROXY=socks5h://matebookxpro.local:7890`, so proxy egress
-and dynamically allocated inbound TCP/UDP mappings coexist in the intended HNS
-failure topology.
-
-On mirrored WSL networking, Windows and WSL can share the host's TCP port
-namespace. A WSL listener may therefore make the same Windows port unavailable
-even when no separate Windows process owns it; this is an operating-system
-bind conflict, not a relay transport failure. The strict path propagates that
-refusal to the WSL `listen()`/`bind()` call, while polling mode logs and retries
-it. Use the interop alias above for relay verification, or choose a distinct
-Windows port/address policy when the host's networking mode requires it.
-
-The Windows broker also accepts `-token-file` for host-service deployments.
-The file must be a private regular file containing the hexadecimal token; on
-Unix it must not be group/world accessible. The supervisor and its internal
-roles pass this path instead of the token contents, while `-token-hex` and the
-environment variable remain supported for compatibility.
-
-The broker connector keeps its stdio service alive across the bounded endpoint
-outage created by a supervised frontend replacement. It retries transport-level
-dial and handshake failures for up to 30 seconds with capped backoff, while a
-rejected token or invalid connector configuration fails immediately.
-The broker bounds each individual attach handshake at 15 seconds so a half-open
-same-user IPC connection cannot consume a service goroutine forever; the
-deadline is cleared once the session is authenticated.
-Up to 16 handshake prefixes are processed concurrently, so a half-open client
-cannot head-of-line block a valid replacement connector. Registry generation
-and frame-link installation remain serialized; pending handshakes are tracked
-and closed immediately during broker shutdown.
-Each replaceable broker role also caps its internal data bridges at 32 active
-connections and its private control endpoint at 16 active requests. Excess
-connections are closed without displacing established bridges. Control clients
-must complete their single request within two seconds, and role shutdown closes
-and drains every accepted bridge and control connection.
-
-To exercise the same path while keeping an upstream proxy on the Windows side,
-set `WWR_WINDOWS_UPSTREAM_PROXY` when running the smoke. WSL still sends only
-the target through the relay; the Windows broker performs the upstream
-connection:
-
-```bash
-WWR_WINDOWS_UPSTREAM_PROXY=socks5h://matebookxpro.local:7890 \
-  ./scripts/test-broker-windows-interop.sh
-```
-
-In broker mode, configure the upstream proxy on `wsl-win-broker.exe` (or its
-private service environment), not on `wsl-proxy`. The WSL connector only carries
-the attach stream; `wsl-proxy -broker-mode -upstream-proxy ...` is rejected at
-startup to avoid passing an unsupported flag to the connector.
-
-## Security model
-
-- The WSL listener binds to `127.0.0.1` by default.
-- The stdio relay reads commands only from its parent process pipes. Broker
-  frontend, bridge-worker, socket-host bridge, socket-owner, and control endpoints use same-user local IPC with no LAN
-  listener.
-- The WSL-facing SOCKS5 and HTTP listeners have no client authentication; do
-  not bind them to a LAN address. Upstream proxy credentials, when configured,
-  are used only for the Windows-side upstream connection.
-- The relay is intended for the same user's WSL and Windows processes, not as a general network service.
-
-## Layered adapters
-
-```text
-SOCKS5 / HTTP / TUN transparent adapter
-              |
-       multiplexed relay
-              |
-   stdio / brokered named pipe
-              |
-      Windows WinSock
-```
-
-The SOCKS5 and HTTP adapters are suitable for proxy-aware command-line tools.
-The TUN adapter is implemented as an opt-in operational layer and needs
-root, `/dev/net/tun`, `iproute2`, and the pinned `tun2socks` binary; it remains
-separate from the relay core so it can be replaced without changing stream or
-datagram semantics.
-
-See [the implementation plan](docs/plans/2026-09-12-wsl-win-relay.md) and [architecture ADR](docs/adr/0001-layered-relay-architecture.md).
-
-## Port direction semantics
-
-Outbound proxy connections do **not** need matching ports. For a request such as `curl -> example.com:443`, WSL only sends the destination; Windows creates an ordinary outbound socket and chooses an ephemeral source port. Source-port correspondence would add no useful information and would create avoidable collisions.
-
-Inbound exposure is different. A Windows port must be bound before Windows clients can connect. The reverse-forward mapping looks like `windows-port:WSL-address`, for example `8000:127.0.0.1:8000`; the WSL application keeps owning its local `8000`, while the relay owns Windows `8000` and connects to the WSL application for each accepted connection.
-
-## Build
-
-Build the Linux proxy and Windows relay from the repository root. From Windows PowerShell (use `arm64` on an ARM64 WSL/Windows pair):
+Remove the task with the same task name and paths:
 
 ```powershell
-$env:GOOS='linux'; $env:GOARCH='amd64'; go build -o bin/wsl-proxy-linux ./cmd/wsl-proxy
-$env:GOOS='linux'; $env:GOARCH='amd64'; go build -o bin/wsl-win-relay-status ./cmd/wsl-status
-$env:GOOS='windows'; $env:GOARCH='amd64'; go build -o bin/wsl-win-relay.exe ./cmd/win-relay
-Remove-Item Env:GOOS,Env:GOARCH
+.\scripts\install-broker-windows-task.ps1 `
+  -BrokerExe 'C:\Tools\wsl-win-broker.exe' `
+  -TokenFile 'C:\Users\you\.config\wsl-win-relay\attach.token' `
+  -Uninstall
 ```
 
-`scripts/build-wsl.sh` selects `amd64` or `arm64` from `uname -m`; set
-`WSL_WIN_RELAY_GOARCH=amd64|arm64` to override it for Go cross-builds. Set
-`WSL_WIN_RELAY_OUTPUT_DIR` to place a build in a separate staging directory.
-The script embeds a tag/commit description, commit ID, and UTC build time into
-all Go executables and the native strict supervisor. Run any executable with
-`-version` or `--version` before comparing logs from different installations.
-`WSL_WIN_RELAY_BUILD_VERSION`, `WSL_WIN_RELAY_BUILD_COMMIT`, and
-`SOURCE_DATE_EPOCH` provide reproducible build overrides.
-When the same checkout is used from Windows and WSL, build metadata normalizes
-Git's CRLF/LF view before deciding whether to append `-dirty`; real content
-changes still retain the marker.
-The long-running Go processes emit the same metadata once at startup, making a
-mixed proxy/broker/connector deployment visible in service logs without
-logging credentials.
-The native strict supervisor is compiled for the running WSL architecture, so
-an arm64 cross-build of the Go binaries is not a substitute for native ptrace
-runtime validation. Native arm64 runtime validation is outside the current
-verification target.
-`wsl-proxy-linux` is the binary to run inside WSL; `wsl-win-relay.exe` is
-launched by it through WSL interop. Alternatively, run `go build` for the
-Linux proxy directly inside WSL.
+This keeps future broker attachments available. It cannot preserve established
+streams after the socket-owner process itself crashes.
 
-### Release verification
+## Troubleshooting
 
-Run the complete repeatable release gate inside WSL:
+### WSL cannot reach `matebookxpro.local:7890`
+
+That direct connection is not required. Check:
+
+1. WSL can launch a Windows executable through interop.
+2. The Windows broker is running.
+3. Broker mode has `WSL_WIN_RELAY_UPSTREAM_PROXY` in `broker.env`.
+4. Windows itself can resolve and reach `matebookxpro.local:7890`.
+5. WSL can reach the local listener `127.0.0.1:1080`.
+
+The intended path is:
+
+```text
+WSL application -> WSL 127.0.0.1:1080 -> Windows broker -> matebookxpro.local:7890
+```
+
+### PowerShell is not found from WSL
+
+This only affects some interop smoke tests and cleanup helpers. Set its mounted
+absolute path:
+
+```bash
+export WWR_WINDOWS_SHELL=/mnt/d/AppGallery/Downloads/PowerShell/7/pwsh.exe
+```
+
+### A Windows port is already in use
+
+Mirrored networking can share the port namespace. For automatic mappings use a
+port offset or Windows automatic allocation. For synchronous rejection use
+strict mode.
+
+### The service does not start
+
+```bash
+~/bin/wsl-win-relay-doctor
+./bin/wsl-proxy-linux \
+  -config "$HOME/.config/wsl-win-relay/config.json" \
+  -check-config
+```
+
+Check the Windows broker and connector paths, and ensure their build metadata
+matches. Do not set `WSL_WIN_RELAY_ALLOW_UNVERIFIED_BINARIES=1` unless using
+legacy or deliberately custom binaries.
+
+## Verification
+
+Run the repeatable amd64 WSL release gate:
 
 ```bash
 ./scripts/test-release.sh
 ```
 
-It runs all Go tests, vet, the race detector, amd64 Linux/Windows builds, native
-strict adapters, transparent rollback, isolated installers, and the complete
-Linux-hosted broker recovery matrix. Add `--windows-interop` to also launch the
-built Windows binaries and verify stdio/broker networking, automatic TCP/UDP
-mapping, connector recovery, and cleanup. In this environment the full command
-is:
+It runs Go tests, vet, race detection, amd64 builds, native strict tests,
+transparent rollback, installer tests, and the broker recovery matrix.
+
+Run the full Windows interop gate with the current environment:
 
 ```bash
 WWR_WINDOWS_SHELL=/mnt/d/AppGallery/Downloads/PowerShell/7/pwsh.exe \
@@ -345,598 +536,35 @@ WWR_BROKER_INTEROP_AUTO_UDP=1 \
   ./scripts/test-release.sh --windows-interop
 ```
 
-`--native-only` is reserved for CI jobs that already ran the Go matrix. The
-release gate intentionally performs no aarch64 runtime test; arm64 build
-coverage remains a separate CI job.
+This verifies SOCKS5/HTTP egress, Windows-side upstream proxy use, explicit
+and automatic TCP/UDP mappings, connector reconnect, broker recovery, and
+mapping cleanup. aarch64 remains build-only by design.
 
-## Configuration
-
-For long-running use, start from [`wsl-win-relay.example.json`](wsl-win-relay.example.json):
+## Development
 
 ```bash
-./bin/wsl-proxy-linux -config ./wsl-win-relay.json
+gofmt -w $(find cmd internal -type f -name '*.go')
+go test ./...
+go vet ./...
+go test -race ./...
 ```
 
-Validate the fully merged file and command-line configuration without starting
-the Windows relay or binding any local ports:
+The repository is vendored. The release gate uses `GOPROXY=off` for isolated
+checks. See the [implementation plan](docs/plans/2026-09-12-wsl-win-relay.md)
+and [architecture decisions](docs/adr/) for design details.
 
-```bash
-./bin/wsl-proxy-linux -config ./wsl-win-relay.json -check-config
-```
+## Security
 
-The JSON decoder rejects unknown fields so misspelled safety or bind settings do
-not silently disappear. Command-line options override scalar configuration
-values; repeated command-line `-reverse` mappings are added to configured
-mappings. SOCKS5 UDP associations are reclaimed after
-`udp_associate_idle_timeout` (default `5m`) without traffic; override it with
-`-udp-associate-idle-timeout` when needed.
-Relay connection setup waits at most `relay_dial_timeout` (default `30s`) for a
-healthy Windows session; override it with `-relay-dial-timeout` when a longer
-recovery window is required.
-The startup capability handshake has its own `relay_handshake_timeout`
-(default `5s`), configurable with `-relay-handshake-timeout` when launching the
-Windows child is slow after recovery.
-SOCKS5 and HTTP proxy clients must finish their local proxy handshake within
-`proxy_handshake_timeout` (default `15s`, also available as
-`-proxy-handshake-timeout`). Each local proxy listener accepts at most
-`max_proxy_connections` active clients (default `256`, also available as
-`-max-proxy-connections`); excess connections are closed without displacing
-existing sessions. Every HTTP proxy request header block is limited
-to 64 KiB, including sequential requests on a keep-alive client connection.
-Once negotiation succeeds, the deadline is cleared for the lifetime of the
-tunnel. Proxy shutdown closes accepted clients and waits for their handlers.
-Broker attach authentication is separately bounded to 15 seconds on both the
-broker and connector sides; once the session is authenticated, that deadline
-is cleared so long-lived relay streams are not interrupted.
+- WSL SOCKS5/HTTP listeners bind loopback by default and have no authentication.
+- Broker and role endpoints use same-user local IPC, not LAN listeners.
+- Attach tokens and service environment files are protected with mode `0600`.
+- Do not put secrets in public command lines or expose the local proxy to a LAN.
+- Treat the relay as a same-user WSL/Windows boundary, not a general network
+  service.
 
-Use `http_proxy_listen` for the optional HTTP proxy listener in JSON
-configuration. The older `http_connect_listen` name remains accepted for
-backward compatibility; specifying both names with different addresses is
-rejected.
+## License
 
-Set `upstream_proxy` or `-upstream-proxy` when Windows itself should use an
-upstream proxy, for example `socks5h://matebookxpro.local:7890`. The default
-is direct Windows WinSock egress. SOCKS5/SOCKS5H upstreams proxy both relay
-TCP streams and relay UDP datagrams through UDP ASSOCIATE. HTTP/HTTPS upstreams
-only support TCP CONNECT; relay UDP remains native Windows UDP because HTTP
-CONNECT has no interoperable UDP datagram mode.
+Copyright 2026 Kevin589981.
 
-Place `wsl-win-relay.exe` somewhere visible to WSL interop (or pass its absolute path with `-relay-exe`) and start:
-
-```bash
-./bin/wsl-proxy -relay-exe /mnt/c/Users/<user>/bin/wsl-win-relay.exe
-curl --proxy socks5h://127.0.0.1:1080 https://example.com
-```
-
-The `socks5h` form is intentional when the upstream should resolve names
-remotely: TCP hostnames are sent through the relay rather than resolved by WSL.
-The `socks5` form resolves TCP and UDP names on Windows before sending IP
-addresses to the upstream. SOCKS5 UDP ASSOCIATE is supported; SOCKS5H UDP
-destinations can remain domain names for upstream resolution, while native UDP
-uses Windows resolution. For `socks5://`, local destination DNS is bounded to
-30 seconds and canceled immediately when the UDP association closes, so a
-stalled resolver cannot retain an otherwise closed association. SOCKS fragmentation
-(`FRAG != 0`) is rejected because there is no interoperable fragmentation
-standard in common clients.
-
-For clients that only support an HTTP proxy, enable the optional HTTP listener:
-
-```bash
-./bin/wsl-proxy-linux \
-  -relay-exe /mnt/d/Code/net/wsl-win-relay/bin/wsl-win-relay.exe \
-  -http-listen 127.0.0.1:8080
-
-HTTPS_PROXY=http://127.0.0.1:8080 curl https://example.com
-HTTP_PROXY=http://127.0.0.1:8080 curl http://example.com
-```
-
-HTTPS requests use CONNECT and cleartext `http://` requests use absolute-form
-HTTP forwarding. Multiple sequential cleartext requests can reuse one client
-connection; each request uses a fresh origin connection with proxy-only and
-hop-by-hop headers removed, while the origin side is closed after the response.
-HTTPS URLs must still use CONNECT; the listener is loopback-only by default.
-
-To expose a WSL service on a Windows port, add an explicit reverse mapping:
-
-```bash
-./bin/wsl-proxy-linux \
-  -relay-exe /mnt/d/Code/net/wsl-win-relay/bin/wsl-win-relay.exe \
-  -reverse 0.0.0.0:8000=127.0.0.1:8000 \
-  -reverse 127.0.0.1:9000=127.0.0.1:9000
-```
-
-The WSL application continues to bind `127.0.0.1:8000`; the Windows relay
-owns `0.0.0.0:8000` and forwards each accepted connection. A Windows bind
-conflict is reported during startup. All repeated `-reverse` registrations are
-transactional: if one fails, earlier registrations are removed. Firewall policy
-can still reject later connections, so it must be checked separately.
-
-For a WSL UDP service, use a separate explicit UDP mapping:
-
-```bash
-./bin/wsl-proxy-linux \
-  -relay-exe /mnt/c/Users/<user>/bin/wsl-win-relay.exe \
-  -reverse-udp 127.0.0.1:5353=127.0.0.1:5353
-```
-
-The Windows relay binds the UDP port and forwards each source endpoint to the
-WSL target through an isolated local flow. Responses return to the original
-Windows source. A bind conflict is reported while the mapping starts. Each
-mapping caps active source flows at 1024; idle flows are reclaimed after five
-minutes and new sources are dropped while the cap is reached. Each flow uses a
-connected WSL UDP socket, so only the configured local service can supply its
-response packets; traffic from another local source is discarded by the
-kernel.
-Unrestricted automatic listener discovery remains TCP-only because
-`/proc/net/udp` cannot safely distinguish a UDP server socket from an
-ephemeral client socket; the allowlisted UDP mode below is deliberately
-conservative and opt-in.
-
-An explicitly allowlisted UDP discovery mode is also available for common
-unconnected UDP services:
-
-```bash
-./bin/wsl-proxy-linux \
-  -relay-exe /mnt/d/Code/net/wsl-win-relay/bin/wsl-win-relay.exe \
-  -auto-forward \
-  -auto-forward-udp \
-  -auto-forward-udp-include 5353,8125
-```
-
-This mode scans `/proc/net/udp{,6}` and mirrors only the listed non-zero ports
-whose socket has no connected remote endpoint. Linux procfs does not identify
-UDP server sockets, so a client that happens to bind one of the allowlisted
-ports can still be observed; the mandatory allowlist keeps that ambiguity
-bounded. Use strict launcher UDP `bind()` coordination when Windows rejection
-must be returned to the application before `bind()` succeeds.
-
-To discover WSL listeners dynamically and bind matching Windows loopback ports:
-
-```bash
-./bin/wsl-proxy-linux \
-  -relay-exe /mnt/d/Code/net/wsl-win-relay/bin/wsl-win-relay.exe \
-  -auto-forward
-```
-
-Useful controls:
-
-```text
--auto-forward-host 127.0.0.1       Windows bind host; use 0.0.0.0 deliberately for LAN access
--auto-forward-host6 ::1             Windows IPv6 bind host; use :: deliberately for LAN access
--auto-forward-port-offset 10000    Optional offset added to Windows ports; 0 preserves same-port mapping
--auto-forward-port-auto           Let Windows allocate free automatic mapping ports
--auto-forward-status /run/user/... Optional atomic JSON status file for active mappings
--auto-forward-include 8000,9000    Optional allowlist; empty means all discovered ports
--auto-forward-exclude 22,53        Ports that must never be mirrored
--auto-forward-interval 1s          Discovery interval
--auto-forward-retry-min 1s         Minimum delay after a Windows refusal
--auto-forward-retry-max 30s        Maximum delay after repeated refusals
-```
-
-The SOCKS5 listener and explicit reverse-forward destinations are excluded automatically. Automatic mappings are removed when their WSL listener disappears. The watcher lives for the whole proxy process: when the Windows relay child is replaced, old mappings are closed and recreated on the replacement session after it becomes ready.
-Each automatic mapping attempt is bounded by `relay_dial_timeout`; a relay
-outage therefore cannot block listener discovery indefinitely, and the next
-scan retries it after the session recovers.
-When Windows rejects a discovered port, repeated attempts use a bounded
-exponential backoff (one second initially, capped at thirty seconds) instead
-of hammering the relay on every scan. A relay-session reset or disappearance of
-the WSL listener clears that backoff. The retry bounds are configurable with
-the two flags above or the `auto_forward.retry_min` and
-`auto_forward.retry_max` JSON fields; the maximum must be greater than or equal
-to the minimum.
-Bind-conflict diagnostics include a mirrored-networking hint when Windows
-reports `EADDRINUSE` or its localized equivalent, because WSL and Windows can
-share one port namespace even when no separate Windows process appears to own
-the port.
-
-When mirrored networking shares the WSL and Windows port namespace, set
-`-auto-forward-port-offset` (or `auto_forward.windows_port_offset` in JSON) to
-place automatic Windows listeners in a deterministic alternate range. The WSL
-listener and reverse-forward target remain on the original port; only the
-Windows-facing listener changes. The default offset is `0`, so existing
-same-port behavior is unchanged. The offset must be between `-65534` and
-`65534`, and a discovered port is rejected if the resulting Windows port would
-fall outside `1..65535`.
-
-Set `-auto-forward-status` (or `auto_forward.status_file` in JSON) when an
-operator or another local tool needs to discover the actual Windows-facing
-ports. The file is updated atomically when the mapping set changes, when the
-file was removed, or for a 30-second liveness heartbeat; it has mode `0600`
-and version `1`, and
-contains `process_id`, an RFC3339 `updated_at`, and the active network family
-plus `windows_address`, `wsl_address`, and `state` for each desired mapping.
-Rejected entries include the last `error` and `retry_at`; active entries omit
-those fields. It is removed when
-the last watcher exits normally. A file left after a crash is advisory only;
-consumers should require both a live `process_id` and a recent `updated_at`
-before acting on it. The supported reader uses a two-minute freshness window.
-The status file is optional and does not alter the relay protocol; see
-[ADR-0032](docs/adr/0032-automatic-mapping-status-liveness.md) for its liveness
-contract.
-
-Use the supported status reader instead of consuming a Windows-allocated port
-from the JSON file directly:
-
-```bash
-./bin/wsl-win-relay-status -config ./wsl-win-relay.json
-./bin/wsl-win-relay-status -config ./wsl-win-relay.json -json
-./bin/wsl-win-relay-status -config ./wsl-win-relay.json \
-  -resolve-network tcp4 -resolve-wsl 127.0.0.1:8000
-```
-
-The resolver prints only the active Windows address, making it suitable for
-command substitution without `jq`. Every mode first validates the document,
-requires a heartbeat newer than `-max-age` (default `2m`), and verifies that
-the publishing WSL PID is alive. Rejected, missing, stale, malformed, or
-orphaned mappings return a non-zero status.
-
-For collision-free allocation instead of a fixed offset, enable
-`-auto-forward-port-auto` (or `auto_forward.windows_port_auto`). Windows binds
-port zero and atomically chooses each TCP or allowlisted UDP port; the actual
-address is reported through the negotiated relay capability, logged, and
-published in the optional status file. Automatic allocation and a fixed offset
-are mutually exclusive. Because the Windows port is intentionally not
-predictable, enable the status file when another tool needs to consume these
-mappings programmatically.
-
-To run the real WSL/Windows recovery check after building both binaries, use
-`./scripts/test-auto-rebind.sh`. It requires WSL Windows interop and verifies
-that an allowlisted Windows mapping becomes reachable again after the relay
-child is terminated. Set `WWR_WINDOWS_SHELL` to an absolute mounted path when
-the shell is not in `PATH`, for example
-`WWR_WINDOWS_SHELL=/mnt/d/AppGallery/Downloads/PowerShell/7/pwsh.exe`.
-The direct stdio smoke requires a topology with separate WSL and Windows port
-namespaces; mirrored mode can reject same-port binds at the operating-system
-layer. The broker interop smoke above uses an isolated address strategy and
-covers mirrored-mode recovery instead.
-
-IPv4 and IPv6 Windows bind hosts are configured independently. The defaults are
-`127.0.0.1` and `::1`; set `-strict-listen-host6` and/or `-auto-forward-host6`
-when the Windows-facing IPv6 bind should use another address.
-
-## Strict synchronized listen
-
-Build the WSL launcher and interposer with GCC:
-
-```bash
-./scripts/build-wsl.sh
-```
-
-Keep `wsl-proxy-linux` running, then launch an application through the wrapper:
-
-```bash
-./scripts/wsl-win-relay-run python3 -m http.server 8000
-```
-
-The wrapper waits up to two seconds for the strict-listen control socket and
-fails early with a diagnostic if the relay service is not running.
-The control plane defaults to 64 concurrent requests, 512 active-or-pending
-leases, and 256 process owners per lease. Adjust these with
-`strict_max_connections`, `strict_max_leases`, and
-`strict_max_owners_per_lease` (or the corresponding hyphenated CLI flags) for
-larger traced process trees. Saturation rejects only new work with `ENOSPC`.
-
-It also rejects directly executed static ELF and setuid/setgid targets before
-launch. Those targets cannot load `LD_PRELOAD`, so allowing them through would
-silently disable the Windows-before-WSL bind contract. Scripts and other
-non-ELF entrypoints remain allowed; static-binary coverage is provided by the
-kernel-aware lifecycle adapter. The opt-in ptrace adapter is available
-for Linux amd64 targets, including process-style `fork()` children:
-
-```bash
-./scripts/wsl-win-relay-run --kernel ./static-service 8000
-```
-
-To apply the kernel strict boundary to an entire shell session, use the
-installed convenience wrapper:
-
-```bash
-~/bin/wsl-win-relay-shell
-```
-
-Every command and child process launched from that shell remains inside the
-same traced process tree, including static binaries and daemonizing services.
-Set `WSL_WIN_RELAY_SHELL` to select a shell other than `$SHELL`.
-
-It coordinates direct TCP/UDP `bind()` and TCP `listen()` syscalls through the
-same control socket. Process-style `fork()`, `clone(SIGCHLD)`, non-thread
-`clone3()`, and ordinary `CLONE_THREAD` pthreads are attached with task/group
-state and inherit lease ownership with `ADOPT`/`RELEASE`. The kernel adapter is
-deliberately opt-in and traces `vfork()` children through the same process
-ownership path; unusual thread-group teardown remains unsupported. The source
-includes an aarch64 ptrace register adapter, but aarch64 is outside the current
-verification target. Setuid/setgid targets are rejected in both launcher modes
-because ptrace cannot preserve their privilege semantics.
-Use the default interposer for dynamically linked applications.
-
-Before the application's libc `listen()` succeeds, the wrapper reserves
-Windows `127.0.0.1:8000` for IPv4 or `[::1]:8000` for IPv6. If Windows reports that the address is already in
-use, the application receives Linux `EADDRINUSE` and its `listen()` fails. If
-Linux itself rejects the listen, the Windows reservation is aborted. Windows
-does not accept clients until both sides have succeeded.
-
-The same coordination applies to non-zero UDP `bind()` calls. A WSL UDP
-service can therefore be exposed on the same Windows port without a manual
-`-reverse-udp` entry. `bind(...:0)` remains native-only so ordinary ephemeral
-UDP clients are not mirrored.
-
-If the control socket is briefly unavailable while the relay is starting or
-recovering, or a request times out while the relay session is being replaced,
-the interposer retries the reservation for up to two seconds.
-The corresponding `COMMIT` and `ADOPT` operations use the same transient retry
-policy; cleanup operations remain best-effort and single-shot during shutdown.
-Definitive Windows bind errors are returned immediately. Set
-`WSL_WIN_RELAY_CONTROL_RETRY_SECONDS` to extend this window (up to 60 seconds)
-when the relay supervisor uses a longer restart backoff; the strict launcher
-uses the same value while waiting for the control socket.
-
-The relay refuses to replace an active control socket from another instance.
-Only a socket that no longer has a listener is removed during startup, which
-prevents two supervisors from silently publishing different reservation state.
-The control service bounds the initial request line at 15 seconds and closes
-all accepted connections before shutdown completes. A client that connects but
-does not send a request therefore cannot retain a handler across service
-restart. Error responses are normalized to one line and capped at 255 bytes so
-they fit both native client buffers even when a backend returns a very long or
-malformed diagnostic. Socket cleanup also preserves a path replaced by another
-owner.
-
-This propagates bind/listen errors, not later firewall policy. A Windows
-firewall rule that drops or rejects clients after the socket is bound does not
-make the Windows `bind()` fail, so it cannot be reflected in the original WSL
-`listen()` call.
-
-Set `WSL_WIN_RELAY_DEBUG=1` to print control requests and responses from the
-interposer. `WSL_WIN_RELAY_CONTROL` and `WSL_WIN_RELAY_PRELOAD` override the
-default control socket and shared-library paths.
-
-Strict mode currently covers dynamically linked applications using libc or
-direct `syscall(SYS_listen/SYS_bind)` calls, including TCP `listen()`, non-zero
-UDP `bind()`, `dup()`, `dup2()`, `dup3()`, `fcntl(F_DUPFD*)`, `close_range()`,
-ordinary `fork()` descriptor inheritance, process-style `clone()` without
-`CLONE_FILES`, and fail-closed fork adoption gating. The dynamic wrapper
-deliberately forwards `vfork()` without post-return bookkeeping because its
-shared address space can overwrite wrapper-local state. The kernel adapter additionally
-tracks `SOCK_CLOEXEC`/`FD_CLOEXEC` through `PTRACE_EVENT_EXEC`; the dynamic
-interposer cannot run post-exec cleanup in the replaced image, so it includes
-the socket inode identity in `RESERVE`/`ADOPT` and lets the control daemon's
-reaper reclaim leases whose descriptor disappeared at that boundary. The
-dynamic interposer rejects process-style
-`CLONE_FILES` in the raw/libc `clone()` paths because its tracking table is
-process-local. When tracked listeners exist, raw process-style clone syscalls
-are rejected before creation, while the libc callback form uses a gate
-trampoline; `CLONE_FILES`, `CLONE_VM`, and `CLONE_VFORK` callback variants are
-rejected because
-their address-space contract cannot safely carry the gate. It applies the same
-check to `clone3()` by safely reading the caller's flags; malformed or
-unreadable clone arguments fail closed with `ENOTSUP`. Static or shared-fd
-process creation should use the opt-in kernel adapter.
-Static binaries should use the
-opt-in `--kernel` adapter; setuid binaries remain rejected. Child-side
-networking before `vfork()` `exec`/`_exit` is supported only for direct
-syscall-safe operations. Ordinary pthread/`CLONE_THREAD`
-listeners share the process lease by design and are covered; unusual
-thread-group teardown and signal/exec interactions remain outside the strict
-adapter contract. `close_range(CLOSE_RANGE_UNSHARE)` is rejected rather than
-silently weakening descriptor ownership guarantees.
-The kernel supervisor also recovers the initial unclassified child stop seen
-with nested libc `vfork()` launches when the parent relationship and pending
-create syscall are both unambiguous; static `system()` and `popen()` smoke
-cases cover this path, while ambiguous variants remain fail-closed.
-The lifecycle smoke also covers `wordexp()` command substitution, which
-exercises a shell-backed libc process launch and the same descendant lease
-ownership cleanup.
-The native lifecycle smoke also exercises `posix_spawnp()` PATH lookup,
-including the explicit `POSIX_SPAWN_USEVFORK` and PATH-search file-action
-combinations, plus
-`posix_spawn` signal-mask, signal-default, process-group, `SETSID`, and
-`RESETIDS` attributes, plus
-GNU `posix_spawn_file_actions_addchdir_np()` and `addfchdir_np()` actions when
-available, and `addclosefrom_np()` bulk descriptor cleanup when available, plus
-one combined `posix_spawnp(POSIX_SPAWN_USEVFORK)` lifecycle applying dup/close,
-open, chdir/fchdir, and closefrom actions together, plus
-direct `vfork()` followed by `execl()`, `execv()`, `execve()`, `execle()`, `execvp()`, or
-descriptor-based `fexecve()`, plus `execvpe()` with an explicit child environment; these paths
-retain the same bounded ownership and cleanup guarantees. The kernel adapter does not
-promise arbitrary child-side work between `vfork()` and `exec`/`_exit`.
-The static lifecycle smoke also covers `forkpty()` process creation,
-simultaneous `SYS_exit` teardown across a thread group, and
-`daemon()` detaching the root leader before a child listener binds, which is a
-supported process-tree boundary for
-long-running services. It also launches a static listener from the installed
-strict-shell wrapper, verifying that shell descendants use the same reservation
-and cleanup protocol. The same shell path is exercised with a forced Windows
-bind rejection and must return a failure without committing the lease.
-It also pauses and resumes a traced listener with `SIGSTOP`/`SIGCONT`, keeping
-the lease alive across an ordinary service stop/continue cycle. Owner
-selection is re-evaluated while tasks are being reaped, so concurrent thread
-exits cannot strand a lease on a PID that has already disappeared.
-The spawn file-action coverage also includes an `addopen()` action before the
-listener child execs, so ordinary pre-exec file setup does not disturb lease
-tracking.
-The lifecycle smoke additionally execs from a non-leader pthread and checks
-that both the inherited listener and the replacement image's listener leases
-are tracked and released after Linux resets the thread-group identity. Cleanup
-is owner-scoped and idempotent, so the extra teardown notification Linux may
-emit at that boundary cannot leak a Windows reservation.
-The native interposer targets the Linux
-amd64 build produced by the WSL scripts. The daemon tracks multiple process
-owners and reaps leases from processes that exit without closing their
-descriptors.
-
-The native lifecycle regression test can be run offline with
-`./scripts/test-interposer.sh`; it uses a local fake control socket and does
-not open a Windows port. It covers both the successful TCP/UDP lifecycle and a
-simulated Windows `EADDRINUSE` response that must make the WSL `listen()` fail.
-
-## Transparent mode
-
-For applications without proxy support, install the pinned TUN adapter and keep
-the relay running:
-
-```bash
-./scripts/install-tun2socks.sh
-sudo env WWR_TUN_PROXY=socks5://127.0.0.1:1080 ./scripts/transparent-relay.sh
-```
-
-The script creates `tun0`, adds split default routes, keeps a configured
-non-loopback proxy endpoint on the original uplink, starts tun2socks, and
-restores routes and the optional DNS file on exit. Signal handling includes a
-bounded tun2socks shutdown with a forced-kill fallback, so a stuck adapter
-cannot leave route cleanup waiting forever. Set `WWR_DNS=1.1.1.1` when
-WSL DNS is unavailable; set `WWR_UPLINK_INTERFACE` if the default interface
-cannot be detected. Root, `iproute2`, `/dev/net/tun`, and tun2socks are required.
-The script searches `PATH` and the Go `GOPATH/bin` installation location; set
-`WWR_TUN2SOCKS_BIN` when running under `sudo` or another environment with a
-different tool path.
-For a loopback proxy, the script waits up to 30 seconds for its TCP listener
-before making any network-state change, preventing a boot-order race from
-installing blackhole routes. Set `WWR_TUN_PROXY_WAIT_SECONDS` between `0` and
-`300` to adjust that preflight. While routing is active, losing the listener
-for 15 seconds makes the wrapper exit and roll back TUN, routes, and DNS; set
-`WWR_TUN_PROXY_LOSS_SECONDS` between `1` and `300`, or `0` to disable this
-watchdog.
-
-When WSL has lost its default interface because of an HNS failure, the script
-automatically falls back to `lo` if `WWR_TUN_PROXY` points at a local loopback
-SOCKS endpoint. Set `WWR_UPLINK_INTERFACE` explicitly for a non-loopback proxy.
-
-The TUN setup and rollback path has been smoke-tested under WSL as root,
-including IPv4 split routes, optional IPv6 routes, process shutdown, and device
-cleanup. DNS restoration also preserves the original `/etc/resolv.conf` shape,
-including a dangling symlink when that is what WSL provided.
-Set `WWR_RESOLV_CONF` to override the DNS file path in a container or test
-namespace; it defaults to `/etc/resolv.conf`.
-
-A real transparent TCP/UDP smoke test has passed with the pinned `tun2socks`
-v2.7.0 binary: in a WSL instance with no `eth0` or default route, setting
-`WWR_UPLINK_INTERFACE=lo` and `WWR_DNS=1.1.1.1` sent an environment-clean
-`curl https://example.com` through TUN, the local SOCKS5 relay, and the Windows
-relay. The test also verified that the TUN device, split routes, relay process,
-and DNS state were cleaned up afterward.
-
-The same test also passed with the Windows relay configured for
-`socks5h://matebookxpro.local:7890`, demonstrating the intended failure-mode
-path: WSL only reaches its local relay, while Windows resolves and connects to
-the upstream proxy.
-
-For an opt-in boot-persistent transparent route, install tun2socks first and
-then install the root system service:
-
-```bash
-./scripts/install-tun2socks.sh
-sudo env WWR_TUN2SOCKS_BIN="$(go env GOPATH)/bin/tun2socks" \
-  ./scripts/install-transparent-service.sh
-```
-
-The installer copies tun2socks and the route wrapper into
-`/usr/local/libexec/wsl-win-relay`, creates the private
-`/etc/wsl-win-relay/transparent.env` only once, and enables
-`wsl-win-relay-transparent.service`. Re-running it updates executables and the
-unit without overwriting DNS/uplink choices. The system service is deliberately
-separate from the unprivileged relay user service because route, resolver, and
-TUN changes require root. Review the environment file before enabling DNS
-replacement; disable the unit before making manual route changes.
-Run `sudo ./scripts/install-transparent-service.sh --uninstall` to stop and
-remove the system service and deployed executables. The private environment
-file is preserved deliberately, so reinstalling restores the previous policy.
-
-## Long-running service
-
-With WSL systemd enabled, install the user service:
-
-```bash
-./scripts/install-user-service.sh
-systemctl --user status wsl-win-relay.service
-```
-
-On a first stdio-mode installation, the example contains a deliberate
-`/mnt/c/Users/you/...` relay placeholder. The installer deploys and reloads the
-unit but does not enable or start it until that path is edited and the installer
-is run again. If broker mode was installed first, its validated connector path
-overrides the placeholder and the user service can start immediately.
-
-Re-running the installer updates the installed binaries and unit, validates the
-existing configuration through the installed proxy, then restarts the user
-service so the new configuration is active immediately. A failed validation or
-an unchanged example placeholder leaves running services untouched.
-
-To remove the complete unprivileged proxy/broker deployment:
-
-```bash
-./scripts/install-user-service.sh --uninstall
-```
-
-Uninstall stops and disables both user units and removes only their fixed unit,
-wrapper, proxy, status, doctor, strict-supervisor, and interposer targets. It
-refuses symlinked targets before making changes and deliberately preserves the
-private `config.json`, `broker.env`, and `attach.token` files for recovery or a
-later reinstall. The separately privileged transparent service is unaffected.
-
-The service restarts the proxy after a Windows relay crash or broken stdio
-transport; startup handshake and reverse registrations are recreated on each
-restart. With `broker_mode` enabled, connector, broker-frontend, or bridge-worker
-restarts preserve socket-owner-owned TCP/UDP sockets. A socket-owner process
-crash still loses those sockets. The strict control socket remains
-available across relay sessions,
-and live leases are rebound and recommitted when the replacement child is
-ready. If a replacement Windows bind is temporarily refused, missing strict
-leases are retried in the background without disturbing leases that already
-recovered. The proxy also retries a relay-only EOF on its own
-with an exponential backoff from two seconds up to thirty seconds when run
-directly; after a minute of stable operation the next failure starts again at
-two seconds. Local SOCKS5/HTTP listener ports stay bound while a replacement
-session starts, and new requests wait for it; in-flight streams still end with
-the failed session. A relay child that exits normally with a non-zero status
-is treated as a fatal configuration/runtime error instead of being retried
-forever; EOF or signal termination remains recoverable. Configuration and
-listener errors remain fatal. Automatic TCP/UDP mappings are also
-process-scoped: they are detached from a failed child and rebound through the
-reconnecting session dialer, so a transient relay restart does not leave a
-stale Windows listener behind. The
-installer copies the built Linux proxy to `~/bin/wsl-proxy-linux`, the mapping
-status reader to `~/bin/wsl-win-relay-status`, the
-service wrappers to `~/bin/wsl-win-relay-service` and
-`~/bin/wsl-win-relay-broker-service`, the strict-listen launcher to
-`~/bin/wsl-win-relay-run`, the strict shell wrapper to
-`~/bin/wsl-win-relay-shell`, and the kernel supervisor to
-`~/bin/wsl-win-relay-strict`; when the native library is present it also
-installs it under `~/lib`. It creates a private
-`${XDG_CONFIG_HOME:-~/.config}/wsl-win-relay/config.json` from the example only
-when one does not already exist. It rejects symlinked/non-regular config paths
-and enforces directory mode `0700` and file mode `0600` on every run. Build with `scripts/build-wsl.sh` first
-and set the Windows `relay_exe` path in the config.
-The installed launcher resolves its sibling supervisor in `~/bin` and the
-shared library in `~/lib` automatically; no path overrides are required for
-the standard layout.
-
-Run the installed read-only diagnostic after installation or whenever the
-relay stops recovering:
-
-```bash
-~/bin/wsl-win-relay-doctor
-~/bin/wsl-win-relay-doctor --probe-url https://example.com
-```
-
-The default run validates private configuration permissions, invokes the same
-production configuration parser used at startup, checks broker token-file
-consistency without printing credentials, executes the Windows broker and
-connector `-version` paths through WSL interop, compares their build metadata,
-and checks installed user-unit state. The optional probe performs a real fetch
-through `socks5h://127.0.0.1:1080`; use `--socks-proxy` when the configured
-SOCKS listener differs. Failures produce a non-zero exit status, while missing
-optional broker/systemd components are warnings.
-
-The startup handshake timeout defaults to five seconds and can be adjusted with
-`relay_handshake_timeout` or `-relay-handshake-timeout` when the Windows relay
-needs longer to start after a system/network recovery. This timeout only covers
-capability negotiation; connection establishment has its separate
-`relay_dial_timeout` setting.
-
-Stdio relay-session recovery intentionally starts a fresh child and loses
-existing connections. Broker mode instead keeps stream and mapping ownership
-in its durable socket-owner process across connector and outer bridge
-replacement; only a socket-owner crash loses established sockets. See
-[ADR-0010](docs/adr/0010-relay-failure-supervision.md),
-[ADR-0015](docs/adr/0015-persistent-windows-ownership-and-attach.md), and
-[ADR-0016](docs/adr/0016-process-isolated-socket-owner.md).
+This project is licensed under the Apache License, Version 2.0. See
+[`LICENSE`](LICENSE). Vendored dependencies retain their own license notices.
