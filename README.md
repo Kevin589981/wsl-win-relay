@@ -1,5 +1,7 @@
 # wsl-win-relay
 
+[中文说明](README.zh-CN.md)
+
 An emergency network relay for WSL when WSL networking is broken but Windows
 still has network access.
 
@@ -72,22 +74,42 @@ and authentication boundary.
 - WSL systemd only when using the service installers.
 - Root, `iproute2`, `/dev/net/tun`, and tun2socks only for transparent mode.
 
-The repository may live on a Windows-mounted drive. The examples use:
+The repository may live on a Windows-mounted drive. Set `RELAY_ROOT` to your
+actual WSL checkout and reuse it in the commands below:
 
 ```text
-D:\Code\net\wsl-win-relay
-/mnt/d/Code/net/wsl-win-relay
+$RELAY_ROOT
 ```
 
 For a new checkout, use:
 
 ```bash
-git clone https://github.com/Kevin589981/wsl-win-relay.git
-cd wsl-win-relay
+export RELAY_ROOT="$HOME/wsl-win-relay"
+git clone https://github.com/Kevin589981/wsl-win-relay.git "$RELAY_ROOT"
+cd "$RELAY_ROOT"
 ```
 
-The repository is private, so the GitHub account running `git clone` must have
-access to it.
+The repository is public. GitHub authentication is only needed for a private
+fork or when pushing changes.
+
+## Download a Release
+
+Most users do not need Go. Download matching archives from the
+[Releases page](https://github.com/Kevin589981/wsl-win-relay/releases):
+
+- `wsl-win-relay-<version>-windows-amd64.zip` or `windows-arm64.zip` for the
+  Windows executables;
+- `wsl-win-relay-<version>-linux-amd64.tar.gz` or `linux-arm64.tar.gz` for WSL.
+
+Extract the Windows archive to a directory such as
+`C:\Tools\wsl-win-relay`, and extract the Linux archive to a WSL directory such
+as `$HOME/wsl-win-relay`. The Linux archive contains `bin/` and `lib/` at its
+root, so `$HOME/wsl-win-relay/bin/wsl-proxy-linux` is ready after extraction.
+The amd64 package also contains the native strict supervisor in `bin/` and the
+LD_PRELOAD library in `lib/`. Replace both example directories with your own
+paths. The archives include both README files, the Apache license, and the
+example JSON.
+Verify downloads with `SHA256SUMS` from the same release.
 
 ## Quick Start: SOCKS5
 
@@ -96,9 +118,18 @@ This mode needs no systemd. It starts a Windows relay child from WSL.
 ### 1. Build
 
 ```bash
-cd /mnt/d/Code/net/wsl-win-relay
+export RELAY_ROOT="$HOME/wsl-win-relay"
+cd "$RELAY_ROOT"
+```
+
+If you cloned the source repository, build now:
+
+```bash
 ./scripts/build-wsl.sh
 ```
+
+If you downloaded a Release archive, skip this command; the archive already
+contains the binaries and service scripts.
 
 The relevant files are created in `bin/`:
 
@@ -117,21 +148,21 @@ cp wsl-win-relay.example.json "$HOME/wsl-win-relay.json"
 ${EDITOR:-nano} "$HOME/wsl-win-relay.json"
 ```
 
-For your setup, the important values are:
+Set the Windows relay path and leave `upstream_proxy` empty for direct Windows
+egress:
 
 ```json
 {
-  "relay_exe": "/mnt/d/Code/net/wsl-win-relay/bin/wsl-win-relay.exe",
+  "relay_exe": "/mnt/c/Tools/wsl-win-relay/wsl-win-relay.exe",
   "broker_mode": false,
-  "upstream_proxy": "socks5h://matebookxpro.local:7890",
+  "upstream_proxy": "",
   "socks5_listen": "127.0.0.1:1080",
   "http_proxy_listen": "127.0.0.1:8080"
 }
 ```
 
-`upstream_proxy` is used by the Windows process. WSL does not connect to
-`matebookxpro.local:7890` itself. Leave it empty when Windows should connect
-directly.
+`upstream_proxy` is used by the Windows process. To use one, replace the empty
+value with `socks5h://YOUR_PROXY_HOST:PORT`.
 
 ### 3. Start and use
 
@@ -162,13 +193,10 @@ Broker mode keeps Windows-side socket ownership alive while the WSL connector,
 broker frontend, or bridge processes restart. WSL systemd must be enabled.
 
 ```bash
-cd /mnt/d/Code/net/wsl-win-relay
-./scripts/build-wsl.sh
-
-export WSL_WIN_RELAY_BROKER_EXE=/mnt/d/Code/net/wsl-win-relay/bin/wsl-win-broker.exe
-export WSL_WIN_RELAY_CONNECTOR_EXE=/mnt/d/Code/net/wsl-win-relay/bin/wsl-win-connector.exe
-export WSL_WIN_RELAY_UPSTREAM_PROXY=socks5h://matebookxpro.local:7890
-
+export RELAY_ROOT="$HOME/wsl-win-relay"
+export WSL_WIN_RELAY_BROKER_EXE="/mnt/c/Tools/wsl-win-relay/wsl-win-broker.exe"
+export WSL_WIN_RELAY_CONNECTOR_EXE="/mnt/c/Tools/wsl-win-relay/wsl-win-connector.exe"
+cd "$RELAY_ROOT"
 ./scripts/install-broker-user-service.sh
 ./scripts/install-user-service.sh
 ```
@@ -301,14 +329,14 @@ To let Windows choose a free port and publish the result:
   "auto_forward": {
     "enabled": true,
     "windows_port_auto": true,
-    "status_file": "/run/user/1000/wsl-win-relay-mappings.json"
+    "status_file": "/tmp/wsl-win-relay-mappings.json"
   }
 }
 ```
 
 ```bash
 ./bin/wsl-win-relay-status \
-  -file /run/user/1000/wsl-win-relay-mappings.json
+  -file /tmp/wsl-win-relay-mappings.json
 ```
 
 Mappings are removed when their WSL listener disappears. Windows bind refusals
@@ -470,20 +498,20 @@ streams after the socket-owner process itself crashes.
 
 ## Troubleshooting
 
-### WSL cannot reach `matebookxpro.local:7890`
+### WSL cannot reach the Windows upstream proxy
 
 That direct connection is not required. Check:
 
 1. WSL can launch a Windows executable through interop.
 2. The Windows broker is running.
 3. Broker mode has `WSL_WIN_RELAY_UPSTREAM_PROXY` in `broker.env`.
-4. Windows itself can resolve and reach `matebookxpro.local:7890`.
+4. Windows itself can resolve and reach the configured upstream proxy.
 5. WSL can reach the local listener `127.0.0.1:1080`.
 
 The intended path is:
 
 ```text
-WSL application -> WSL 127.0.0.1:1080 -> Windows broker -> matebookxpro.local:7890
+WSL application -> WSL 127.0.0.1:1080 -> Windows broker -> upstream proxy
 ```
 
 ### PowerShell is not found from WSL
@@ -492,7 +520,7 @@ This only affects some interop smoke tests and cleanup helpers. Set its mounted
 absolute path:
 
 ```bash
-export WWR_WINDOWS_SHELL=/mnt/d/AppGallery/Downloads/PowerShell/7/pwsh.exe
+export WWR_WINDOWS_SHELL=/mnt/c/Path/To/pwsh.exe
 ```
 
 ### A Windows port is already in use
@@ -528,8 +556,8 @@ transparent rollback, installer tests, and the broker recovery matrix.
 Run the full Windows interop gate with the current environment:
 
 ```bash
-WWR_WINDOWS_SHELL=/mnt/d/AppGallery/Downloads/PowerShell/7/pwsh.exe \
-WWR_WINDOWS_UPSTREAM_PROXY=socks5h://matebookxpro.local:7890 \
+WWR_WINDOWS_SHELL=/mnt/c/Path/To/pwsh.exe \
+WWR_WINDOWS_UPSTREAM_PROXY='socks5h://YOUR_PROXY_HOST:PORT' \
 WWR_BROKER_INTEROP_SERVICE_WRAPPER=1 \
 WWR_BROKER_INTEROP_WINDOWS_PORT_AUTO=1 \
 WWR_BROKER_INTEROP_AUTO_UDP=1 \
@@ -552,6 +580,13 @@ go test -race ./...
 The repository is vendored. The release gate uses `GOPROXY=off` for isolated
 checks. See the [implementation plan](docs/plans/2026-09-12-wsl-win-relay.md)
 and [architecture decisions](docs/adr/) for design details.
+
+Pushing a tag named `vMAJOR.MINOR.PATCH` starts the public GitHub Actions release
+workflow. It runs tests, vet, and the race detector, then builds Linux and
+Windows Go binaries for amd64 and arm64, Linux amd64 native strict components,
+packages both usage guides and the example configuration, generates
+`SHA256SUMS`, and publishes a GitHub Release. No personal machine path or
+upstream proxy is embedded in release artifacts.
 
 ## Security
 

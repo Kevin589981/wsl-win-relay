@@ -1,0 +1,109 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build release artifacts
+    runs-on: ubuntu-latest
+    env:
+      GOPROXY: off
+      GOTOOLCHAIN: local
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: false
+
+      - name: Verify source before packaging
+        run: |
+          set -euo pipefail
+          case "$GITHUB_REF_NAME" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "release tag must look like vMAJOR.MINOR.PATCH: $GITHUB_REF_NAME" >&2; exit 1 ;;
+          esac
+          go test ./...
+          go vet ./...
+          go test -race ./...
+
+      - name: Build and package
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          case "$RELEASE_VERSION" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "invalid release version: $RELEASE_VERSION" >&2; exit 1 ;;
+          esac
+          source_date_epoch=$(git show -s --format=%ct "$GITHUB_SHA")
+          short_commit=${RELEASE_COMMIT:0:12}
+          ldflags="-s -w -X github.com/Kevin589981/wsl-win-relay/internal/buildinfo.Version=${RELEASE_VERSION} -X github.com/Kevin589981/wsl-win-relay/internal/buildinfo.Commit=${short_commit} -X github.com/Kevin589981/wsl-win-relay/internal/buildinfo.BuiltAt=$(date -u -d "@${source_date_epoch}" +%Y-%m-%dT%H:%M:%SZ)"
+
+          rm -rf dist release-work
+          mkdir -p dist release-work
+          for arch in amd64 arm64; do
+            mkdir -p "release-work/linux-${arch}" "release-work/windows-${arch}"
+            GOOS=linux GOARCH="$arch" go build -trimpath -ldflags "$ldflags" -o "release-work/linux-${arch}/wsl-proxy-linux" ./cmd/wsl-proxy
+            GOOS=linux GOARCH="$arch" go build -trimpath -ldflags "$ldflags" -o "release-work/linux-${arch}/wsl-win-relay-status" ./cmd/wsl-status
+            GOOS=windows GOARCH="$arch" go build -trimpath -ldflags "$ldflags" -o "release-work/windows-${arch}/wsl-win-relay.exe" ./cmd/win-relay
+            GOOS=windows GOARCH="$arch" go build -trimpath -ldflags "$ldflags" -o "release-work/windows-${arch}/wsl-win-broker.exe" ./cmd/win-broker
+            GOOS=windows GOARCH="$arch" go build -trimpath -ldflags "$ldflags" -o "release-work/windows-${arch}/wsl-win-connector.exe" ./cmd/win-connector
+          done
+
+          gcc -O2 -Wall -Wextra -Werror -fPIC -shared \
+            -o release-work/linux-amd64/libwsl_win_relay_listen.so \
+            native/listen_interposer.c -ldl -pthread
+          gcc -O2 -Wall -Wextra -Werror -std=c11 \
+            -DWWR_VERSION="\"${RELEASE_VERSION}\"" \
+            -DWWR_COMMIT="\"${short_commit}\"" \
+            -DWWR_BUILT_AT="\"$(date -u -d "@${source_date_epoch}" +%Y-%m-%dT%H:%M:%SZ)\"" \
+            -o release-work/linux-amd64/wsl-win-relay-strict \
+            native/strict_supervisor.c
+
+          for arch in amd64 arm64; do
+            mkdir -p "release-work/linux-${arch}/bin"
+            for binary in "release-work/linux-${arch}"/wsl-*; do
+              [ -e "$binary" ] || continue
+              mv "$binary" "release-work/linux-${arch}/bin/"
+            done
+          done
+          mkdir -p release-work/linux-amd64/lib
+          mv release-work/linux-amd64/libwsl_win_relay_listen.so release-work/linux-amd64/lib/
+          for platform in linux-amd64 linux-arm64 windows-amd64 windows-arm64; do
+            cp README.md README.zh-CN.md LICENSE wsl-win-relay.example.json "release-work/${platform}/"
+          done
+          tar -C release-work/linux-amd64 -czf "dist/wsl-win-relay-${RELEASE_VERSION}-linux-amd64.tar.gz" .
+          tar -C release-work/linux-arm64 -czf "dist/wsl-win-relay-${RELEASE_VERSION}-linux-arm64.tar.gz" .
+          (cd release-work/windows-amd64 && zip -q -r "../../dist/wsl-win-relay-${RELEASE_VERSION}-windows-amd64.zip" .)
+          (cd release-work/windows-arm64 && zip -q -r "../../dist/wsl-win-relay-${RELEASE_VERSION}-windows-arm64.zip" .)
+          (cd dist && sha256sum * > SHA256SUMS)
+
+      - name: Verify release metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          for archive in dist/*.tar.gz dist/*.zip; do
+            test -s "$archive"
+          done
+          test -s dist/SHA256SUMS
+          sha256sum --check dist/SHA256SUMS
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes --title "$GITHUB_REF_NAME"

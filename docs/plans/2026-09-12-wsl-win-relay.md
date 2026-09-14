@@ -21,6 +21,9 @@
       rune-safe encoder and additionally remain single-line.
 - [x] Every executable exposes consistent version, commit, and build-time
       metadata; the WSL build and CI paths inject and verify matching values.
+- [x] Public `vMAJOR.MINOR.PATCH` tags build signed-by-checksum Linux/Windows
+      release archives for amd64/arm64 through GitHub Actions, including the
+      English and Chinese usage guides.
 - [x] WSL builds normalize platform-only CRLF/LF differences when deriving the
       Git dirty marker, while preserving the marker for real content changes.
 - [x] A fail-fast WSL release gate runs Go tests/vet/race, amd64 builds, native
