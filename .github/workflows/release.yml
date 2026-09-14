@@ -87,6 +87,12 @@ jobs:
           for platform in linux-amd64 linux-arm64 windows-amd64 windows-arm64; do
             cp README.md README.zh-CN.md LICENSE wsl-win-relay.example.json "release-work/${platform}/"
           done
+          for arch in amd64 arm64; do
+            cp -R scripts systemd "release-work/linux-${arch}/"
+          done
+          mkdir -p release-work/windows-amd64/scripts release-work/windows-arm64/scripts
+          cp scripts/install-broker-windows-task.ps1 release-work/windows-amd64/scripts/
+          cp scripts/install-broker-windows-task.ps1 release-work/windows-arm64/scripts/
           tar -C release-work/linux-amd64 -czf "dist/wsl-win-relay-${RELEASE_VERSION}-linux-amd64.tar.gz" .
           tar -C release-work/linux-arm64 -czf "dist/wsl-win-relay-${RELEASE_VERSION}-linux-arm64.tar.gz" .
           (cd release-work/windows-amd64 && zip -q -r "../../dist/wsl-win-relay-${RELEASE_VERSION}-windows-amd64.zip" .)
