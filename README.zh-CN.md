@@ -42,6 +42,159 @@ Windows WinSock 或 Windows 上游代理
 socket 并选择临时源端口。入站暴露则不同：Windows 先监听端口，再为每个
 Windows 客户端连接 WSL 服务。
 
+## 模式与数据流程
+
+可以把 relay 看成三层，三层可以组合使用：
+
+```text
+应用接入层：      SOCKS5 / HTTP / TUN
+跨 WSL-Windows：  stdio / broker + connector
+端口发布层：      reverse / auto-forward / strict
+```
+
+### 手动 stdio 模式
+
+```text
+WSL wsl-proxy-linux
+        |
+        | 启动 Windows .exe，并通过标准输入输出传输 relay 协议
+        v
+Windows wsl-win-relay.exe
+        |
+        v
+Windows WinSock 或 Windows 上游代理
+```
+
+WSL proxy 通过 interop 启动 Windows relay。应用请求先进入 WSL 本地
+SOCKS5/HTTP 监听，WSL relay 只把目标地址和数据传给 Windows relay，真正的
+socket 由 Windows 创建。该模式不需要 systemd，适合快速测试；Windows
+relay 子进程退出时，已有连接会中断。
+
+### 持久 broker 模式
+
+```text
+WSL wsl-proxy-linux
+        |
+        v
+WSL wsl-win-connector.exe
+        |  本地 IPC + attach token
+        v
+Windows broker / socket owner
+        |
+        v
+Windows WinSock 或 127.0.0.1:7890 上游代理
+```
+
+broker 是独立的 Windows 常驻进程，connector 可以在 WSL proxy 或连接进程
+重启后重新 attach。Windows socket 由 broker 的 socket owner 持有，因此普通
+connector/frontend/bridge 重启时已有连接有机会继续使用。broker 或 socket
+owner 自身崩溃时，已有连接仍可能丢失。长期运行时推荐此模式；broker 模式的
+上游代理配置在 Windows broker 的私有环境中，WSL 不直接连接该地址。
+
+### SOCKS5 出站模式
+
+```text
+应用 -> WSL 127.0.0.1:1080 -> relay -> Windows -> 上游代理/互联网
+```
+
+应用通过 SOCKS5 告诉 WSL relay“请连接 `host:port`”。WSL 不建立目标连接，
+Windows 创建正常的出站 socket，并自行选择临时源端口。因此出站请求不需要
+WSL 端口和 Windows 端口对应。
+
+`socks5h` 会把域名解析交给代理端，适合 WSL DNS/HNS 已经异常的情况；
+`socks5` 可能先由 WSL 本地解析。SOCKS5 还支持 UDP ASSOCIATE，但能否真正
+出站取决于 Windows 上游代理是否支持 UDP。
+
+### HTTP 代理模式
+
+```text
+应用 -> WSL 127.0.0.1:8080 -> HTTP CONNECT/普通 HTTP -> relay -> Windows
+```
+
+HTTPS 通常通过 HTTP `CONNECT host:443` 建立隧道，普通 HTTP 请求可以直接
+转发。该接口用于只支持 HTTP 代理的程序，主要承载 TCP，不提供 SOCKS5 的
+UDP 能力。
+
+### 透明 TUN 模式
+
+```text
+不支持代理的应用
+        -> Linux 路由表 -> tun0 -> tun2socks
+        -> WSL SOCKS5 -> Windows broker -> Windows 上游代理
+```
+
+脚本创建 `tun0`，把默认 IPv4 流量拆成 `0.0.0.0/1` 和 `128.0.0.0/1`
+两条路由交给 TUN。tun2socks 将 IP 流量转换为 SOCKS5 请求，再进入本地
+relay。脚本会保留到本地 SOCKS 端口的路径，避免 relay 自己再次被路由进
+TUN。此模式需要 root、`iproute2`、`/dev/net/tun` 和 tun2socks，只影响当前
+WSL 实例，不会接管 Windows 本机流量。
+
+TUN 主要接管 IP 流量；应用在建立连接前进行的 DNS 解析可能仍然依赖 WSL
+DNS。DNS 已损坏时，优先使用 `socks5h`，或在启动脚本时配置 `WWR_DNS`。
+
+### 显式 reverse 反向映射
+
+```text
+Windows 客户端 -> Windows 固定监听端口
+               -> relay -> WSL 服务端口
+```
+
+例如 `127.0.0.1:8000=127.0.0.1:8000` 表示左侧由 Windows 监听，右侧是
+WSL 目标。Windows 必须先成功 `bind()`，之后每个 Windows 客户端连接才会
+被转发到 WSL 服务。这是入站发布，与出站代理是两个独立方向。
+
+### auto-forward 自动映射
+
+```text
+WSL 程序 listen(8000)
+        -> relay 轮询发现
+        -> Windows 尝试监听 8000
+        -> 建立 Windows -> WSL 转发
+```
+
+自动映射默认通过轮询发现 TCP 监听，WSL 的 `listen()` 成功后才尝试 Windows
+映射。因此它是“监听后发现”，存在时间差；Windows 后续拒绝不会让已经成功
+返回的 WSL `listen()` 事后失败。端口冲突时可以使用端口偏移或让 Windows
+自动分配。UDP 自动发现默认关闭，只对明确的白名单端口启用。
+
+### strict 严格同步模式
+
+```text
+程序准备 listen(8000)
+        -> strict adapter 先请求 Windows 预留
+             | 成功                 | 失败
+             v                      v
+        WSL listen 成功       WSL 返回 EADDRINUSE
+```
+
+strict 通过动态库拦截或 kernel adapter，在 WSL 程序的 `listen()`/非零 UDP
+`bind()` 返回前，先请求 Windows 预留相同端口。Windows 拒绝时 WSL 调用也
+失败；WSL 调用失败时 Windows 预留会取消。这正是“Windows 拒绝，WSL 也拒绝”
+的同步语义，但它只协调端口发布，不负责普通出站联网。
+
+### Windows Task Scheduler（可选）
+
+Task Scheduler 不是新的转发协议，而是 broker 的生命周期方式。普通安装由
+WSL 用户服务启动 broker；Task Scheduler 可以在 Windows 登录或启动时启动
+broker，使其在 WSL 用户服务暂时停止时继续等待 connector 重新连接。
+
+### 模式组合
+
+长期使用通常是：
+
+```text
+持久 broker
+  + SOCKS5/HTTP（代理感知应用）
+  + TUN（不支持代理的应用）
+  + auto-forward（普通开发服务暴露）
+  + strict（必须同步保证端口一致）
+```
+
+例如 `curl --proxy socks5h://127.0.0.1:1080 https://example.com` 使用的是
+“持久 broker + SOCKS5 + Windows 上游代理”。直接执行 `curl https://example.com`
+只有在设置了代理环境变量或 TUN 正在运行时，才会自动进入 relay；否则仍会
+尝试走 WSL 自己的网络路径。
+
 ## 前置条件和限制
 
 - Windows 已安装 WSL，并且 WSL interop 可运行 Windows `.exe`。

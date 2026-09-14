@@ -50,6 +50,167 @@ address; Windows creates a normal outbound socket and chooses an ephemeral
 source port. Inbound exposure is different: Windows must bind a listening port
 and then open a connection to the WSL service.
 
+## Modes and Data Paths
+
+The relay has three composable layers:
+
+```text
+Application access:  SOCKS5 / HTTP / TUN
+WSL-Windows bridge:  stdio / broker + connector
+Port publication:    reverse / auto-forward / strict
+```
+
+### Manual stdio mode
+
+```text
+WSL wsl-proxy-linux
+        |
+        | starts the Windows executable and carries the relay protocol over stdio
+        v
+Windows wsl-win-relay.exe
+        |
+        v
+Windows WinSock or a Windows-side upstream proxy
+```
+
+The WSL proxy starts the Windows relay through WSL interop. Applications connect
+to the local SOCKS5/HTTP listener; the WSL relay sends the target address and
+payload to the Windows relay, which creates the real socket. This mode needs no
+systemd and is useful for quick tests. Existing connections are lost if the
+Windows relay child exits.
+
+### Persistent broker mode
+
+```text
+WSL wsl-proxy-linux
+        |
+        v
+WSL wsl-win-connector.exe
+        |  local IPC + attach token
+        v
+Windows broker / socket owner
+        |
+        v
+Windows WinSock or the Windows-side upstream proxy
+```
+
+The broker is an independent Windows process that owns the Windows sockets.
+The connector can attach again after the WSL proxy or connector process restarts,
+so ordinary frontend/bridge restarts can preserve existing connections. A broker
+or socket-owner crash can still lose those connections. This is the recommended
+long-running mode. Its upstream proxy belongs in the private Windows broker
+environment; WSL does not connect to that upstream address directly.
+
+### SOCKS5 egress mode
+
+```text
+Application -> WSL 127.0.0.1:1080 -> relay -> Windows -> upstream proxy/internet
+```
+
+The application tells the WSL relay to connect to `host:port`. WSL does not open
+the destination socket; Windows creates a normal outbound socket and chooses an
+ephemeral source port. Outbound WSL and Windows ports therefore do not need to
+match.
+
+`socks5h` delegates hostname resolution to the proxy and is useful when WSL DNS
+or HNS is broken. `socks5` may resolve the hostname inside WSL first. SOCKS5 also
+supports UDP ASSOCIATE when the Windows upstream supports UDP.
+
+### HTTP proxy mode
+
+```text
+Application -> WSL 127.0.0.1:8080 -> HTTP CONNECT/plain HTTP -> relay -> Windows
+```
+
+HTTPS normally uses HTTP `CONNECT host:443`; plain HTTP can be forwarded directly.
+This interface is for applications that only support HTTP proxies and primarily
+carries TCP. It does not provide SOCKS5 UDP semantics.
+
+### Transparent TUN mode
+
+```text
+Proxy-unaware application
+        -> Linux routes -> tun0 -> tun2socks
+        -> WSL SOCKS5 -> Windows broker -> Windows upstream proxy
+```
+
+The script creates `tun0` and sends the default IPv4 traffic through two split
+routes, `0.0.0.0/1` and `128.0.0.0/1`. tun2socks converts those packets into
+SOCKS5 requests, which enter the local relay. The script keeps the route to the
+local SOCKS listener outside the TUN to avoid routing the relay into itself.
+This mode requires root, `iproute2`, `/dev/net/tun`, and tun2socks. It affects
+the current WSL instance, not the Windows host.
+
+TUN primarily handles IP traffic. An application may still resolve a hostname
+before opening its connection, so broken WSL DNS can still matter. Prefer
+`socks5h` or configure `WWR_DNS` when DNS is also unavailable.
+
+### Explicit reverse mappings
+
+```text
+Windows client -> fixed Windows listener -> relay -> WSL service port
+```
+
+For `127.0.0.1:8000=127.0.0.1:8000`, Windows owns the left-hand listener and
+the right-hand side is the WSL target. Windows must bind successfully first;
+each Windows client connection is then forwarded to the WSL service. This is an
+inbound publication feature and is separate from outbound proxying.
+
+### Automatic forwarding
+
+```text
+WSL process calls listen(8000)
+        -> relay discovers it by polling
+        -> Windows tries to listen on 8000
+        -> Windows-to-WSL forwarding starts
+```
+
+Automatic forwarding discovers TCP listeners after the WSL `listen()` has already
+succeeded. It therefore has a detection window: a later Windows refusal cannot
+make the earlier WSL call fail. Use a port offset or Windows-side allocation for
+conflicts. Automatic UDP discovery is disabled by default and requires an
+explicit allowlist.
+
+### Strict listen/bind coordination
+
+```text
+Application prepares listen(8000)
+        -> strict adapter reserves the Windows port first
+             | success                 | refusal
+             v                         v
+        WSL listen succeeds       WSL returns EADDRINUSE
+```
+
+Strict mode uses an interposer or kernel adapter to reserve the Windows port before
+the WSL `listen()` or non-zero UDP `bind()` returns. A Windows refusal is returned
+to WSL; a failed WSL call cancels the Windows reservation. This provides the
+"Windows refuses, WSL refuses too" synchronous semantics, but it coordinates port
+publication rather than outbound networking.
+
+### Optional Windows Task Scheduler mode
+
+Task Scheduler is a broker lifecycle option, not a new forwarding protocol.
+Instead of starting the broker from a WSL user service, Windows can start it at
+login or boot so it remains available while the WSL user service is stopped and
+waits for a connector to attach again.
+
+### Combining modes
+
+A typical long-running setup is:
+
+```text
+Persistent broker
+  + SOCKS5/HTTP for proxy-aware applications
+  + TUN for proxy-unaware applications
+  + auto-forward for ordinary development services
+  + strict when port publication must fail synchronously
+```
+
+For example, `curl --proxy socks5h://127.0.0.1:1080 https://example.com` uses
+persistent broker + SOCKS5 + the Windows upstream proxy. Plain
+`curl https://example.com` enters the relay only when proxy environment variables
+are set or TUN is running; otherwise it uses WSL's normal network path.
+
 ## Limitations
 
 This project does not repair HNS. WSL must still be able to launch a Windows
