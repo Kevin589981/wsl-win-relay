@@ -147,6 +147,15 @@ local_proxy=0
 case "$proxy_host" in
     localhost|127.*|0.0.0.0|::1|::) local_proxy=1 ;;
 esac
+# Mirror-mode WSL can expose a local loopback alias (for example
+# 10.255.255.254) while routing 127.0.0.1 through loopback0. Treat any
+# address that the kernel reports as a local route as a local proxy too.
+if [ "$local_proxy" -eq 0 ] && [ -n "$proxy_host" ]; then
+    proxy_route=$(ip route get "$proxy_host" 2>/dev/null || true)
+    case "$proxy_route" in
+        local\ *|*\ local\ *) local_proxy=1 ;;
+    esac
+fi
 
 local_proxy_listening() {
     [ "$local_proxy" -eq 1 ] || return 0

@@ -152,6 +152,12 @@ TUN primarily handles IP traffic. An application may still resolve a hostname
 before opening its connection, so broken WSL DNS can still matter. Prefer
 `socks5h` or configure `WWR_DNS` when DNS is also unavailable.
 
+If mirror mode routes `127.0.0.1` through `loopback0` and a WSL listener remains
+stuck in `SYN-SENT`, use a WSL-owned loopback alias (commonly `10.255.255.254`):
+set `socks5_listen`/`http_proxy_listen` and `WWR_TUN_PROXY` to that address. The
+script recognizes proxy addresses reported as `local` by the kernel and will not
+bind tun2socks to the external uplink for such a local proxy.
+
 ### Explicit reverse mappings
 
 ```text

@@ -137,6 +137,12 @@ WSL 实例，不会接管 Windows 本机流量。
 TUN 主要接管 IP 流量；应用在建立连接前进行的 DNS 解析可能仍然依赖 WSL
 DNS。DNS 已损坏时，优先使用 `socks5h`，或在启动脚本时配置 `WWR_DNS`。
 
+如果 mirror 模式把 `127.0.0.1` 错误路由到 `loopback0`，而 WSL 本地监听
+一直处于 `SYN-SENT`，可以使用 WSL 自己的回环别名（常见为
+`10.255.255.254`）：将 `socks5_listen`/`http_proxy_listen` 和
+`WWR_TUN_PROXY` 改为该地址。脚本会根据内核的 `local` 路由识别这类本地
+代理，不会再把它错误绑定到外部 uplink 接口。
+
 ### 显式 reverse 反向映射
 
 ```text
