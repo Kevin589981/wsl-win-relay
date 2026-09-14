@@ -101,7 +101,7 @@ jobs:
             test -s "$archive"
           done
           test -s dist/SHA256SUMS
-          sha256sum --check dist/SHA256SUMS
+          (cd dist && sha256sum --check SHA256SUMS)
 
       - name: Publish GitHub Release
         env:
